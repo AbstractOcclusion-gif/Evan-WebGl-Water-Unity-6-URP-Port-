@@ -35,7 +35,9 @@ namespace WebGLWater
         public int causticResolution = 1024;
 
         [Header("Object interaction")]
-        [Tooltip("How strongly submerged objects push the surface down.")]
+        [Tooltip("MASTER strength for how strongly submerged objects displace the water " +
+                 "(height units, comparable to Ripple Strength). Per-object weighting is " +
+                 "WaterInteractable.displaceScale (leave those at 1 for uniform objects).")]
         [Range(0f, 0.5f)] public float obstacleStrength = 0.08f;
         [Tooltip("Flip the obstacle map in Z if object ripples appear mirrored.")]
         public bool obstacleFlipY = false;

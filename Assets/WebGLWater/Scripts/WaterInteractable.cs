@@ -13,20 +13,22 @@ namespace WebGLWater
         /// <summary>All currently enabled interactables, for the obstacle pass.</summary>
         public static readonly List<WaterInteractable> Active = new List<WaterInteractable>();
 
-        [Tooltip("Per-object multiplier on how strongly it displaces the water.")]
+        [Tooltip("Per-object RELATIVE weight on how strongly it displaces the water. Leave " +
+                 "at 1 unless one object should push more or less than the others; the " +
+                 "master strength is 'Obstacle Strength' on the WaterController.")]
         public float displaceScale = 1f;
-
-        [Tooltip("Low-pass smoothing of the displaced footprint (0..1). Lower = smoother / " +
-                 "more lag, which filters the residual bob so it doesn't feed jitter back " +
-                 "into the sim. 1 = no smoothing.")]
-        [Range(0.05f, 1f)] public float displaceSmoothing = 0.3f;
 
         public Renderer Renderer { get; private set; }
 
-        // Smoothed amount actually reported to the obstacle pass (see SubmergedAmount).
-        float _emittedAmount;
+        // Reads the local water surface height under this object so the footprint is
+        // referenced to the moving surface, not the flat rest plane.
+        WaterController _ctrl;
 
-        void Awake()  { Renderer = GetComponent<Renderer>(); }
+        void Awake()
+        {
+            Renderer = GetComponent<Renderer>();
+            _ctrl = FindFirstObjectByType<WaterController>();
+        }
         void OnEnable()
         {
             if (Renderer == null) Renderer = GetComponent<Renderer>();
@@ -34,23 +36,24 @@ namespace WebGLWater
         }
         void OnDisable() { Active.Remove(this); }
 
-        /// <summary>How far this object is submerged below the surface, in world
-        /// units, approximated from its world-space bounds. Drives the footprint
-        /// amount written into the obstacle map.</summary>
-        public float SubmergedAmount(float waterY)
+        /// <summary>Local water surface height (world Y) under the object, used as the
+        /// per-object waterline for the submerged-thickness footprint. A float riding a
+        /// wave keeps a constant submerged depth against this moving line, so it injects
+        /// nothing; only genuine plunging through the surface changes it. Falls back to
+        /// the flat rest plane (restY) until the height readback is available.</summary>
+        public float WaterlineY(float restY)
         {
-            if (Renderer == null) return 0f;
+            if (Renderer == null) return restY;
             Bounds b = Renderer.bounds;
-            float depth = Mathf.Clamp(waterY - b.min.y, 0f, b.size.y);
-            float raw = depth * displaceScale;
+            if (_ctrl != null && _ctrl.TryGetWaterHeight(b.center.x, b.center.z, out float surfaceY))
+                return surfaceY;
+            return restY;
+        }
 
-            // The obstacle pass displaces by the frame-to-frame CHANGE in this amount,
-            // so a floating object's residual micro-bob would inject a ripple every frame
-            // and self-excite (worse at higher displace scale). Low-pass the reported
-            // amount: it tracks real motion (dropping in, riding a wave) smoothly while
-            // attenuating the high-frequency bob, with none of a deadband's step pulses.
-            _emittedAmount = Mathf.Lerp(_emittedAmount, raw, displaceSmoothing);
-            return Mathf.Max(0f, _emittedAmount);
+        /// <summary>True if any part of the object sits below the given waterline.</summary>
+        public bool IsSubmerged(float waterlineY)
+        {
+            return Renderer != null && Renderer.bounds.min.y < waterlineY;
         }
     }
 }

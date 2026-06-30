@@ -19,7 +19,8 @@ namespace WebGLWater
         RenderTexture _prev, _curr;
         Matrix4x4 _view, _gpuProj;
 
-        static readonly int ID_Submerged = Shader.PropertyToID("_SubmergedAmount");
+        static readonly int ID_Waterline = Shader.PropertyToID("_WaterlineY");
+        static readonly int ID_DisplaceScale = Shader.PropertyToID("_DisplaceScale");
 
         public WaterObstacle(Shader obstacleShader, int resolution, float waterY)
         {
@@ -70,10 +71,12 @@ namespace WebGLWater
             {
                 var it = list[i];
                 if (it == null || it.Renderer == null) continue;
-                float amt = it.SubmergedAmount(waterY);
-                if (amt <= 0f) continue;
 
-                _mpb.SetFloat(ID_Submerged, amt);
+                float waterlineY = it.WaterlineY(waterY);
+                if (!it.IsSubmerged(waterlineY)) continue;
+
+                _mpb.SetFloat(ID_Waterline, waterlineY);
+                _mpb.SetFloat(ID_DisplaceScale, it.displaceScale);
                 it.Renderer.SetPropertyBlock(_mpb);
                 _cb.DrawRenderer(it.Renderer, _mat, 0, 0);
             }
