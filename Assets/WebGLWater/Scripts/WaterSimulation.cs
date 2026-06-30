@@ -110,9 +110,10 @@ namespace WebGLWater
 
         public void UpdateNormals() => Dispatch(_kNormal);
 
-        /// <summary>Advance the foam buffer: spread, generate from turbulence, decay.
-        /// Reads the current height state; ping-pongs the foam textures.</summary>
-        public void StepFoam(float genRate, float decay, float spread, float fromSpeed, float fromCurv)
+        /// <summary>Advance the foam buffer: advect along the surface flow, diffuse,
+        /// generate from turbulence, decay. Reads the current height/normal state;
+        /// ping-pongs the foam textures.</summary>
+        public void StepFoam(float genRate, float decay, float spread, float fromSpeed, float fromCurv, float advect)
         {
             _cs.SetFloat("_Size", Resolution);
             _cs.SetVector("_Delta", new Vector4(1f / Resolution, 1f / Resolution, 0, 0));
@@ -121,6 +122,7 @@ namespace WebGLWater
             _cs.SetFloat("_FoamSpread", spread);
             _cs.SetFloat("_FoamFromSpeed", fromSpeed);
             _cs.SetFloat("_FoamFromCurv", fromCurv);
+            _cs.SetFloat("_FoamAdvect", advect);
             _cs.SetTexture(_kFoam, "Src", _a);        // height state (read)
             _cs.SetTexture(_kFoam, "FoamSrc", _foamA);
             _cs.SetTexture(_kFoam, "FoamDst", _foamB);

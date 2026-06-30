@@ -56,6 +56,8 @@ namespace WebGLWater
         [Range(0.80f, 1f)] public float foamDecay = 0.97f;
         [Tooltip("Diffusion of foam toward neighbours.")]
         [Range(0f, 1f)] public float foamSpread = 0.2f;
+        [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
+        [Range(0f, 8f)] public float foamAdvect = 3f;
         public float foamFromSpeed = 6f;
         public float foamFromCurvature = 30f;
         [Space]
@@ -106,9 +108,18 @@ namespace WebGLWater
 
         // interaction
         const int MODE_NONE = -1, MODE_ADD_DROPS = 0, MODE_ORBIT = 2;
+
+        // Pool-space distance the cursor must travel between injected ripples while
+        // dragging. Holding the button still otherwise re-injects into the same texels
+        // every frame, pumping unbounded energy into the explicit solver until it
+        // overshoots. The initial press bypasses this (via _forceDrop) so a plain click
+        // still makes a ripple.
+        const float MinDragRippleSpacing = 0.01f;
+
         int _mode = MODE_NONE;
         Vector2 _oldMouse;
         Vector3 _prevDrop;
+        bool _forceDrop;
 
         // shader global ids
         static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
@@ -247,6 +258,26 @@ namespace WebGLWater
             return true;
         }
 
+        /// <summary>World-space surface height plus the horizontal surface-flow
+        /// direction at pool position (x,z in [-1,1]). Flow is the stored normal.xz,
+        /// which equals -gradient(height) (i.e. the downhill direction the surface
+        /// pushes floating things). Returns false until the first readback lands or if
+        /// the point is outside the pool.</summary>
+        public bool TryGetSurface(float x, float z, out float height, out Vector2 flow)
+        {
+            height = 0f;
+            flow = Vector2.zero;
+            if (!_heightReady || _heightCpu == null) return false;
+            float u = x * 0.5f + 0.5f, v = z * 0.5f + 0.5f;
+            if (u < 0f || u > 1f || v < 0f || v > 1f) return false;
+            int px = Mathf.Clamp((int)(u * SimRes), 0, SimRes - 1);
+            int pz = Mathf.Clamp((int)(v * SimRes), 0, SimRes - 1);
+            Color sample = _heightCpu[pz * SimRes + px];
+            height = sample.r;
+            flow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
+            return true;
+        }
+
         void Step(float seconds)
         {
             if (seconds > 1f) return;
@@ -272,7 +303,7 @@ namespace WebGLWater
             _water.UpdateNormals();
 
             if (foam)
-                _water.StepFoam(foamGenRate, foamDecay, foamSpread, foamFromSpeed, foamFromCurvature);
+                _water.StepFoam(foamGenRate, foamDecay, foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect);
         }
 
         void UpdateCaustics()
@@ -331,6 +362,7 @@ namespace WebGLWater
                 {
                     _mode = MODE_ADD_DROPS;
                     _prevDrop = pointOnPlane;
+                    _forceDrop = true; // the initial press always injects one ripple
                     DuringDrag(m);
                 }
                 else
@@ -357,12 +389,18 @@ namespace WebGLWater
                     Ray ray = PixelRay(m);
                     Vector3 eye = ray.origin, d = ray.direction;
                     Vector3 p = eye + d * (-eye.y / d.y);
+
+                    // Throttle injection by distance travelled so holding the cursor
+                    // still doesn't pump energy into the same texels every frame.
+                    float moved = Vector2.Distance(new Vector2(p.x, p.z), new Vector2(_prevDrop.x, _prevDrop.z));
+                    if (!_forceDrop && moved < MinDragRippleSpacing) break;
+                    _forceDrop = false;
+
                     _water.AddDrop(p.x, p.z, rippleRadius, rippleStrength);
 
                     // splash droplets where the cursor drags across the surface
                     if (splashEmitter != null)
                     {
-                        float moved = Vector2.Distance(new Vector2(p.x, p.z), new Vector2(_prevDrop.x, _prevDrop.z));
                         float strength = Mathf.Clamp01(moved / 0.08f);
                         if (strength > 0.1f)
                             splashEmitter.EmitSplash(new Vector3(p.x, 0f, p.z), strength * 0.6f, rippleRadius * 4f);

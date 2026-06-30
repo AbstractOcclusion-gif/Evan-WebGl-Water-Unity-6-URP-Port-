@@ -28,11 +28,16 @@ Material:
     m_TexEnvs:
     - _FoamTex:
         m_Texture: {fileID: 2800000, guid: 0fc073cfe43682649916d44991ec868d, type: 3}
-        m_Scale: {x: 15, y: 15}
+        m_Scale: {x: 8, y: 8}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _Cull: 2
+    - _FoamFlipCols: 1
+    - _FoamFlipFPS: 18
+    - _FoamFlipRows: 1
+    - _FoamFlowStrength: 0.03
+    - _FoamScrollSpeed: 0.35
     - _RealRefraction: 1
     - _ReflectionDistortion: 0.05
     - _ReflectionStrength: 1

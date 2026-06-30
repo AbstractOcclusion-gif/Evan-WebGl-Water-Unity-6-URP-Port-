@@ -57,6 +57,7 @@ namespace WebGLWater.EditorTools
                                         Gen + "/WaterAbove.mat");
             var matUnder = SaveMaterial(MakeMat(sfWater, m => { m.SetFloat("_Underwater", 1f); m.SetFloat("_Cull", 2f); }),
                                         Gen + "/WaterUnder.mat");
+
             Material matPool = null;
             if (buildAnalyticPool && sfPool != null)
                 matPool = SaveMaterial(MakeMat(sfPool, m => m.SetFloat("_Cull", 2f)), Gen + "/Pool.mat");
@@ -171,6 +172,24 @@ namespace WebGLWater.EditorTools
             splashPSR.renderMode = ParticleSystemRenderMode.Billboard;
             var splashEmitter = splashGO.AddComponent<WaterSplashEmitter>();
             splashEmitter.particles = splashPS;
+
+            // Crown splash: a separate system that plays the splash flipbook once per
+            // impact. Vertical billboard + base pivot so the crown stands on the water.
+            var crownGO = new GameObject("Splash Crown");
+            crownGO.transform.SetParent(root.transform);
+            var crownPS = crownGO.AddComponent<ParticleSystem>();
+            WaterSplashEmitter.ConfigureCrown(crownPS, 8, 8);
+            var crownPSR = crownGO.GetComponent<ParticleSystemRenderer>();
+            crownPSR.renderMode = ParticleSystemRenderMode.VerticalBillboard;
+            crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
+            var crownSheet = LoadFlipbook(Gen + "/SplashFlipbook_8x8.png", TextureWrapMode.Clamp, false);
+            if (sfSprite != null && crownSheet != null)
+            {
+                var cm = new Material(sfSprite) { mainTexture = crownSheet };
+                cm.color = new Color(0.95f, 0.98f, 1f, 1f);
+                crownPSR.sharedMaterial = cm;
+            }
+            splashEmitter.crownParticles = crownPS;
 
             // controller
             var ctrlGO = new GameObject("Water Controller");
@@ -368,6 +387,24 @@ namespace WebGLWater.EditorTools
             imp.alphaIsTransparency = true;
             imp.wrapMode = TextureWrapMode.Clamp;
             imp.SaveAndReimport();
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+
+        // Load a pre-generated flipbook sheet from the Generated folder and apply the
+        // import settings the foam shader / particle sheet expect. Returns null (and
+        // leaves the feature off) if the PNG hasn't been generated.
+        static Texture2D LoadFlipbook(string path, TextureWrapMode wrap, bool mipmaps)
+        {
+            if (!File.Exists(path)) return null;
+            AssetDatabase.ImportAsset(path);
+            if (AssetImporter.GetAtPath(path) is TextureImporter imp)
+            {
+                imp.textureType = TextureImporterType.Default;
+                imp.alphaIsTransparency = true;
+                imp.wrapMode = wrap;
+                imp.mipmapEnabled = mipmaps;
+                imp.SaveAndReimport();
+            }
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }
 

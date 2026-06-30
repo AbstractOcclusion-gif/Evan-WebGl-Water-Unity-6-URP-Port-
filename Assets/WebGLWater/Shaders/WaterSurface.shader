@@ -92,7 +92,12 @@ Shader "WebGLWater/WaterSurface"
                     p += dir * _SSRStepSize;
                     float4 clip = mul(UNITY_MATRIX_VP, float4(p, 1.0));
                     if (clip.w <= 0.0) break;
-                    float2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+                    // Platform-correct screen UV (handles the WebGPU/GL vs D3D V-flip),
+                    // matching the refraction / planar paths that use ComputeScreenPos.
+                    // A hand-rolled clip.xy/clip.w*0.5+0.5 samples the mirrored row in a
+                    // build and makes SSR reflections look screen-locked.
+                    float4 sp = ComputeScreenPos(clip);
+                    float2 uv = sp.xy / max(sp.w, 1e-5);
                     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
 
                     // explicit-LOD samples: safe inside a divergent loop (WebGPU)
@@ -246,12 +251,17 @@ Shader "WebGLWater/WaterSurface"
                         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
                         float border = 1.0 - smoothstep(0.0, _FoamBorderWidth, edge);
 
-                        // contact foam where geometry pierces the waterline (needs depth tex;
-                        // degrades to no contact foam when it's unavailable)
+                        // contact foam where geometry pierces the waterline. Needs the
+                        // depth texture; when it's unavailable (or uses a different Z
+                        // convention in a build) the sample can resolve in FRONT of the
+                        // surface, which the old formula turned into full-surface foam.
+                        // Guard: only add contact foam where the scene is genuinely just
+                        // BEHIND the surface, else none. Fixes "all water foamed" builds.
                         float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
                         float sceneEye = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(suv, 0, 0)));
                         float surfEye  = -mul(UNITY_MATRIX_V, float4(i.position, 1.0)).z;
-                        float contact = 1.0 - saturate((sceneEye - surfEye) / max(_FoamContactDepth, 1e-4));
+                        float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
+                        float contact  = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
 
                         float mask = saturate((advected + border + contact) * _FoamStrength);
 

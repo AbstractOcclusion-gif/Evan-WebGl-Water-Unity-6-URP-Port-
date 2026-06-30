@@ -13,6 +13,24 @@
 
 static const float PI = 3.141592653589793;
 
+// Hard bounds on the simulated field. The explicit wave integrator is only
+// conditionally stable, so a violent enough disturbance can overshoot and diverge
+// to Inf/NaN. Clamping height and velocity keeps the field bounded; resetting any
+// non-finite texel stops one bad value from being averaged into the conserved mean
+// and poisoning the whole surface (which on WebGPU made the plane and the floating
+// objects vanish). Bounds sit far above normal ripple amplitude so visuals are unaffected.
+static const float MAX_ABS_HEIGHT   = 1.0;
+static const float MAX_ABS_VELOCITY = 0.5;
+
+// Cap the per-step foam backtrace so a steep ripple can't fling foam across the
+// pool in a single step (keeps the semi-Lagrangian advection stable).
+static const float FOAM_MAX_ADVECT_TEXELS = 4.0;
+
+// Separable 5x5 Gaussian (outer product, weights sum to 16x16 = 256). Used to soften
+// the obstacle footprint so an object injects a smooth bump instead of a hard edge.
+static const float OBSTACLE_BLUR_W[5] = { 1.0, 4.0, 6.0, 4.0, 1.0 };
+static const float OBSTACLE_BLUR_SUM = 256.0;
+
 // Dst is a write-only storage texture; Src is sampled (read). Keeping the read
 // path as a sampled Texture2D instead of a read-write RWTexture2D is required by
 // the WebGPU backend, which only allows r32 formats as read-write storage.
@@ -52,12 +70,23 @@ float _FoamDecay;      // per-step survival (e.g. 0.97)
 float _FoamSpread;     // 0..1 diffusion toward neighbour average
 float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
+float _FoamAdvect;     // texels foam is carried along the surface flow per step
 
 int Clamp1(int v)            { return clamp(v, 0, (int)_Size - 1); }
 int2 ClampC(int2 p)         { return int2(Clamp1(p.x), Clamp1(p.y)); }
 
 // Clamped texel fetch from the sampled source texture.
 float4 Read(int2 p)         { return Src.Load(int3(ClampC(p), 0)); }
+
+// Reset a diverged (non-finite) texel and clamp the field to its stable range, so a
+// single runaway value can't propagate through the mean/normal passes.
+float4 Sanitize(float4 info)
+{
+    if (!isfinite(info.r) || !isfinite(info.g)) { info.r = 0.0; info.g = 0.0; }
+    info.r = clamp(info.r, -MAX_ABS_HEIGHT, MAX_ABS_HEIGHT);
+    info.g = clamp(info.g, -MAX_ABS_VELOCITY, MAX_ABS_VELOCITY);
+    return info;
+}
 
 [numthreads(8, 8, 1)]
 void Drop(uint3 id : SV_DispatchThreadID)
@@ -70,7 +99,7 @@ void Drop(uint3 id : SV_DispatchThreadID)
     drop = 0.5 - cos(drop * PI) * 0.5;
     info.r += drop * _Strength;
 
-    Dst[p] = info;
+    Dst[p] = Sanitize(info);
 }
 
 [numthreads(8, 8, 1)]
@@ -91,7 +120,7 @@ void Update(uint3 id : SV_DispatchThreadID)
     info.g *= _Damping;
     info.r += info.g;
 
-    Dst[p] = info;
+    Dst[p] = Sanitize(info);
 }
 
 [numthreads(8, 8, 1)]
@@ -117,32 +146,63 @@ void Normal(uint3 id : SV_DispatchThreadID)
 void Obstacle(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
-    int2 op = p;
-    if (_ObstacleFlipY > 0.5) op.y = (int)_Size - 1 - p.y;
+    int2 oc = p;
+    if (_ObstacleFlipY > 0.5) oc.y = (int)_Size - 1 - p.y; // sim texel -> obstacle-map texel
 
     float4 info = Read(p);
-    float prev = ObstaclePrev.Load(int3(ClampC(op), 0)).r;
-    float curr = ObstacleCurr.Load(int3(ClampC(op), 0)).r;
-    info.r += (prev - curr) * _ObstacleStrength;
+
+    // Blur the displacement delta with a 5x5 Gaussian so an object's hard-edged
+    // footprint pushes the surface with a smooth bump (like the mouse drop) instead
+    // of stamping sharp, jittery ripples at the silhouette edge as it bobs/drifts.
+    float delta = 0.0;
+    [unroll]
+    for (int j = -2; j <= 2; j++)
+    {
+        [unroll]
+        for (int i = -2; i <= 2; i++)
+        {
+            int2 q = ClampC(oc + int2(i, j));
+            float w = OBSTACLE_BLUR_W[i + 2] * OBSTACLE_BLUR_W[j + 2];
+            delta += (ObstaclePrev.Load(int3(q, 0)).r - ObstacleCurr.Load(int3(q, 0)).r) * w;
+        }
+    }
+    info.r += (delta / OBSTACLE_BLUR_SUM) * _ObstacleStrength;
 
     Dst[p] = info;
 }
 
-// Advected foam: spread toward the neighbour average, add foam where the surface
-// is agitated (fast-moving or sharply curved), then decay. Reads the height state
-// from Src (bound to the current height texture) and ping-pongs the foam buffer.
+// Advected foam: carried along the local surface flow (so it streaks with the
+// waves and slides off crests instead of spreading evenly), softened by a little
+// isotropic diffusion, fed where the surface is agitated, then decayed. Reads the
+// height/normal state from Src and ping-pongs the foam buffer.
 [numthreads(8, 8, 1)]
 void Foam(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
     float4 info = Read(p); // height/velocity/normal at this column
 
-    float fC = FoamSrc.Load(int3(ClampC(p), 0));
+    // Water slides downhill and normal.xz = -gradient(height), so the horizontal
+    // normal IS the flow direction. Backtrace one flow-step and sample the foam
+    // there (semi-Lagrangian advection).
+    float2 flow = clamp(info.ba * _FoamAdvect, -FOAM_MAX_ADVECT_TEXELS, FOAM_MAX_ADVECT_TEXELS);
+    float2 srcF = float2(p) - flow;
+    int2   s0   = (int2)floor(srcF);
+    float2 t    = srcF - float2(s0);
+
+    // Manual bilinear: WebGPU r32 storage textures aren't filterable, so we lerp
+    // four Load() fetches instead of sampling.
+    float f00 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 0)), 0));
+    float f10 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 0)), 0));
+    float f01 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 1)), 0));
+    float f11 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 1)), 0));
+    float advected = lerp(lerp(f00, f10, t.x), lerp(f01, f11, t.x), t.y);
+
+    // small isotropic diffusion keeps foam edges from getting too stringy
     float fL = FoamSrc.Load(int3(ClampC(p + int2(-1, 0)), 0));
     float fR = FoamSrc.Load(int3(ClampC(p + int2( 1, 0)), 0));
     float fD = FoamSrc.Load(int3(ClampC(p + int2( 0,-1)), 0));
     float fU = FoamSrc.Load(int3(ClampC(p + int2( 0, 1)), 0));
-    float foam = lerp(fC, (fL + fR + fD + fU) * 0.25, _FoamSpread);
+    float foam = lerp(advected, (fL + fR + fD + fU) * 0.25, _FoamSpread);
 
     // generation from turbulence: speed + negative curvature (crests / chop)
     float speed = abs(info.g);
