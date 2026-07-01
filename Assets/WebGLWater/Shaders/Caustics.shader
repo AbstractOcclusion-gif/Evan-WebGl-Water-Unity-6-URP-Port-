@@ -47,7 +47,7 @@ Shader "WebGLWater/Caustics"
                 v2f o;
                 float4 info = tex2Dlod(_WaterTex, float4(v.vertex.xy * 0.5 + 0.5, 0, 0));
                 info.ba *= 0.5;
-                float3 normal = float3(info.b, sqrt(1.0 - dot(info.ba, info.ba)), info.a);
+                float3 normal = float3(info.b, sqrt(max(0.0, 1.0 - dot(info.ba, info.ba))), info.a);
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
                 float3 ray = refract(-_LightDir, normal, IOR_AIR / IOR_WATER);
@@ -65,7 +65,9 @@ Shader "WebGLWater/Caustics"
                 float oldArea = length(ddx(i.oldPos)) * length(ddy(i.oldPos));
                 float newArea = length(ddx(i.newPos)) * length(ddy(i.newPos));
                 // green channel = occluder shadow term; 1.0 means unshadowed.
-                float4 col = float4(oldArea / newArea * 0.2, 1.0, 0.0, 0.0);
+                // Guard newArea: a degenerate (near-parallel) projected triangle would divide
+                // by ~0 and write Inf/NaN into the caustic RT that every other pass samples.
+                float4 col = float4(oldArea / max(newArea, 1e-6) * 0.2, 1.0, 0.0, 0.0);
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
 

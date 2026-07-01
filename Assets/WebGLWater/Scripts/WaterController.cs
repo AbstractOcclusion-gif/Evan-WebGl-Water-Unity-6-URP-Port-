@@ -358,8 +358,10 @@ namespace WebGLWater
             causticResolution = tier.CausticResolution;
             _godRaysAllowed = tier.GodRays;
 
+            // Clamp to >= 1 so a "god rays off" tier (0 steps) never bakes a divide-by-zero
+            // into the shared god-ray material; the renderer is disabled separately via _godRaysAllowed.
             if (godRayRenderer != null && godRayRenderer.sharedMaterial != null)
-                godRayRenderer.sharedMaterial.SetFloat(ID_GodRaySteps, tier.GodRaySteps);
+                godRayRenderer.sharedMaterial.SetFloat(ID_GodRaySteps, Mathf.Max(1, tier.GodRaySteps));
         }
 
         // Give the surface renderers per-body material instances and set their reflection

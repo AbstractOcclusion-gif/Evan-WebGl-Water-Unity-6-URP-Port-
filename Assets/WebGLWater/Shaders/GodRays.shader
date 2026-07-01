@@ -120,7 +120,7 @@ Shader "WebGLWater/GodRays"
                 float2 uv = IN.screenPos.xy / max(IN.screenPos.w, 1e-5);
                 float sceneEye = LinearEyeDepth(SampleSceneDepth(uv), _ZBufferParams);
 
-                int steps = (int)_GodRaySteps;
+                int steps = max(1, (int)_GodRaySteps); // guard against divide-by-zero at 0 steps
                 float dt = (tExit - tEnter) / steps;
                 float3 refractedLight = -refract(-_LightDir, float3(0, 1, 0), IOR_AIR / IOR_WATER);
 

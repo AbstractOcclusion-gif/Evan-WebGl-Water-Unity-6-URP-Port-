@@ -57,7 +57,6 @@ namespace WebGLWater
         [Tooltip("Crown lifetime; the flipbook plays through once over this time.")]
         public float crownLifetime = 0.5f;
 
-        WaterController _controller;
         ParticleSystem.Particle[] _buffer;
 
         void Awake()
@@ -70,16 +69,11 @@ namespace WebGLWater
             }
         }
 
-        void Start()
-        {
-            _controller = WaterController.Resolve(); // TODO(Phase 2): the body containing this emitter
-        }
-
-        // Pop -> stick -> drift. Runs after the controller has stepped the sim so the
+        // Pop -> stick -> drift. Runs after the controllers have stepped their sims so the
         // surface query reflects this frame's waves.
         void LateUpdate()
         {
-            if (particles == null || _controller == null) return;
+            if (particles == null) return;
 
             int capacity = particles.main.maxParticles;
             if (_buffer == null || _buffer.Length < capacity)
@@ -98,7 +92,10 @@ namespace WebGLWater
         void DriftOnSurface(ref ParticleSystem.Particle droplet, float dt)
         {
             Vector3 position = droplet.position;
-            if (!_controller.TryGetSurface(position.x, position.z, out float surfaceY, out Vector2 flow))
+            // Resolve the body under THIS droplet so a splash in lake B drifts on lake B's
+            // surface, not the primary's. Outside every footprint TryGetSurface returns false.
+            WaterController body = WaterController.BodyContaining(position);
+            if (body == null || !body.TryGetSurface(position.x, position.z, out float surfaceY, out Vector2 flow))
                 return; // outside the pool or no readback yet: stay ballistic
 
             float age = droplet.startLifetime - droplet.remainingLifetime;
