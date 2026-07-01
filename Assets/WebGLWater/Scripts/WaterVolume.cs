@@ -261,6 +261,7 @@ namespace WebGLWater
 
         // shader global ids
         static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
+        static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
         static readonly int ID_Caustic = Shader.PropertyToID("_CausticTex");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
         static readonly int ID_Sky = Shader.PropertyToID("_Sky");
@@ -507,6 +508,10 @@ namespace WebGLWater
             ApplyBlockTo(godRayRenderer);
         }
 
+        // (1/res, 1/res, res, res) of the sim texture, so shaders can bilinear-filter it manually
+        // (WebGPU won't hardware-filter the RGBAFloat sim RT). Paired with every _WaterTex bind.
+        Vector4 WaterTexel => new Vector4(1f / _simRes, 1f / _simRes, _simRes, _simRes);
+
         /// <summary>Overwrite <paramref name="mpb"/> with this body's per-renderer uniforms
         /// (sim + caustic textures, volume frame, waves, fog, foam). Used for this body's own
         /// renderers and by <see cref="WaterMembership"/> to light a floating object with the
@@ -518,6 +523,7 @@ namespace WebGLWater
             if (_water != null)
             {
                 mpb.SetTexture(ID_Water, _water.Texture);
+                mpb.SetVector(ID_WaterTexel, WaterTexel);
                 if (_water.FoamTexture != null) mpb.SetTexture(ID_FoamMask, _water.FoamTexture);
             }
             if (_causticRT != null) mpb.SetTexture(ID_Caustic, _causticRT);
@@ -660,6 +666,7 @@ namespace WebGLWater
             if (_water != null)
             {
                 Shader.SetGlobalTexture(ID_Water, _water.Texture);
+                Shader.SetGlobalVector(ID_WaterTexel, WaterTexel);
                 if (_water.FoamTexture != null) Shader.SetGlobalTexture(ID_FoamMask, _water.FoamTexture);
             }
             if (_causticRT != null) Shader.SetGlobalTexture(ID_Caustic, _causticRT);

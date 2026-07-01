@@ -16,6 +16,25 @@ samplerCUBE _Sky;          // sky cubemap
 
 float3 _LightDir;          // normalized direction toward the light
 float3 _Eye;               // camera world position
+float4 _WaterTexel;        // (1/width, 1/height, width, height) of _WaterTex, pushed from C#
+
+// Manual bilinear sample of the float sim texture. WebGPU does NOT hardware-filter
+// RGBA32Float, so a Bilinear sampler silently point-samples there and the normal field
+// (and the vertex height) reads blocky -> micro-perturbations on the surface that don't
+// appear on desktop. Filtering the four texels ourselves keeps the water smooth on every
+// backend while the sim stays full 32-bit. tex2Dlod so it is valid in the vertex stage too.
+float4 SampleWaterBilinear(float2 uv)
+{
+    float2 texel = _WaterTexel.xy;
+    float2 st = uv * _WaterTexel.zw - 0.5;
+    float2 f = frac(st);
+    float2 baseUV = (floor(st) + 0.5) * texel;
+    float4 c00 = tex2Dlod(_WaterTex, float4(baseUV, 0, 0));
+    float4 c10 = tex2Dlod(_WaterTex, float4(baseUV + float2(texel.x, 0.0), 0, 0));
+    float4 c01 = tex2Dlod(_WaterTex, float4(baseUV + float2(0.0, texel.y), 0, 0));
+    float4 c11 = tex2Dlod(_WaterTex, float4(baseUV + texel, 0, 0));
+    return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
 
 float3 GetWallColor(float3 p)
 {

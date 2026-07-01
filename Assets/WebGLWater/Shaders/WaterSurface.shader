@@ -139,7 +139,7 @@ Shader "WebGLWater/WaterSurface"
             v2f vert(appdata v)
             {
                 v2f o;
-                float4 info = tex2Dlod(_WaterTex, float4(v.vertex.xy * 0.5 + 0.5, 0, 0));
+                float4 info = SampleWaterBilinear(v.vertex.xy * 0.5 + 0.5);
                 float3 position = v.vertex.xzy;   // grid XY plane -> pool (x, 0, z)
                 position.y += info.r;                  // interactive ripple heightfield
                 position.y += WaveHeight(v.vertex.xy); // ambient wind-wave layer (pool xz = vertex.xy)
@@ -197,14 +197,14 @@ Shader "WebGLWater/WaterSurface"
             fixed4 frag(v2f i) : SV_Target
             {
                 float2 coord = i.position.xz * 0.5 + 0.5;
-                float4 info = tex2D(_WaterTex, coord);
+                float4 info = SampleWaterBilinear(coord);
 
                 // make the water look more "peaked"
                 [unroll]
                 for (int k = 0; k < 5; k++)
                 {
                     coord += info.ba * 0.005;
-                    info = tex2D(_WaterTex, coord);
+                    info = SampleWaterBilinear(coord);
                 }
 
                 // Combine the ripple normal (info.ba = normal.xz) with the wind-wave
