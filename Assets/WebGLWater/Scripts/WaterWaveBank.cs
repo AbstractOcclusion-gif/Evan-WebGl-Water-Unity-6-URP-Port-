@@ -88,15 +88,19 @@ namespace WebGLWater
         /// <param name="amplitudeScale">Artistic multiplier on the physical wave height.</param>
         /// <param name="directionSpreadExponent">Higher = tighter alignment to the wind.</param>
         /// <param name="metersPerPoolUnit">Pool-unit -> metre conversion used for amplitudes.</param>
+        /// <param name="verticalWorldPerUnit">World units per pool unit VERTICALLY (the volume's
+        /// y extent). Crest height is pre-divided by this so a deeper pool doesn't render taller
+        /// waves: PoolToWorld later multiplies surface height by it. 1 leaves the look unchanged.</param>
         public void Generate(float windSpeed, float windFromDegrees, float fetchMeters,
                              int waveCount, float amplitudeScale, float directionSpreadExponent,
-                             float metersPerPoolUnit)
+                             float metersPerPoolUnit, float verticalWorldPerUnit)
         {
             _count = Mathf.Clamp(waveCount, 1, MaxWaves);
 
             float wind = Mathf.Max(0.1f, windSpeed);
             float fetch = Mathf.Max(1f, fetchMeters);
             float metersPerUnit = Mathf.Max(1e-3f, metersPerPoolUnit);
+            float verticalExtent = Mathf.Max(1e-3f, verticalWorldPerUnit);
 
             float peakWavelength = ResolvePeakWavelength(wind, fetch);
             float omegaPeak = OmegaFromWavelength(peakWavelength);
@@ -141,14 +145,14 @@ namespace WebGLWater
                 sumAmpSquared += amp * amp;
             }
 
-            NormalizeAmplitudes(sumAmpSquared, wind, fetch, amplitudeScale, metersPerUnit);
+            NormalizeAmplitudes(sumAmpSquared, wind, fetch, amplitudeScale, metersPerUnit, verticalExtent);
             Pack();
         }
 
         // Scale every component so the surface's significant wave height matches the
         // (exaggerated) physical target, then convert metre amplitudes to pool units.
         void NormalizeAmplitudes(float sumAmpSquared, float wind, float fetch,
-                                 float amplitudeScale, float metersPerUnit)
+                                 float amplitudeScale, float metersPerUnit, float verticalExtent)
         {
             if (sumAmpSquared <= 0f) return;
 
@@ -159,7 +163,10 @@ namespace WebGLWater
             float currentRms = Mathf.Sqrt(sumAmpSquared);
             float targetRms = hsMeters / HsToRms;             // metres
             float metersToPool = 1f / metersPerUnit;
-            float scale = (targetRms / currentRms) * metersToPool;
+            // Pre-divide by the vertical extent so PoolToWorld's height * extent.y leaves the
+            // world crest height fixed as the pool deepens (see verticalWorldPerUnit). This
+            // mirrors how click-ripples compensate on injection.
+            float scale = (targetRms / currentRms) * metersToPool / verticalExtent;
 
             for (int i = 0; i < _count; i++)
                 _waves[i].amp *= scale;

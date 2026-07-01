@@ -56,6 +56,7 @@ Shader "WebGLWater/GodRays"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterShared.hlsl" // IOR_*, IntersectCube, ProjectCausticUV
+            #include "WaterFog.hlsl"    // DepthFadeScalar, WaterPathLength, fog uniforms
 
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             float3 _LightDir;       // global, normalized direction toward the light
@@ -115,8 +116,11 @@ Shader "WebGLWater/GodRays"
                 int steps = max(1, (int)_GodRaySteps); // guard against divide-by-zero at 0 steps
                 float dt = (tExit - tEnter) / steps;
                 float3 refractedLight = -refract(-_LightDir, float3(0, 1, 0), IOR_AIR / IOR_WATER);
+                float surfaceLevel = _VolumeCenter.y; // world Y of the water surface
 
-                float accum = 0.0;
+                // Per-channel so the view-path fog can tint the shafts as they recede, matching
+                // how everything else fogs (red dies first).
+                float3 accum = float3(0.0, 0.0, 0.0);
                 [loop]
                 for (int s = 0; s < steps; s++)
                 {
@@ -135,7 +139,16 @@ Shader "WebGLWater/GodRays"
                     float4 shadowCoord = TransformWorldToShadowCoord(pWorld);
                     float shadow = MainLightRealtimeShadow(shadowCoord);
 
-                    accum += caustic * shadow;
+                    // Fade the shaft with depth (the light feeding it is thinned on the way down)
+                    // and haze it out along the view path with the SAME fog as the rest of the scene.
+                    // Both are gated by the depth master switch, so god rays are unchanged until
+                    // the feature is enabled (view-path haze additionally needs the fog turned on).
+                    float depthFade = DepthFadeScalar(pWorld.y, surfaceLevel, _GodRayDepthFade);
+                    float3 viewFog = float3(1.0, 1.0, 1.0);
+                    if (_DepthDarkenEnabled > 0.5 && _WaterFogEnabled > 0.5)
+                        viewFog = exp(-_WaterExtinction.rgb * (_WaterFogDensity * WaterPathLength(pWorld, _WorldSpaceCameraPos, surfaceLevel)));
+
+                    accum += caustic * shadow * depthFade * viewFog;
                 }
                 accum *= dt * _GodRayDensity;
 

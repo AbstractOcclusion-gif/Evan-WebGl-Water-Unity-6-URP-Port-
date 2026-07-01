@@ -119,7 +119,7 @@ namespace WebGLWater
                  "WaterInteractable.displaceScale (leave those at 1 for uniform objects).")]
         [Range(0f, 0.5f)] public float obstacleStrength = 0.08f;
         [Tooltip("Flip the obstacle map in Z if object ripples appear mirrored.")]
-        public bool obstacleFlipY = false;
+        public bool obstacleFlipY = true;
 
         [Header("Water fog (Beer-Lambert)")]
         [Tooltip("Global depth absorption, shared by the surface, objects and pool.")]
@@ -128,6 +128,41 @@ namespace WebGLWater
         [Tooltip("Per-channel extinction; red highest so it absorbs first.")]
         public Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
         [Range(0f, 8f)] public float fogDensity = 2f;
+
+        [Header("Depth attenuation (downwelling)")]
+        [Tooltip("Darken submerged surfaces, caustics and god rays the DEEPER they sit, " +
+                 "independent of view distance. Separate from the view-path fog above.")]
+        public bool depthDarken = false;
+        [Tooltip("Per-channel downwelling extinction (red highest so deep water shifts blue). " +
+                 "Applied as exp(-extinction * strength * depth).")]
+        public Color depthExtinction = new Color(0.45f, 0.15f, 0.08f);
+        [Tooltip("Master multiplier on the depth term (acts like the fog density).")]
+        [Range(0f, 8f)] public float depthDarkenStrength = 1f;
+        [Tooltip("Extra softening of projected caustics on objects, per world unit of depth.")]
+        [Range(0f, 8f)] public float causticDepthFade = 0.5f;
+        [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
+        [Range(0f, 8f)] public float godRayDepthFade = 0.5f;
+        [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
+                 "drives fog + depth darkening. Off = the depth colour is fully independent.")]
+        public bool linkDepthToFog = false;
+
+        [Header("Bed depth (real terrain depth)")]
+        [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
+                 "gradient). Off = flat-floor behaviour.")]
+        public bool useBedDepth = false;
+        [Tooltip("Terrain whose heightmap defines the lake bed. Auto-resolves to the active " +
+                 "Terrain if empty. Baked once at startup; call RebakeBed() (or the context-menu " +
+                 "item) if the terrain changes.")]
+        public Terrain bedTerrain;
+        [Tooltip("Resolution of the baked pool-space bed-height map.")]
+        [Range(MinBedResolution, MaxBedResolution)] public int bedResolution = 256;
+        [Tooltip("Colour the surface tints toward over deep water.")]
+        public Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
+        [Tooltip("World-unit depth at which the shoreline gradient reaches ~63% toward the deep " +
+                 "colour. Smaller = the water darkens in shallower depth.")]
+        [Range(0.1f, 50f)] public float shorelineFadeDepth = 6f;
+        [Tooltip("Maximum tint toward the deep-water colour.")]
+        [Range(0f, 1f)] public float shorelineStrength = 0.8f;
 
         [Header("Wind waves (spectral)")]
         [Tooltip("Ambient wind-driven wave layer composited on top of the interactive ripples. " +
@@ -173,15 +208,15 @@ namespace WebGLWater
 
         [Header("Ripple tuning")]
         [Tooltip("Propagation stiffness. Higher = faster waves. Stable up to ~2.0.")]
-        [Range(0.1f, 2.0f)] public float waveSpeed = 2.0f;
+        [Range(0.1f, 2.0f)] public float waveSpeed = 0.6f;
         [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
-        [Range(0.90f, 1.0f)] public float damping = 0.995f;
+        [Range(0.90f, 1.0f)] public float damping = 0.99f;
         [Tooltip("Simulation sub-steps per frame. More = faster, smoother propagation.")]
         [Range(1, 8)] public int stepsPerFrame = 2;
         [Tooltip("Height added by a click/drag ripple (world units; volume-scale independent).")]
-        [Range(0.001f, 0.08f)] public float rippleStrength = 0.01f;
+        [Range(0.001f, 0.08f)] public float rippleStrength = 0.025f;
         [Tooltip("Radius of a click/drag ripple (world units; volume-scale independent).")]
-        [Range(0.005f, 0.2f)] public float rippleRadius = 0.03f;
+        [Range(0.005f, 0.2f)] public float rippleRadius = 0.05f;
         [Tooltip("Seed the pool with random ripples on start.")]
         public bool seedRipplesOnStart = true;
         [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
@@ -203,6 +238,7 @@ namespace WebGLWater
         float _waveTime;
         Vector4 _waveGenSignature = new Vector4(float.NaN, 0f, 0f, 0f);
         float _waveGenSpread = float.NaN;
+        float _waveGenVerticalExtent = float.NaN; // volume y-extent baked into the current bank
         bool _waveGenEnabled;
 
         // CPU copy of the height field for buoyancy queries
@@ -217,6 +253,8 @@ namespace WebGLWater
         const string KW_PLANAR = "_USE_PLANAR";
         Material _causticMat;
         RenderTexture _causticRT;
+        Texture2D _bedTex;   // pool-space terrain bed height (R), baked from the Terrain
+        bool _bedBaked;
         RenderTexture _heightMip;
         CommandBuffer _cb;
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
@@ -239,6 +277,10 @@ namespace WebGLWater
         const float CameraFieldOfView = 45f;
         const float CameraNearClip = 0.01f;
         const float CameraFarClip = 100f;
+
+        // Baked bed-height map resolution bounds (pool-space).
+        const int MinBedResolution = 64;
+        const int MaxBedResolution = 1024;
 
         // Startup pool seeding: a few random ripples so the surface isn't dead-flat on load.
         const int SeedRippleCount = 20;
@@ -271,6 +313,17 @@ namespace WebGLWater
         static readonly int ID_FogExt = Shader.PropertyToID("_WaterExtinction");
         static readonly int ID_FogDensity = Shader.PropertyToID("_WaterFogDensity");
         static readonly int ID_FogEnabled = Shader.PropertyToID("_WaterFogEnabled");
+        static readonly int ID_DepthExt = Shader.PropertyToID("_DepthExtinction");
+        static readonly int ID_DepthStrength = Shader.PropertyToID("_DepthDarkenStrength");
+        static readonly int ID_DepthEnabled = Shader.PropertyToID("_DepthDarkenEnabled");
+        static readonly int ID_CausticDepthFade = Shader.PropertyToID("_CausticDepthFade");
+        static readonly int ID_GodRayDepthFade = Shader.PropertyToID("_GodRayDepthFade");
+        static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
+        static readonly int ID_BedValid = Shader.PropertyToID("_BedValid");
+        static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
+        static readonly int ID_DeepWaterColor = Shader.PropertyToID("_DeepWaterColor");
+        static readonly int ID_ShorelineScale = Shader.PropertyToID("_ShorelineDepthScale");
+        static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
         static readonly int ID_FoamMask = Shader.PropertyToID("_FoamMask");
         static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
         static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
@@ -322,11 +375,16 @@ namespace WebGLWater
             };
             _heightMip.Create();
 
-            // seed the pool with a few ripples
+            // seed the pool with a few ripples. Compensate the strength for extent.y (like
+            // AddRipple) so seed splashes keep a fixed world height on a deep pool - PoolToWorld
+            // multiplies surface height by extent.y.
             if (seedRipplesOnStart)
+            {
+                float seedStrength = SeedRippleStrength / VolumeExtentSafe.y;
                 for (int i = 0; i < SeedRippleCount; i++)
                     _water.AddDrop(Random.value * 2f - 1f, Random.value * 2f - 1f, SeedRippleRadius,
-                                   (i & 1) == 1 ? SeedRippleStrength : -SeedRippleStrength);
+                                   (i & 1) == 1 ? seedStrength : -seedStrength);
+            }
 
             if (targetCamera != null)
             {
@@ -339,6 +397,8 @@ namespace WebGLWater
             if (!Bodies.Contains(this)) Bodies.Add(this);
             _mpb = new MaterialPropertyBlock();
             ApplyReflections();
+
+            RebakeBed(); // one-time terrain -> pool-space bed-height map (no-op without a Terrain)
 
             PublishSharedGlobals();
             EnsureWaveBank();
@@ -355,6 +415,7 @@ namespace WebGLWater
             _obstacle?.Dispose();
             if (_causticRT != null) _causticRT.Release();
             if (_heightMip != null) _heightMip.Release();
+            DestroyBedTexture(); _bedBaked = false;
             _cb?.Release();
             if (_surfaceAboveInstance != null) { Destroy(_surfaceAboveInstance); _surfaceAboveInstance = null; }
             if (_surfaceUnderInstance != null) { Destroy(_surfaceUnderInstance); _surfaceUnderInstance = null; }
@@ -543,6 +604,19 @@ namespace WebGLWater
             mpb.SetFloat(ID_FogDensity, fogDensity);
             mpb.SetFloat(ID_FogEnabled, waterFog ? 1f : 0f);
 
+            mpb.SetColor(ID_DepthExt, EffectiveDepthExtinction);
+            mpb.SetFloat(ID_DepthStrength, depthDarkenStrength);
+            mpb.SetFloat(ID_DepthEnabled, depthDarken ? 1f : 0f);
+            mpb.SetFloat(ID_CausticDepthFade, causticDepthFade);
+            mpb.SetFloat(ID_GodRayDepthFade, godRayDepthFade);
+
+            if (_bedTex != null) mpb.SetTexture(ID_BedTex, _bedTex);
+            mpb.SetFloat(ID_BedValid, _bedBaked ? 1f : 0f);
+            mpb.SetFloat(ID_UseBedDepth, useBedDepth ? 1f : 0f);
+            mpb.SetColor(ID_DeepWaterColor, deepWaterColor);
+            mpb.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(0.01f, shorelineFadeDepth));
+            mpb.SetFloat(ID_ShorelineStrength, shorelineStrength);
+
             mpb.SetColor(ID_FoamColor, foamColor);
             mpb.SetFloat(ID_FoamEnabled, foam ? 1f : 0f);
             mpb.SetFloat(ID_FoamStrength, foamStrength);
@@ -672,6 +746,8 @@ namespace WebGLWater
             if (_causticRT != null) Shader.SetGlobalTexture(ID_Caustic, _causticRT);
             PublishVolume();
             PublishFog();
+            PublishDepth();
+            PublishBed();
             PublishFoam();
             PublishWaves();
         }
@@ -842,7 +918,10 @@ namespace WebGLWater
             if (_obstacle != null)
             {
                 _obstacle.Render(VolumeCenter.y);
-                _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr, obstacleStrength, obstacleFlipY);
+                // Compensate for extent.y so an object's displacement is a fixed world height
+                // regardless of pool depth (PoolToWorld scales surface height by extent.y).
+                _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr,
+                                     obstacleStrength / VolumeExtentSafe.y, obstacleFlipY);
             }
 
             int steps = Mathf.Max(1, stepsPerFrame);
@@ -939,15 +1018,19 @@ namespace WebGLWater
         {
             var signature = new Vector4(windSpeed, windFromDegrees, poolHalfExtentMeters,
                                         waveCount + 100f * waveAmplitudeScale);
+            float verticalExtent = VolumeExtentSafe.y;
             bool dirty = windWaves != _waveGenEnabled
                          || signature != _waveGenSignature
-                         || waveDirectionSpread != _waveGenSpread;
+                         || waveDirectionSpread != _waveGenSpread
+                         || verticalExtent != _waveGenVerticalExtent;
             if (!dirty) return;
 
             _waveBank.Generate(windSpeed, windFromDegrees, 2f * poolHalfExtentMeters,
-                               waveCount, waveAmplitudeScale, waveDirectionSpread, WaveMetersPerUnit);
+                               waveCount, waveAmplitudeScale, waveDirectionSpread, WaveMetersPerUnit,
+                               verticalExtent);
             _waveGenSignature = signature;
             _waveGenSpread = waveDirectionSpread;
+            _waveGenVerticalExtent = verticalExtent;
             _waveGenEnabled = windWaves;
         }
 
@@ -968,6 +1051,86 @@ namespace WebGLWater
             Shader.SetGlobalColor(ID_FogExt, fogExtinction);
             Shader.SetGlobalFloat(ID_FogDensity, fogDensity);
             Shader.SetGlobalFloat(ID_FogEnabled, waterFog ? 1f : 0f);
+        }
+
+        // Downwelling depth-darkening params, mirrored to globals for the analytic receivers /
+        // objects that read global state (same bridge the fog uses).
+        void PublishDepth()
+        {
+            Shader.SetGlobalColor(ID_DepthExt, EffectiveDepthExtinction);
+            Shader.SetGlobalFloat(ID_DepthStrength, depthDarkenStrength);
+            Shader.SetGlobalFloat(ID_DepthEnabled, depthDarken ? 1f : 0f);
+            Shader.SetGlobalFloat(ID_CausticDepthFade, causticDepthFade);
+            Shader.SetGlobalFloat(ID_GodRayDepthFade, godRayDepthFade);
+        }
+
+        // With the link on, the depth colour tracks the fog extinction so a single dial drives
+        // both; off, the depth colour is authored independently.
+        Color EffectiveDepthExtinction => linkDepthToFog ? fogExtinction : depthExtinction;
+
+        // ---- terrain bed-height bake ----------------------------------------
+        // Sample the terrain heightmap into a pool-space map so shaders can read the real
+        // water-column depth (surface - bed). One-time CPU bake aligned to THIS body's volume
+        // frame; re-run via the context menu / RebakeBed() if the terrain or placement changes.
+        [ContextMenu("Rebake Bed")]
+        public void RebakeBed()
+        {
+            Terrain terrain = bedTerrain != null ? bedTerrain : Terrain.activeTerrain;
+            if (terrain == null) { _bedBaked = false; return; }
+
+            int res = Mathf.Clamp(bedResolution, MinBedResolution, MaxBedResolution);
+            EnsureBedTexture(res);
+
+            float terrainBaseY = terrain.transform.position.y;
+            var pixels = new Color[res * res];
+            for (int z = 0; z < res; z++)
+            {
+                float poolZ = ((z + 0.5f) / res) * 2f - 1f;
+                for (int x = 0; x < res; x++)
+                {
+                    float poolX = ((x + 0.5f) / res) * 2f - 1f;
+                    Vector3 world = PoolToWorld(new Vector3(poolX, 0f, poolZ));
+                    float bedWorldY = terrainBaseY + terrain.SampleHeight(world);
+                    // Only the Y differs from the surface probe, so this yields the bed's pool-space
+                    // height under the same volume frame (correct under rotation / non-uniform extent).
+                    float bedPoolY = WorldToPool(new Vector3(world.x, bedWorldY, world.z)).y;
+                    pixels[z * res + x] = new Color(bedPoolY, 0f, 0f, 0f);
+                }
+            }
+            _bedTex.SetPixels(pixels);
+            _bedTex.Apply(false, false);
+            _bedBaked = true;
+        }
+
+        void EnsureBedTexture(int res)
+        {
+            if (_bedTex != null && _bedTex.width == res) return;
+            if (_bedTex != null) DestroyBedTexture();
+            _bedTex = new Texture2D(res, res, TextureFormat.RFloat, false, true)
+            {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                name = "BedHeightPool"
+            };
+        }
+
+        // Destroy the bed texture safely from either play mode or the editor context menu.
+        void DestroyBedTexture()
+        {
+            if (_bedTex == null) return;
+            if (Application.isPlaying) Destroy(_bedTex); else DestroyImmediate(_bedTex);
+            _bedTex = null;
+        }
+
+        // Bed-height map + shoreline params, mirrored to globals (same bridge fog/depth use).
+        void PublishBed()
+        {
+            if (_bedTex != null) Shader.SetGlobalTexture(ID_BedTex, _bedTex);
+            Shader.SetGlobalFloat(ID_BedValid, _bedBaked ? 1f : 0f);
+            Shader.SetGlobalFloat(ID_UseBedDepth, useBedDepth ? 1f : 0f);
+            Shader.SetGlobalColor(ID_DeepWaterColor, deepWaterColor);
+            Shader.SetGlobalFloat(ID_ShorelineScale, 1f / Mathf.Max(0.01f, shorelineFadeDepth));
+            Shader.SetGlobalFloat(ID_ShorelineStrength, shorelineStrength);
         }
 
         void PublishFoam()

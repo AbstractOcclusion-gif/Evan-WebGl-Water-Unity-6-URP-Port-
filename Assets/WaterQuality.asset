@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: WaterQuality
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterQuality
   selection: 3
-  highSimResolution: 256
+  highSimResolution: 1024
   highCausticResolution: 1024
   highGodRaySteps: 24
   highGodRays: 1
@@ -23,5 +23,5 @@ MonoBehaviour:
   mediumGodRays: 1
   lowSimResolution: 128
   lowCausticResolution: 256
-  lowGodRaySteps: 0
-  lowGodRays: 0
+  lowGodRaySteps: 8
+  lowGodRays: 1

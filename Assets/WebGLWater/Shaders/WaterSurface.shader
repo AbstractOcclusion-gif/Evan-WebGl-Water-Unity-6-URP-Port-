@@ -84,6 +84,9 @@ Shader "WebGLWater/WaterSurface"
             float _SSRStrength, _SSRStepSize, _SSRMaxSteps, _SSRThickness;
             float _RefractionDistortion;
 
+            // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
+            sampler2D _BedTex;
+
             // Foam: _FoamMask (sim buffer) + globals from the controller; _FoamTex
             // is an optional per-material pattern (defaults white = flat foam).
             sampler2D _FoamMask;
@@ -235,7 +238,12 @@ Shader "WebGLWater/WaterSurface"
 
                     float tUnder = (1.0 - fresnel) * length(refractedRay);
                     tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
-                    return float4(lerp(reflectedColor, refractedColor, tUnder), 1.0);
+                    float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
+
+                    // Dim the underwater view by the CAMERA's depth: the deeper the eye, the less
+                    // downwelling light reaches it, so the whole submerged scene reads darker.
+                    underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, _VolumeCenter.y);
+                    return float4(underColor, 1.0);
                 }
                 else
                 {
@@ -278,6 +286,19 @@ Shader "WebGLWater/WaterSurface"
                 #endif
 
                     float3 outColor = lerp(refractedColor, reflectedColor, fresnel * _ReflectionStrength);
+
+                    // ---- Shoreline gradient from the real terrain depth (baked bed map).
+                    // Tint toward the deep-water colour by the water-column depth, so the surface
+                    // reads clear over shallows and dark over the drop-off. No-op until a bed is
+                    // baked and the toggle is on. ----
+                    if (_UseBedDepth > 0.5 && _BedValid > 0.5)
+                    {
+                        float2 bedUV = i.position.xz * 0.5 + 0.5;
+                        float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
+                        float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
+                        float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
+                        outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
+                    }
 
                     // ---- Foam: advected buffer + shoreline border + waterline contact ----
                     if (_FoamEnabled > 0.5)

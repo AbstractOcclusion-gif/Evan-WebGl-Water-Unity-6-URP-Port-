@@ -76,6 +76,10 @@ Shader "WebGLWater/WaterReceiver"
                 float3 ambient = SampleSH(N);
                 float3 color = albedo * (ambient + mainLight.color * (ndl * mainLight.shadowAttenuation));
 
+                // Less light reaches the object the deeper it sits (downwelling), applied to
+                // the ambient + direct term. No-op above the surface / when the feature is off.
+                color *= DownwellingAttenuation(IN.positionWS.y, _VolumeCenter.y);
+
                 // projected caustics where this point is below the (rippled) surface.
                 // Sim height + caustics live in pool space, so convert the world point.
                 float3 poolPos = WorldToPool(IN.positionWS);
@@ -86,7 +90,10 @@ Shader "WebGLWater/WaterReceiver"
                     float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
                     float2 cuv = ProjectCausticUV(poolPos, refractedLight);
                     float caustic = SAMPLE_TEXTURE2D(_CausticTex, sampler_CausticTex, cuv).r;
-                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * mainLight.shadowAttenuation);
+                    // Caustics soften with depth at their own independent rate (world depth,
+                    // consistent with the downwelling term above).
+                    float causticFade = DepthFadeScalar(IN.positionWS.y, _VolumeCenter.y, _CausticDepthFade);
+                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * mainLight.shadowAttenuation);
                     color *= _UnderwaterTint.rgb;
                 }
 

@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: GodRays
+  m_Name: WebGLWater/GodRays
   m_Shader: {fileID: 4800000, guid: 75dfc0c0ccedd1f44ab55cbf2640dff6, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
@@ -25,9 +25,9 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _GodRayDensity: 3.66
+    - _GodRayDensity: 1.5
     - _GodRaySteps: 24
     m_Colors:
-    - _GodRayColor: {r: 0.23139195, g: 0.49680483, b: 0.5924529, a: 1}
+    - _GodRayColor: {r: 1, g: 0.96999997, b: 0.85, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

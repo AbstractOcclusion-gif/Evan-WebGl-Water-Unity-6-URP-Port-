@@ -72,6 +72,10 @@ Shader "WebGLWater/PoolWall"
                 Light mainLight = GetMainLight(shadowCoord);
                 color *= lerp(1.0, mainLight.shadowAttenuation, _ObjectShadowStrength);
 
+                // Downwelling darkening: deeper walls/floor read darker and hue-shifted.
+                // This also fades the floor caustics baked into the wall colour with depth.
+                color *= DownwellingAttenuation(i.worldPos.y, _VolumeCenter.y);
+
                 // depth absorption (shared fog; pool surface sits at the volume centre's Y)
                 color = ApplyWaterFog(color, WaterPathLength(i.worldPos, _WorldSpaceCameraPos, _VolumeCenter.y));
 
