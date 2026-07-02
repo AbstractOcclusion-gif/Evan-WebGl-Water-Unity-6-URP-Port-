@@ -1,0 +1,31 @@
+{
+    "name": "com.abstractocclusion.webgpuwater",
+    "version": "0.1.0",
+    "displayName": "AbstractOcclusion.WebGpuWater",
+    "description": "GPU water for URP: interactive ripple simulation, buoyancy and two-way coupling, surface + edge foam, GPU foam particles, caustics, god rays, and hybrid planar/SSR/sky reflections. Includes the one-window Water Wizard authoring tool (AbstractOcclusion > WebGpuWater > Water Wizard).",
+    "unity": "2022.2",
+    "license": "SEE LICENSE IN LICENSE.md",
+    "dependencies": {},
+    "samples": [
+        {
+            "displayName": "Demo Scenes",
+            "description": "Example water scenes (classic pool, deep and terrain lakes, multi-lake, underwater, open water, reflections, custom object pool) plus the generated meshes, sky, and materials they depend on. Import to try WebGpuWater immediately.",
+            "path": "Samples~/Demos"
+        }
+    ],
+    "keywords": [
+        "water",
+        "ocean",
+        "URP",
+        "simulation",
+        "buoyancy",
+        "foam",
+        "caustics",
+        "reflection",
+        "webgpu"
+    ],
+    "author": {
+        "name": "Abstract Occlusion",
+        "url": "https://abstractocclusion.com"
+    }
+}

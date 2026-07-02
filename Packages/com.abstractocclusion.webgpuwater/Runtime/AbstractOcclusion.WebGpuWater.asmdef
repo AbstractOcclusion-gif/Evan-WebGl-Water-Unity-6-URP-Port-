@@ -1,0 +1,25 @@
+{
+    "name": "AbstractOcclusion.WebGpuWater",
+    "rootNamespace": "AbstractOcclusion.WebGpuWater",
+    "references": [
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.InputSystem",
+        "Unity.Collections"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.universal",
+            "expression": "12.0.0",
+            "define": "WEBGPUWATER_URP"
+        }
+    ],
+    "noEngineReferences": false
+}

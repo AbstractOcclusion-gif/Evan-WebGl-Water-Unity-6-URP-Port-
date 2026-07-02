@@ -11,17 +11,20 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c51fe72019bd25441838cde02c84f2f0, type: 3}
   m_Name: WaterQuality
-  m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterQuality
-  selection: 3
-  highSimResolution: 1024
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterQuality
+  selection: 0
+  highSimResolution: 256
   highCausticResolution: 1024
   highGodRaySteps: 24
   highGodRays: 1
+  highRichReflections: 1
   mediumSimResolution: 128
   mediumCausticResolution: 512
   mediumGodRaySteps: 16
   mediumGodRays: 1
+  mediumRichReflections: 1
   lowSimResolution: 128
   lowCausticResolution: 256
   lowGodRaySteps: 12
   lowGodRays: 1
+  lowRichReflections: 0
