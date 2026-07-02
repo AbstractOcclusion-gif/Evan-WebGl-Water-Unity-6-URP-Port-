@@ -36,7 +36,8 @@ namespace WebGLWater
         static readonly int ID_WaveSpeed = Shader.PropertyToID("_WaveSpeed");
         static readonly int ID_Damping = Shader.PropertyToID("_Damping");
         static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
-        static readonly int ID_FoamDecay = Shader.PropertyToID("_FoamDecay");
+        static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
+        static readonly int ID_FoamDecayResidual = Shader.PropertyToID("_FoamDecayResidual");
         static readonly int ID_FoamSpread = Shader.PropertyToID("_FoamSpread");
         static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
         static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
@@ -168,13 +169,17 @@ namespace WebGLWater
         public void UpdateNormals() => Dispatch(_kNormal);
 
         /// <summary>Advance the foam buffer: advect along the surface flow, diffuse,
-        /// generate from turbulence, decay. Reads the current height/normal state;
-        /// ping-pongs the foam textures.</summary>
-        public void StepFoam(float genRate, float decay, float spread, float fromSpeed, float fromCurv, float advect)
+        /// generate from turbulence, decay. Decay is bi-exponential: thick fresh foam
+        /// survives at <paramref name="decayFresh"/> per step, thin residual lace at the
+        /// (slower, closer to 1) <paramref name="decayResidual"/>. Reads the current
+        /// height/normal state; ping-pongs the foam textures.</summary>
+        public void StepFoam(float genRate, float decayFresh, float decayResidual,
+                             float spread, float fromSpeed, float fromCurv, float advect)
         {
             SetGridUniforms();
             _cs.SetFloat(ID_FoamGenRate, genRate);
-            _cs.SetFloat(ID_FoamDecay, decay);
+            _cs.SetFloat(ID_FoamDecayFresh, decayFresh);
+            _cs.SetFloat(ID_FoamDecayResidual, decayResidual);
             _cs.SetFloat(ID_FoamSpread, spread);
             _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
             _cs.SetFloat(ID_FoamFromCurv, fromCurv);

@@ -39,6 +39,11 @@ static const float4 REST_STATE = float4(0.0, 0.0, 0.0, 0.0);
 // pool in a single step (keeps the semi-Lagrangian advection stable).
 static const float FOAM_MAX_ADVECT_TEXELS = 4.0;
 
+// Foam level at which decay is fully the FRESH rate. Real foam collapses quickly
+// while thick and bright, then the thin residual lace lingers much longer; a single
+// exponential can't do both, so decay blends between two rates by foam amount.
+static const float FOAM_FRESH_THRESHOLD = 0.5;
+
 // Separable 5x5 Gaussian (outer product, weights sum to 16x16 = 256). Used to soften
 // the obstacle footprint so an object injects a smooth bump instead of a hard edge.
 static const float OBSTACLE_BLUR_W[5] = { 1.0, 4.0, 6.0, 4.0, 1.0 };
@@ -83,9 +88,10 @@ float _ObstacleFlipY;   // 1 = flip V to match the sim's coordinate convention
 // surface turbulence, and decayed over time. Separate ping-pong from the height.
 Texture2D<float>    FoamSrc;   // RFloat (r32) - WebGPU-safe single channel
 RWTexture2D<float>  FoamDst;
-float _FoamGenRate;    // how fast turbulence creates foam
-float _FoamDecay;      // per-step survival (e.g. 0.97)
-float _FoamSpread;     // 0..1 diffusion toward neighbour average
+float _FoamGenRate;       // how fast turbulence creates foam
+float _FoamDecayFresh;    // per-step survival of thick, fresh foam (e.g. 0.95)
+float _FoamDecayResidual; // per-step survival of thin residual lace (e.g. 0.995)
+float _FoamSpread;        // 0..1 diffusion toward neighbour average
 float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
 float _FoamAdvect;     // texels foam is carried along the surface flow per step
@@ -229,7 +235,10 @@ void Foam(uint3 id : SV_DispatchThreadID)
     float gen = saturate(speed * _FoamFromSpeed + max(0.0, -lap) * _FoamFromCurv);
     foam += gen * _FoamGenRate;
 
-    foam *= _FoamDecay;
+    // Bi-exponential decay: thick foam dies at the fresh rate, thin foam at the
+    // (slower) residual rate, so bursts collapse fast but leave lingering lace.
+    float freshness = saturate(foam / FOAM_FRESH_THRESHOLD);
+    foam *= lerp(_FoamDecayResidual, _FoamDecayFresh, freshness);
     FoamDst[p] = saturate(foam);
 }
 

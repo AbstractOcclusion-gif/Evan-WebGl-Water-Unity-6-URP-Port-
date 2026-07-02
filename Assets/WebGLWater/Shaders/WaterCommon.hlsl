@@ -8,6 +8,10 @@
 static const float3 ABOVEWATER_COLOR = float3(0.25, 1.0, 1.25);
 static const float3 UNDERWATER_COLOR = float3(0.4, 0.9, 1.0);
 
+// Floor for the pool ambient-occlusion divide, so a point at the pool centre (length(p) -> 0)
+// can't drive the result to Inf.
+#define POOL_AO_MIN_DIST 1e-4
+
 // Global uniforms (set from C# via Shader.SetGlobalX)
 sampler2D   _WaterTex;     // (height, velocity, normal.x, normal.z)
 sampler2D   _CausticTex;   // (caustic intensity, rim shadow, -, -)
@@ -58,7 +62,7 @@ float3 GetWallColor(float3 p)
         normal = float3(0.0, 1.0, 0.0);
     }
 
-    scale /= length(p);                                                        // pool ambient occlusion
+    scale /= max(length(p), POOL_AO_MIN_DIST);                                 // pool ambient occlusion
 
     float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
     float diffuse = max(0.0, dot(refractedLight, normal));
@@ -71,7 +75,7 @@ float3 GetWallColor(float3 p)
     else
     {
         // shadow for the rim of the pool
-        float2 t = IntersectCube(p, refractedLight, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
+        float2 t = IntersectCube(p, refractedLight, POOL_BOX_MIN, POOL_BOX_MAX);
         diffuse *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (p.y + refractedLight.y * t.y - POOL_RIM_HEIGHT)));
         scale += diffuse * 0.5;
     }

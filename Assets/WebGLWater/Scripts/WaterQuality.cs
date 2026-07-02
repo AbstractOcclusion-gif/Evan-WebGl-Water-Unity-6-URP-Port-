@@ -26,13 +26,15 @@ namespace WebGLWater
             public readonly int CausticResolution; // caustic RT size
             public readonly int GodRaySteps;       // raymarch samples for the god-ray shader
             public readonly bool GodRays;          // god-ray pass on/off
+            public readonly bool RichReflections;  // SSR/Planar allowed; when off, bodies cap to SkyOnly
 
-            public Tier(int simResolution, int causticResolution, int godRaySteps, bool godRays)
+            public Tier(int simResolution, int causticResolution, int godRaySteps, bool godRays, bool richReflections)
             {
                 SimResolution = SanitizeResolution(simResolution);
                 CausticResolution = Mathf.Max(MinCausticResolution, causticResolution);
                 GodRaySteps = Mathf.Max(0, godRaySteps);
                 GodRays = godRays;
+                RichReflections = richReflections;
             }
 
             // Round to the nearest valid grid size rather than fail, keeping a floor of one group.
@@ -44,7 +46,7 @@ namespace WebGLWater
         }
 
         /// <summary>Fallback tier when no quality asset is assigned - the original look.</summary>
-        public static Tier Default => new Tier(256, 1024, 24, true);
+        public static Tier Default => new Tier(256, 1024, 24, true, true);
 
         [Tooltip("Auto picks a tier from a capability probe (WebGPU/mobile -> Low). The Force* " +
                  "options pin a specific tier, e.g. to preview Low in a desktop editor.")]
@@ -55,12 +57,16 @@ namespace WebGLWater
         [Min(MinCausticResolution)] public int highCausticResolution = 1024;
         [Range(8, 64)] public int highGodRaySteps = 24;
         public bool highGodRays = true;
+        [Tooltip("Allow SSR/Planar reflections. When off, every body caps to SkyOnly.")]
+        public bool highRichReflections = true;
 
         [Header("Tier: Medium")]
         [Min(ThreadGroupSize)] public int mediumSimResolution = 128;
         [Min(MinCausticResolution)] public int mediumCausticResolution = 512;
         [Range(8, 64)] public int mediumGodRaySteps = 16;
         public bool mediumGodRays = true;
+        [Tooltip("Allow SSR/Planar reflections. When off, every body caps to SkyOnly.")]
+        public bool mediumRichReflections = true;
 
         [Header("Tier: Low (WebGPU / mobile)")]
         [Min(ThreadGroupSize)] public int lowSimResolution = 128;
@@ -69,6 +75,10 @@ namespace WebGLWater
         // scene reads wrong without them (they were the main thing lost on the constrained build).
         [Range(0, 64)] public int lowGodRaySteps = 12;
         public bool lowGodRays = true;
+        // SSR (needs Depth+Opaque) and Planar (a full extra scene render) are the priciest paths;
+        // off by default on the constrained budget so Low falls back to the cheap procedural sky.
+        [Tooltip("Allow SSR/Planar reflections. When off, every body caps to SkyOnly.")]
+        public bool lowRichReflections = false;
 
         /// <summary>The active tier: the forced one, or the capability-probed one under Auto.</summary>
         public Tier Resolve()
@@ -82,9 +92,9 @@ namespace WebGLWater
             }
         }
 
-        Tier High => new Tier(highSimResolution, highCausticResolution, highGodRaySteps, highGodRays);
-        Tier Medium => new Tier(mediumSimResolution, mediumCausticResolution, mediumGodRaySteps, mediumGodRays);
-        Tier Low => new Tier(lowSimResolution, lowCausticResolution, lowGodRaySteps, lowGodRays);
+        Tier High => new Tier(highSimResolution, highCausticResolution, highGodRaySteps, highGodRays, highRichReflections);
+        Tier Medium => new Tier(mediumSimResolution, mediumCausticResolution, mediumGodRaySteps, mediumGodRays, mediumRichReflections);
+        Tier Low => new Tier(lowSimResolution, lowCausticResolution, lowGodRaySteps, lowGodRays, lowRichReflections);
 
         // Pick a tier from the running hardware. The web player is how Unity ships WebGPU
         // builds, and async readback (buoyancy) is often unavailable there - both force Low.

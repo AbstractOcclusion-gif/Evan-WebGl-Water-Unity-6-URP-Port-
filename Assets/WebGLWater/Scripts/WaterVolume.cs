@@ -85,12 +85,21 @@ namespace WebGLWater
 
         public enum ReflectionMode { SkyOnly, SSR, Planar }
 
+        // The reflection BASE (what SkyOnly shows and what SSR/Planar layer over): the built-in
+        // procedural sky cubemap, or the scene's URP reflection probe / skybox (unity_SpecCube0).
+        public enum EnvironmentSource { ProceduralSky, UrpProbe }
+
         [Header("Reflections (Phase 3c)")]
         [Tooltip("How THIS body reflects. SSR (screen-space over the procedural sky) scales to many " +
                  "bodies. Planar is a full extra scene render across this body's plane - use it for at " +
                  "most ONE 'hero' body. SkyOnly is cheapest (procedural sky only). SSR needs Depth + " +
                  "Opaque Texture enabled on the active URP asset.")]
         public ReflectionMode reflectionMode = ReflectionMode.SSR;
+
+        [Tooltip("Reflection base environment. ProceduralSky uses the generated sky cubemap (the demo " +
+                 "look). UrpProbe reflects the scene's active reflection probe / skybox so the water " +
+                 "matches your lit environment. Orthogonal to the mode above and unaffected by the tier.")]
+        public EnvironmentSource environmentSource = EnvironmentSource.ProceduralSky;
 
         /// <summary>The primary water body: the global fallback for objects without a
         /// <see cref="WaterMembership"/>. Per-object association goes through
@@ -216,8 +225,10 @@ namespace WebGLWater
         public bool foam = false;
         [Tooltip("How fast turbulence creates foam.")]
         [Range(0f, 2f)] public float foamGenRate = 0.6f;
-        [Tooltip("Foam survival per step. Lower = fades faster.")]
-        [Range(0.80f, 1f)] public float foamDecay = 0.97f;
+        [Tooltip("Survival per step of thick, fresh foam. Lower = bursts collapse faster.")]
+        [Range(0.80f, 1f)] public float foamDecay = 0.96f;
+        [Tooltip("Survival per step of thin residual lace (should sit above the fresh decay, near 1). Higher = lace lingers longer after the burst.")]
+        [Range(0.90f, 1f)] public float foamDecayResidual = 0.993f;
         [Tooltip("Diffusion of foam toward neighbours.")]
         [Range(0f, 1f)] public float foamSpread = 0.2f;
         [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
@@ -272,11 +283,13 @@ namespace WebGLWater
         bool _heightReady, _readbackInFlight;
         int _simRes = WaterQuality.Default.SimResolution; // grid resolution, set from the quality tier at OnEnable
         bool _godRaysAllowed = true;                       // false when the tier turns god rays off
+        bool _richReflectionsAllowed = true;               // false when the tier caps reflections to SkyOnly
         // Per-body surface material instances so reflection keywords don't leak across bodies
         // that share the source material. Created at OnEnable, destroyed at OnDisable.
         Material _surfaceAboveInstance, _surfaceUnderInstance;
         const string KW_SSR = "_USE_SSR";
         const string KW_PLANAR = "_USE_PLANAR";
+        const string KW_URP_PROBE = "_USE_URP_PROBE";
         Material _causticMat;
         RenderTexture _causticRT;
         Texture2D _bedTex;   // pool-space terrain bed height (R), baked from the Terrain
@@ -284,6 +297,12 @@ namespace WebGLWater
         RenderTexture _heightMip;
         CommandBuffer _cb;
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
+
+        // Two sinks over the SAME uniform derivations (see WriteBodyUniforms): one writes into
+        // this body's property block (per-body renderers), one writes the global fallback that
+        // object shaders without a WaterMembership read. Cached to avoid per-frame allocation.
+        readonly MpbUniformSink _mpbSink = new MpbUniformSink();
+        readonly GlobalUniformSink _globalSink = new GlobalUniformSink();
 
         bool _paused;
 
@@ -504,6 +523,7 @@ namespace WebGLWater
             _simRes = tier.SimResolution;
             causticResolution = tier.CausticResolution;
             _godRaysAllowed = tier.GodRays;
+            _richReflectionsAllowed = tier.RichReflections;
 
             // Clamp to >= 1 so a "god rays off" tier (0 steps) never bakes a divide-by-zero
             // into the shared god-ray material; the renderer is disabled separately via _godRaysAllowed.
@@ -512,8 +532,9 @@ namespace WebGLWater
         }
 
         // Give the surface renderers per-body material instances and set their reflection
-        // keywords from reflectionMode, so bodies in different modes don't fight over one
-        // shared material. A Planar body also binds the scene's single planar reflection.
+        // keywords from the tier-capped EffectiveReflectionMode, so bodies in different modes
+        // don't fight over one shared material. A Planar body also binds the scene's single
+        // planar reflection.
         void ApplyReflections()
         {
             _surfaceAboveInstance = InstanceSurfaceMaterial(surfaceAbove);
@@ -521,8 +542,14 @@ namespace WebGLWater
             ApplyReflectionKeywords(_surfaceAboveInstance);
             ApplyReflectionKeywords(_surfaceUnderInstance);
 
-            if (reflectionMode == ReflectionMode.Planar) BindHeroPlanar();
+            if (EffectiveReflectionMode == ReflectionMode.Planar) BindHeroPlanar();
         }
+
+        // The authored reflectionMode capped by the active quality tier: SSR/Planar collapse to
+        // SkyOnly when the tier disallows rich reflections (e.g. Low). Keeps the field's intent
+        // intact so raising the tier restores the authored mode without re-editing the body.
+        ReflectionMode EffectiveReflectionMode =>
+            _richReflectionsAllowed ? reflectionMode : ReflectionMode.SkyOnly;
 
         // Replace the renderer's shared material with a per-body instance (play-mode only, so
         // the scene asset is untouched; the instance is destroyed in OnDisable).
@@ -537,8 +564,11 @@ namespace WebGLWater
         void ApplyReflectionKeywords(Material m)
         {
             if (m == null) return;
-            SetKeyword(m, KW_SSR, reflectionMode == ReflectionMode.SSR);
-            SetKeyword(m, KW_PLANAR, reflectionMode == ReflectionMode.Planar);
+            SetKeyword(m, KW_SSR, EffectiveReflectionMode == ReflectionMode.SSR);
+            SetKeyword(m, KW_PLANAR, EffectiveReflectionMode == ReflectionMode.Planar);
+            // Base environment is independent of the mode above and of the tier: a single cube
+            // sample either way, so it is not capped on Low.
+            SetKeyword(m, KW_URP_PROBE, environmentSource == EnvironmentSource.UrpProbe);
         }
 
         static void SetKeyword(Material m, string keyword, bool on)
@@ -633,54 +663,95 @@ namespace WebGLWater
         public void WriteBodyProps(MaterialPropertyBlock mpb)
         {
             mpb.Clear();
+            _mpbSink.Target = mpb;
+            WriteBodyUniforms(_mpbSink);
+        }
 
+        // Single source of truth for this body's per-frame uniform derivations. Written either
+        // into a property block (WriteBodyProps) or to shader globals (PublishBodyGlobals) via
+        // the sink, so the values are derived once. Texture guards match both former paths.
+        void WriteBodyUniforms(IUniformSink sink)
+        {
             if (_water != null)
             {
-                mpb.SetTexture(ID_Water, _water.Texture);
-                mpb.SetVector(ID_WaterTexel, WaterTexel);
-                if (_water.FoamTexture != null) mpb.SetTexture(ID_FoamMask, _water.FoamTexture);
+                sink.SetTexture(ID_Water, _water.Texture);
+                sink.SetVector(ID_WaterTexel, WaterTexel);
+                if (_water.FoamTexture != null) sink.SetTexture(ID_FoamMask, _water.FoamTexture);
             }
-            if (_causticRT != null) mpb.SetTexture(ID_Caustic, _causticRT);
+            if (_causticRT != null) sink.SetTexture(ID_Caustic, _causticRT);
 
-            mpb.SetVector(ID_VolumeCenter, VolumeCenter);
-            mpb.SetVector(ID_VolumeExtent, VolumeExtentSafe);
-            mpb.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
+            sink.SetVector(ID_VolumeCenter, VolumeCenter);
+            sink.SetVector(ID_VolumeExtent, VolumeExtentSafe);
+            sink.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
 
-            mpb.SetFloat(ID_SimWindowed, _windowed ? 1f : 0f);
-            mpb.SetVector(ID_SimCenter, _simCenter);
-            mpb.SetVector(ID_SimExtent, SimHalfExtent);
-            mpb.SetFloat(ID_SimEdgeFade, simWindowEdgeFadeTexels);
+            sink.SetFloat(ID_SimWindowed, _windowed ? 1f : 0f);
+            sink.SetVector(ID_SimCenter, _simCenter);
+            sink.SetVector(ID_SimExtent, SimHalfExtent);
+            sink.SetFloat(ID_SimEdgeFade, simWindowEdgeFadeTexels);
 
-            mpb.SetVectorArray(ID_WaveA, _waveBank.PackedA);
-            mpb.SetVectorArray(ID_WaveB, _waveBank.PackedB);
-            mpb.SetFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
-            mpb.SetFloat(ID_WaveMeters, WaveMetersPerUnit);
-            mpb.SetFloat(ID_WaveNormal, waveNormalStrength);
+            sink.SetVectorArray(ID_WaveA, _waveBank.PackedA);
+            sink.SetVectorArray(ID_WaveB, _waveBank.PackedB);
+            sink.SetFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
+            sink.SetFloat(ID_WaveMeters, WaveMetersPerUnit);
+            sink.SetFloat(ID_WaveNormal, waveNormalStrength);
 
-            mpb.SetColor(ID_FogColor, fogColor);
-            mpb.SetColor(ID_FogExt, fogExtinction);
-            mpb.SetFloat(ID_FogDensity, fogDensity);
-            mpb.SetFloat(ID_FogEnabled, waterFog ? 1f : 0f);
-            mpb.SetFloat(ID_WaterOpacity, waterOpacity);
+            sink.SetColor(ID_FogColor, fogColor);
+            sink.SetColor(ID_FogExt, fogExtinction);
+            sink.SetFloat(ID_FogDensity, fogDensity);
+            sink.SetFloat(ID_FogEnabled, waterFog ? 1f : 0f);
+            sink.SetFloat(ID_WaterOpacity, waterOpacity);
 
-            mpb.SetColor(ID_DepthExt, EffectiveDepthExtinction);
-            mpb.SetFloat(ID_DepthStrength, depthDarkenStrength);
-            mpb.SetFloat(ID_DepthEnabled, depthDarken ? 1f : 0f);
-            mpb.SetFloat(ID_CausticDepthFade, causticDepthFade);
-            mpb.SetFloat(ID_GodRayDepthFade, godRayDepthFade);
+            sink.SetColor(ID_DepthExt, EffectiveDepthExtinction);
+            sink.SetFloat(ID_DepthStrength, depthDarkenStrength);
+            sink.SetFloat(ID_DepthEnabled, depthDarken ? 1f : 0f);
+            sink.SetFloat(ID_CausticDepthFade, causticDepthFade);
+            sink.SetFloat(ID_GodRayDepthFade, godRayDepthFade);
 
-            if (_bedTex != null) mpb.SetTexture(ID_BedTex, _bedTex);
-            mpb.SetFloat(ID_BedValid, _bedBaked ? 1f : 0f);
-            mpb.SetFloat(ID_UseBedDepth, useBedDepth ? 1f : 0f);
-            mpb.SetColor(ID_DeepWaterColor, deepWaterColor);
-            mpb.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(0.01f, shorelineFadeDepth));
-            mpb.SetFloat(ID_ShorelineStrength, shorelineStrength);
+            if (_bedTex != null) sink.SetTexture(ID_BedTex, _bedTex);
+            sink.SetFloat(ID_BedValid, _bedBaked ? 1f : 0f);
+            sink.SetFloat(ID_UseBedDepth, useBedDepth ? 1f : 0f);
+            sink.SetColor(ID_DeepWaterColor, deepWaterColor);
+            sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(0.01f, shorelineFadeDepth));
+            sink.SetFloat(ID_ShorelineStrength, shorelineStrength);
 
-            mpb.SetColor(ID_FoamColor, foamColor);
-            mpb.SetFloat(ID_FoamEnabled, foam ? 1f : 0f);
-            mpb.SetFloat(ID_FoamStrength, foamStrength);
-            mpb.SetFloat(ID_FoamBorder, foamBorderWidth);
-            mpb.SetFloat(ID_FoamContact, foamContactDepth);
+            sink.SetColor(ID_FoamColor, foamColor);
+            sink.SetFloat(ID_FoamEnabled, foam ? 1f : 0f);
+            sink.SetFloat(ID_FoamStrength, foamStrength);
+            sink.SetFloat(ID_FoamBorder, foamBorderWidth);
+            sink.SetFloat(ID_FoamContact, foamContactDepth);
+        }
+
+        // A write target for the per-body uniforms: either a MaterialPropertyBlock or the
+        // global shader state. Only the id-keyed setters WriteBodyUniforms needs are exposed.
+        interface IUniformSink
+        {
+            void SetFloat(int id, float value);
+            void SetColor(int id, Color value);
+            void SetVector(int id, Vector4 value);
+            void SetMatrix(int id, Matrix4x4 value);
+            void SetVectorArray(int id, Vector4[] value);
+            void SetTexture(int id, Texture value);
+        }
+
+        sealed class MpbUniformSink : IUniformSink
+        {
+            public MaterialPropertyBlock Target;
+            public void SetFloat(int id, float value) => Target.SetFloat(id, value);
+            public void SetColor(int id, Color value) => Target.SetColor(id, value);
+            public void SetVector(int id, Vector4 value) => Target.SetVector(id, value);
+            public void SetMatrix(int id, Matrix4x4 value) => Target.SetMatrix(id, value);
+            public void SetVectorArray(int id, Vector4[] value) => Target.SetVectorArray(id, value);
+            public void SetTexture(int id, Texture value) => Target.SetTexture(id, value);
+        }
+
+        sealed class GlobalUniformSink : IUniformSink
+        {
+            public void SetFloat(int id, float value) => Shader.SetGlobalFloat(id, value);
+            public void SetColor(int id, Color value) => Shader.SetGlobalColor(id, value);
+            public void SetVector(int id, Vector4 value) => Shader.SetGlobalVector(id, value);
+            public void SetMatrix(int id, Matrix4x4 value) => Shader.SetGlobalMatrix(id, value);
+            public void SetVectorArray(int id, Vector4[] value) => Shader.SetGlobalVectorArray(id, value);
+            public void SetTexture(int id, Texture value) => Shader.SetGlobalTexture(id, value);
         }
 
         void ApplyBlockTo(Renderer r) { if (r != null) r.SetPropertyBlock(_mpb); }
@@ -795,23 +866,9 @@ namespace WebGLWater
 
         // Mirror this (primary) body's per-body data to global shader state, so objects and
         // the analytic receivers - which still read globals in Phase 1 - follow this body.
-        void PublishBodyGlobals()
-        {
-            if (_water != null)
-            {
-                Shader.SetGlobalTexture(ID_Water, _water.Texture);
-                Shader.SetGlobalVector(ID_WaterTexel, WaterTexel);
-                if (_water.FoamTexture != null) Shader.SetGlobalTexture(ID_FoamMask, _water.FoamTexture);
-            }
-            if (_causticRT != null) Shader.SetGlobalTexture(ID_Caustic, _causticRT);
-            PublishVolume();
-            PublishSimWindow();
-            PublishFog();
-            PublishDepth();
-            PublishBed();
-            PublishFoam();
-            PublishWaves();
-        }
+        // The primary body mirrors its per-body uniforms to shader globals, the fallback that
+        // object shaders without a WaterMembership read. Same derivations as the property block.
+        void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
 
         // ---- height readback for buoyancy ----------------------------------
         void RequestHeightReadback()
@@ -1030,7 +1087,8 @@ namespace WebGLWater
             _water.UpdateNormals();
 
             if (foam)
-                _water.StepFoam(foamGenRate, foamDecay, foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect);
+                _water.StepFoam(foamGenRate, foamDecay, foamDecayResidual,
+                                foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect);
         }
 
         void UpdateCaustics()
@@ -1153,22 +1211,6 @@ namespace WebGLWater
             _simCenter = VolumeCenter + VolumeRotation * new Vector3(_simCellX * texel, 0f, _simCellZ * texel);
         }
 
-        // Sim-window uniforms mirrored to globals (same bridge fog/volume use).
-        void PublishSimWindow()
-        {
-            Shader.SetGlobalFloat(ID_SimWindowed, _windowed ? 1f : 0f);
-            Shader.SetGlobalVector(ID_SimCenter, _simCenter);
-            Shader.SetGlobalVector(ID_SimExtent, SimHalfExtent);
-            Shader.SetGlobalFloat(ID_SimEdgeFade, simWindowEdgeFadeTexels);
-        }
-
-        void PublishVolume()
-        {
-            Shader.SetGlobalVector(ID_VolumeCenter, VolumeCenter);
-            Shader.SetGlobalVector(ID_VolumeExtent, VolumeExtentSafe);
-            Shader.SetGlobalMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
-        }
-
         // World point -> pool. Returns false if outside the [-1,1] horizontal footprint.
         bool WorldToPoolXZ(Vector3 world, out float poolX, out float poolZ)
         {
@@ -1219,36 +1261,8 @@ namespace WebGLWater
             _waveGenEnabled = windWaves;
         }
 
-        // Wave arrays are per-body (mirrored to globals only by the primary). The wave
-        // CLOCK (_WaveTime) is shared and published in PublishSharedGlobals.
-        void PublishWaves()
-        {
-            Shader.SetGlobalVectorArray(ID_WaveA, _waveBank.PackedA);
-            Shader.SetGlobalVectorArray(ID_WaveB, _waveBank.PackedB);
-            Shader.SetGlobalFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
-            Shader.SetGlobalFloat(ID_WaveMeters, WaveMetersPerUnit);
-            Shader.SetGlobalFloat(ID_WaveNormal, waveNormalStrength);
-        }
-
-        void PublishFog()
-        {
-            Shader.SetGlobalColor(ID_FogColor, fogColor);
-            Shader.SetGlobalColor(ID_FogExt, fogExtinction);
-            Shader.SetGlobalFloat(ID_FogDensity, fogDensity);
-            Shader.SetGlobalFloat(ID_FogEnabled, waterFog ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_WaterOpacity, waterOpacity);
-        }
-
-        // Downwelling depth-darkening params, mirrored to globals for the analytic receivers /
-        // objects that read global state (same bridge the fog uses).
-        void PublishDepth()
-        {
-            Shader.SetGlobalColor(ID_DepthExt, EffectiveDepthExtinction);
-            Shader.SetGlobalFloat(ID_DepthStrength, depthDarkenStrength);
-            Shader.SetGlobalFloat(ID_DepthEnabled, depthDarken ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_CausticDepthFade, causticDepthFade);
-            Shader.SetGlobalFloat(ID_GodRayDepthFade, godRayDepthFade);
-        }
+        // Wave arrays are per-body, mirrored to globals only by the primary (see WriteBodyUniforms).
+        // The wave CLOCK (_WaveTime) is genuinely shared and published in PublishSharedGlobals.
 
         // With the link on, the depth colour tracks the fog extinction so a single dial drives
         // both; off, the depth colour is authored independently.
@@ -1306,28 +1320,6 @@ namespace WebGLWater
             if (_bedTex == null) return;
             if (Application.isPlaying) Destroy(_bedTex); else DestroyImmediate(_bedTex);
             _bedTex = null;
-        }
-
-        // Bed-height map + shoreline params, mirrored to globals (same bridge fog/depth use).
-        void PublishBed()
-        {
-            if (_bedTex != null) Shader.SetGlobalTexture(ID_BedTex, _bedTex);
-            Shader.SetGlobalFloat(ID_BedValid, _bedBaked ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_UseBedDepth, useBedDepth ? 1f : 0f);
-            Shader.SetGlobalColor(ID_DeepWaterColor, deepWaterColor);
-            Shader.SetGlobalFloat(ID_ShorelineScale, 1f / Mathf.Max(0.01f, shorelineFadeDepth));
-            Shader.SetGlobalFloat(ID_ShorelineStrength, shorelineStrength);
-        }
-
-        void PublishFoam()
-        {
-            if (_water != null && _water.FoamTexture != null)
-                Shader.SetGlobalTexture(ID_FoamMask, _water.FoamTexture);
-            Shader.SetGlobalColor(ID_FoamColor, foamColor);
-            Shader.SetGlobalFloat(ID_FoamEnabled, foam ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_FoamStrength, foamStrength);
-            Shader.SetGlobalFloat(ID_FoamBorder, foamBorderWidth);
-            Shader.SetGlobalFloat(ID_FoamContact, foamContactDepth);
         }
 
         // ---- camera ---------------------------------------------------------

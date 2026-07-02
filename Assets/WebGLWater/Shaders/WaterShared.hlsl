@@ -11,6 +11,13 @@
 #define POOL_HEIGHT     1.0          // pool floor sits at y = -POOL_HEIGHT
 #define POOL_RIM_HEIGHT (2.0 / 12.0) // top of the pool walls, in pool units
 
+// Pool interior as an axis-aligned box in pool space, used by every analytic ray march
+// (surface refraction, caustics, underwater fog). Floor at -POOL_HEIGHT; the top gives
+// headroom above the surface so upward rays don't clip the waterline.
+#define POOL_BOX_TOP 2.0
+#define POOL_BOX_MIN float3(-1.0, -POOL_HEIGHT, -1.0)
+#define POOL_BOX_MAX float3(1.0, POOL_BOX_TOP, 1.0)
+
 #define CAUSTIC_PROJECTION_SCALE 0.75 // fits the projected caustic map into the pool footprint
 
 // Rim-shadow sigmoid shaping (softens the pool-wall shadow edge in the caustic/wall passes).

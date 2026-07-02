@@ -38,7 +38,7 @@ Shader "WebGLWater/Caustics"
             // project the ray onto the pool floor plane
             float3 project(float3 origin, float3 ray, float3 refractedLight)
             {
-                float2 tcube = IntersectCube(origin, ray, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
+                float2 tcube = IntersectCube(origin, ray, POOL_BOX_MIN, POOL_BOX_MAX);
                 origin += ray * tcube.y;
                 float tplane = (-origin.y - 1.0) / refractedLight.y;
                 return origin + refractedLight * tplane;
@@ -79,7 +79,7 @@ Shader "WebGLWater/Caustics"
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
 
                 // shadow for the rim of the pool
-                float2 t = IntersectCube(i.newPos, -refractedLight, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
+                float2 t = IntersectCube(i.newPos, -refractedLight, POOL_BOX_MIN, POOL_BOX_MAX);
                 col.r *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (i.newPos.y - refractedLight.y * t.y - POOL_RIM_HEIGHT)));
 
                 return col;

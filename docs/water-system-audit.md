@@ -44,13 +44,28 @@ Fourth cleanup pass (2026-07-01): **`Build` decomposition (12)** — the ~200-li
 into `CreateWaterMaterials` / `CreateDemoObjects` / `CreateGodRays` / `SetUpCamera` / `CreateSun` /
 `CreateSplashEmitter`, leaving controller wiring as the orchestration core (Unity: no compile errors).
 
-**Still open** (next passes): MPB-vs-global de-dup (10); per-frame body-resolution cache (11);
-`public`→`[SerializeField] private` (14, needs care — the builder writes many of
-these, best done with the packaging asmdefs); a few remaining single-use shader nits (`WaterSurface`
-peaked-refine `5`/`0.005` and foam-nudge `0.1`, the analytic box `float3(1,2,1)` y-max, the
-`WaterCommon`/`Caustics` `length(p)`/`sqrt` guards — findings 9, 12, 13, 16); and deleting the deprecated
-`WaterSphere.shader` (21 — do it from the Unity editor: it's still referenced by `Generated/Sphere.mat`,
-so the editor will confirm nothing else uses that material before removal).
+Fifth cleanup pass (2026-07-02) — verified in-editor, all green:
+
+- **MPB-vs-global de-dup (10):** one writer `WaterVolume.WriteBodyUniforms(IUniformSink)` derives the
+  ~35 per-body uniforms once; two cached sinks route them to this body's `MaterialPropertyBlock` or to
+  shader globals. The seven `Publish*` methods (`PublishVolume/SimWindow/Fog/Depth/Bed/Foam/Waves`) are
+  deleted; `WriteBodyProps` stays public for `WaterMembership`; `PublishSharedGlobals` (sun/env/clock)
+  untouched.
+- **Single-use shader nits:** named `POOL_BOX_MIN/MAX/TOP` in `WaterShared.hlsl` (replaced the
+  `float3(-1,-POOL_HEIGHT,-1)`/`float3(1,2,1)` analytic box in all six sites across
+  `WaterSurface`/`Caustics`/`WaterCommon`); `PEAKED_REFINE_STEPS`/`PEAKED_REFINE_STEP` and
+  `FOAM_NORMAL_NUDGE` in `WaterSurface`; a `POOL_AO_MIN_DIST` guard on `scale /= length(p)` in
+  `WaterCommon`. (`Caustics` `sqrt` was already guarded by blocker 2.)
+- **Dead code (21):** deleted `WaterSphere.shader`, `Generated/Sphere.mat`, `Generated/UnitSphere.asset`
+  from the editor (0 remaining references; the shader was referenced only by the material).
+
+**Deferred:** per-frame body-resolution cache (11) — the three callers query different points at
+different clocks (`WaterBuoyancy`@`transform.position`/FixedUpdate, `WaterSplash`@`worldCenterOfMass`/
+FixedUpdate, `WaterMembership`@`transform.position`/LateUpdate), so a *behavior-preserving* cache almost
+never hits and a real win isn't behavior-preserving. Revisit when object count actually grows.
+
+**Still open** (next passes): `public`→`[SerializeField] private` (14, needs care — the builder writes
+many of these, best folded into the packaging asmdef split).
 
 **Already clean (no findings):** `WaterQuality.cs`, `WaterFog.hlsl`, `WaterWaves.hlsl`,
 `ObstacleDepth.shader` — named constants, immutable structs, guarded divides, WHY-comments. Good

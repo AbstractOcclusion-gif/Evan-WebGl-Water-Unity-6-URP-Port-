@@ -59,6 +59,14 @@ namespace WebGLWater.EditorTools
         internal const string PropRealRefraction = "_RealRefraction";
         internal const string KeywordRealRefraction = "_REAL_REFRACTION";
         internal const string PropGodRayColor = "_GodRayColor";
+        internal const string PropFoamTex = "_FoamTex";
+        internal const string PropFoamTexFrames = "_FoamTexFrames";
+
+        // Foam pattern flipbook (frames laid out in a grid; the surface shader
+        // cross-fades frames over time so the foam churns internally).
+        const string FoamFlipbookPath = Gen + "/FoamFlipbook_4x4.png";
+        const int FoamFlipbookCols = 4;
+        const int FoamFlipbookRows = 4;
 
         // Cooler, more underwater-blue god rays than the shader's warm default (1.0, 0.97, 0.85).
         static readonly Color DefaultGodRayColor = new Color(0.70f, 0.85f, 1.0f, 1f);
@@ -284,7 +292,7 @@ namespace WebGLWater.EditorTools
             float cullFront = (float)UnityEngine.Rendering.CullMode.Front;
             float cullBack = (float)UnityEngine.Rendering.CullMode.Back;
             var above = LoadOrCreateMaterial(folder + "/WaterAbove.mat", sfWater,
-                                             m => { m.SetFloat(PropUnderwater, 0f); m.SetFloat(PropCull, cullBack); EnableRealRefraction(m); });
+                                             m => { m.SetFloat(PropUnderwater, 0f); m.SetFloat(PropCull, cullBack); EnableRealRefraction(m); AssignFoamFlipbook(m); });
             var under = LoadOrCreateMaterial(folder + "/WaterUnder.mat", sfWater,
                                              m => { m.SetFloat(PropUnderwater, 1f); m.SetFloat(PropCull, cullFront); EnableRealRefraction(m); });
             Material pool = null;
@@ -299,6 +307,16 @@ namespace WebGLWater.EditorTools
         {
             m.SetFloat(PropRealRefraction, 1f);
             m.EnableKeyword(KeywordRealRefraction);
+        }
+
+        // Give a new above-water material the animated foam pattern. Skipped silently when
+        // the flipbook asset is absent: the shader's white default degrades to flat foam.
+        static void AssignFoamFlipbook(Material m)
+        {
+            var flipbook = LoadFlipbook(FoamFlipbookPath, TextureWrapMode.Repeat, true);
+            if (flipbook == null) return;
+            m.SetTexture(PropFoamTex, flipbook);
+            m.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
         }
 
         // Underwater god-ray volume (caustic-masked light shafts). Returns null if the shader is

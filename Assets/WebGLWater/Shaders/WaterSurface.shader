@@ -16,6 +16,7 @@ Shader "WebGLWater/WaterSurface"
         [Header(Hybrid Reflections)]
         [Toggle(_USE_PLANAR)] _UsePlanar ("Use Planar Reflection", Float) = 0
         [Toggle(_USE_SSR)]    _UseSSR    ("Use Screen Space Reflection", Float) = 0
+        [Toggle(_USE_URP_PROBE)] _UseUrpProbe ("Reflect URP Environment Probe (else procedural sky)", Float) = 0
         _ReflectionDistortion ("Reflection Distortion", Range(0,0.2)) = 0.05
         _SSRStrength  ("SSR Strength", Range(0,1)) = 1.0
         _SSRStepSize  ("SSR Step Size (world units)", Range(0.005,0.2)) = 0.03
@@ -29,7 +30,9 @@ Shader "WebGLWater/WaterSurface"
         // object/pool shaders so it's consistent however you view the water.
 
         [Header(Foam)]
-        _FoamTex ("Foam Pattern (optional)", 2D) = "white" {}
+        _FoamTex ("Foam Pattern (optional, may be a flipbook)", 2D) = "white" {}
+        _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
+        _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
     }
     SubShader
     {
@@ -54,6 +57,7 @@ Shader "WebGLWater/WaterSurface"
             // the surface fall back to the flat analytic look in a build.
             #pragma multi_compile_local _ _USE_PLANAR
             #pragma multi_compile_local _ _USE_SSR
+            #pragma multi_compile_local _ _USE_URP_PROBE
             #pragma multi_compile_local _ _REAL_REFRACTION
             #include "UnityCG.cginc"
             #include "WaterCommon.hlsl"
@@ -68,6 +72,30 @@ Shader "WebGLWater/WaterSurface"
             #define FRESNEL_POWER           3.0
             #define FRESNEL_MIN_ABOVE       0.25
             #define FRESNEL_MIN_BELOW       0.5
+
+            // Peaked-look refine: a few short steps along the ripple normal sharpen wave crests.
+            #define PEAKED_REFINE_STEPS 5
+            #define PEAKED_REFINE_STEP  0.005
+            // Perturb the foam texture UV by the surface tilt so foam rides the ripples.
+            #define FOAM_NORMAL_NUDGE   0.1
+            // Skip all foam texture work below this mask level (nothing would be visible).
+            #define FOAM_MASK_EPSILON   0.005
+            // Flow-phased pattern drift: how far the foam pattern is dragged along the
+            // local surface flow (UV units per phase) and how fast the two phases cycle.
+            // Two half-offset phases cross-faded by a seesaw weight hide the reset jump
+            // (classic flowmap trick), so the pattern drifts forever without stretching.
+            #define FOAM_FLOW_DISTANCE  0.35
+            #define FOAM_FLOW_RATE      0.5
+            // Two-layer look: mask level where the dense core starts/saturates, softness
+            // of the lace erosion edge, and how far the core is pushed toward plain white.
+            #define FOAM_CORE_START     0.55
+            #define FOAM_CORE_FULL      0.95
+            #define FOAM_LACE_SOFTNESS  0.25
+            #define FOAM_CORE_WHITEN    0.7
+            // Foam lighting: wrapped diffuse keeps the unlit side from going black
+            // (foam scatters light), plus a flat ambient floor from the sky.
+            #define FOAM_LIGHT_WRAP     0.4
+            #define FOAM_AMBIENT        0.35
 
             float _Underwater;
             float _ReflectionStrength;
@@ -92,6 +120,8 @@ Shader "WebGLWater/WaterSurface"
             sampler2D _FoamMask;
             sampler2D _FoamTex;
             float4 _FoamTex_ST;
+            float4 _FoamTexFrames; // (cols, rows) of the flipbook grid; (1,1) = plain texture
+            float  _FoamTexFPS;
             float4 _FoamColor;
             float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
 
@@ -155,6 +185,30 @@ Shader "WebGLWater/WaterSurface"
                 return info;
             }
 
+            // Sample the foam pattern. When _FoamTexFrames describes a flipbook grid the
+            // frame advances at _FoamTexFPS and consecutive frames are cross-faded, so the
+            // foam churns internally even where the mask is static. A (1,1) grid reduces
+            // to a plain tiled lookup, so existing single-image materials are unaffected.
+            float3 SampleFoamPattern(float2 uv)
+            {
+                float cols = max(1.0, _FoamTexFrames.x);
+                float rows = max(1.0, _FoamTexFrames.y);
+                float frameCount = cols * rows;
+                float framePos = _Time.y * _FoamTexFPS;
+                float frameBlend = frac(framePos);
+
+                float frameA = fmod(floor(framePos), frameCount);
+                float frameB = fmod(frameA + 1.0, frameCount);
+                // Flipbooks read left-to-right, top-to-bottom; texture V runs bottom-up.
+                float2 cellA = float2(fmod(frameA, cols), rows - 1.0 - floor(frameA / cols));
+                float2 cellB = float2(fmod(frameB, cols), rows - 1.0 - floor(frameB / cols));
+
+                float2 tiled = frac(uv);
+                float3 a = tex2D(_FoamTex, (tiled + cellA) / float2(cols, rows)).rgb;
+                float3 b = tex2D(_FoamTex, (tiled + cellB) / float2(cols, rows)).rgb;
+                return lerp(a, b, frameBlend);
+            }
+
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {
@@ -205,12 +259,12 @@ Shader "WebGLWater/WaterSurface"
                 float3 color;
                 if (worldRay.y < 0.0)
                 {
-                    float2 t = IntersectCube(po, pd, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
+                    float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
                     color = GetWallColor(po + pd * t.y);
                 }
                 else
                 {
-                    float2 t = IntersectCube(po, pd, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
+                    float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
                     float3 hit = po + pd * t.y;
                     if (hit.y < POOL_RIM_HEIGHT)
                     {
@@ -218,7 +272,15 @@ Shader "WebGLWater/WaterSurface"
                     }
                     else
                     {
+                    #if defined(_USE_URP_PROBE)
+                        // Reflect the scene's active reflection probe / skybox: URP binds it to
+                        // unity_SpecCube0, so the water matches the user's lit environment rather
+                        // than the baked procedural sky. Mip 0 keeps the reflection mirror-sharp.
+                        half4 encodedProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, worldRay, 0);
+                        color = DecodeHDR(encodedProbe, unity_SpecCube0_HDR).rgb;
+                    #else
                         color = texCUBE(_Sky, worldRay).rgb;
+                    #endif
                         // sun glint - direction from _LightDir, tint/brightness from the Unity sun
                         color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
                     }
@@ -237,9 +299,9 @@ Shader "WebGLWater/WaterSurface"
                 float2 coord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                                     : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
                 [unroll]
-                for (int k = 0; k < 5; k++)
+                for (int k = 0; k < PEAKED_REFINE_STEPS; k++)
                 {
-                    coord += info.ba * 0.005;
+                    coord += info.ba * PEAKED_REFINE_STEP;
                     info = SampleWaterBilinear(coord);
                 }
                 info.ba *= fade; // keep the windowed ripple faded to flat at the border (no-op when fade = 1)
@@ -324,7 +386,7 @@ Shader "WebGLWater/WaterSurface"
                     // pool, found by intersecting the unit box in pool space then measuring
                     // the world chord (correct under non-uniform extent / rotation).
                     float3 pdFog = WorldDirToPool(refractedRay);
-                    float2 tfog = IntersectCube(i.position, pdFog, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
+                    float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
                     float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
                     refractedColor = ApplyWaterFog(refractedColor, length(exitWorld - i.worldPos));
                 #endif
@@ -371,10 +433,35 @@ Shader "WebGLWater/WaterSurface"
 
                         float mask = saturate((advected + border + contact) * _FoamStrength);
 
-                        // appearance: optional tiling pattern, nudged by the ripple normal
-                        float2 fuv = fcoord * _FoamTex_ST.xy + _FoamTex_ST.zw + normal.xz * 0.1;
-                        float3 foamLook = _FoamColor.rgb * tex2D(_FoamTex, fuv).rgb;
-                        outColor = lerp(outColor, foamLook, mask);
+                        if (mask > FOAM_MASK_EPSILON)
+                        {
+                            // ---- Pattern: tiled/flipbook texture dragged along the local
+                            // surface flow. Two half-offset phases cross-faded by a seesaw
+                            // weight give endless drift with no visible reset. ----
+                            float2 fuv = fcoord * _FoamTex_ST.xy + _FoamTex_ST.zw + normal.xz * FOAM_NORMAL_NUDGE;
+                            float2 flowDir = nxz * FOAM_FLOW_DISTANCE; // ripple + wind-wave slope = flow
+                            float phaseA = frac(_Time.y * FOAM_FLOW_RATE);
+                            float phaseB = frac(phaseA + 0.5);
+                            float seesaw = abs(phaseA * 2.0 - 1.0);
+                            float3 pattern = lerp(SampleFoamPattern(fuv - flowDir * phaseA),
+                                                  SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+
+                            // ---- Two layers. Core: dense white where the mask is thick.
+                            // Lace: as the mask thins, the pattern's dark regions erode away
+                            // first, so decaying foam breaks into filaments instead of
+                            // uniformly ghosting out. ----
+                            float core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
+                            float lace = saturate((pattern.r - (1.0 - mask)) / FOAM_LACE_SOFTNESS);
+                            float foamAlpha = max(core, lace * mask);
+
+                            // ---- Lit foam: wrapped diffuse from the sun over an ambient
+                            // floor, so foam shades with the waves instead of flat white. ----
+                            float wrapped = saturate(dot(normal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+                            float3 albedo = _FoamColor.rgb * lerp(pattern, float3(1.0, 1.0, 1.0), core * FOAM_CORE_WHITEN);
+                            float3 foamLook = albedo * (FOAM_AMBIENT + _SunColor * wrapped);
+
+                            outColor = lerp(outColor, foamLook, foamAlpha);
+                        }
                     }
 
                     return float4(outColor, 1.0);

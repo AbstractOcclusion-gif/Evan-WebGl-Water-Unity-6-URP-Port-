@@ -25,12 +25,13 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _FoamTex:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
+        m_Texture: {fileID: 2800000, guid: 8e6527f16b679694f8633083c61ad127, type: 3}
+        m_Scale: {x: 15, y: 15}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _Cull: 2
+    - _FoamTexFPS: 10
     - _RealRefraction: 1
     - _ReflectionDistortion: 0.05
     - _ReflectionStrength: 1
@@ -42,6 +43,8 @@ Material:
     - _Underwater: 0
     - _UsePlanar: 0
     - _UseSSR: 0
-    m_Colors: []
+    - _UseUrpProbe: 0
+    m_Colors:
+    - _FoamTexFrames: {r: 1, g: 1, b: 0, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
