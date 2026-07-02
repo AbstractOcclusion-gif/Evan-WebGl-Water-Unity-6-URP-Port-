@@ -19,6 +19,13 @@ float3   _VolumeCenter; // world position of the pool origin (centre of the surf
 float3   _VolumeExtent; // world half-size per pool unit, per axis (x,y,z)
 float4x4 _VolumeRot;    // rotation (upper 3x3 used); identity when unset
 
+// Large-water sim window: the interactive ripple sim covers a camera-following window
+// (not the whole body). _SimWindowed = 0 restores the whole-body path exactly.
+float    _SimWindowed;       // 0/1 branch flag
+float3   _SimCenter;         // world centre of the window (on the surface plane)
+float3   _SimExtent;         // world half-size (x,z) and height scale (y) of the window
+float    _SimEdgeFadeTexels; // border falloff width, in sim texels
+
 float3 VolumeExtentSafe()
 {
     return float3(_VolumeExtent.x > 1e-5 ? _VolumeExtent.x : 1.0,
@@ -53,6 +60,20 @@ float3 WorldDirToPool(float3 worldDir)
 float3 PoolNormalToWorld(float3 poolNormal)
 {
     return normalize(mul(VolumeRot(), poolNormal / VolumeExtentSafe()));
+}
+
+float3 SimExtentSafe()
+{
+    return float3(_SimExtent.x > 1e-5 ? _SimExtent.x : 1.0,
+                  _SimExtent.y > 1e-5 ? _SimExtent.y : 1.0,
+                  _SimExtent.z > 1e-5 ? _SimExtent.z : 1.0);
+}
+
+// World -> sim-window normalised coords (.xz in [-1,1] inside the window), reusing the
+// shared volume rotation. Mirrors WorldToPool but around the scrolling window frame.
+float3 WorldToSim(float3 worldPos)
+{
+    return mul(transpose(VolumeRot()), worldPos - _SimCenter) / SimExtentSafe();
 }
 
 #endif // WEBGL_WATER_VOLUME_INCLUDED

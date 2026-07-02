@@ -130,6 +130,31 @@ Shader "WebGLWater/WaterSurface"
                 return 0.0;
             }
 
+            // Interactive ripple sample (r = height, ba = normal.xz) for a surface point.
+            // Whole-body bodies sample the pool UV as before. Windowed bodies sample the
+            // camera-following window by WORLD position (sub-texel smooth, world-anchored)
+            // and fade the ripple to flat over the last _SimEdgeFadeTexels, so there is no
+            // seam where the window meets the analytic-only water. 'fade' is the ripple
+            // weight: 1 inside the window, -> 0 at/beyond its border.
+            float4 SampleRipple(float3 poolPos, float3 worldPos, out float fade)
+            {
+                fade = 1.0;
+                if (_SimWindowed < 0.5)
+                    return SampleWaterBilinear(poolPos.xz * 0.5 + 0.5);
+
+                float2 uv = WorldToSim(worldPos).xz * 0.5 + 0.5;
+                if (any(uv < 0.0) || any(uv > 1.0)) { fade = 0.0; return (float4)0.0; }
+
+                float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
+                float2 d = min(uv, 1.0 - uv);
+                fade = saturate(min(d.x, d.y) / max(band, 1e-5));
+
+                float4 info = SampleWaterBilinear(uv);
+                info.r  *= fade; // fade ripple height
+                info.ba *= fade; // fade normal tilt back to flat
+                return info;
+            }
+
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {
@@ -142,9 +167,14 @@ Shader "WebGLWater/WaterSurface"
             v2f vert(appdata v)
             {
                 v2f o;
-                float4 info = SampleWaterBilinear(v.vertex.xy * 0.5 + 0.5);
-                float3 position = v.vertex.xzy;   // grid XY plane -> pool (x, 0, z)
-                position.y += info.r;                  // interactive ripple heightfield
+                float3 poolFlat = v.vertex.xzy;        // grid XY plane -> pool (x, 0, z)
+                // World position at the surface plane (height 0) picks the windowed UV; the
+                // xz mapping doesn't depend on ripple height, so this is exact.
+                float3 worldFlat = PoolToWorld(poolFlat);
+                float fade;
+                float4 info = SampleRipple(poolFlat, worldFlat, fade);
+                float3 position = poolFlat;
+                position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
                 position.y += WaveHeight(v.vertex.xy); // ambient wind-wave layer (pool xz = vertex.xy)
                 o.position = position;                 // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
@@ -199,16 +229,20 @@ Shader "WebGLWater/WaterSurface"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                float2 coord = i.position.xz * 0.5 + 0.5;
-                float4 info = SampleWaterBilinear(coord);
+                float fade;
+                float4 info = SampleRipple(i.position, i.worldPos, fade);
 
-                // make the water look more "peaked"
+                // make the water look more "peaked": walk a few steps along the ripple normal
+                // in the active UV domain (pool for whole-body, sim window for windowed).
+                float2 coord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
+                                                    : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
                 [unroll]
                 for (int k = 0; k < 5; k++)
                 {
                     coord += info.ba * 0.005;
                     info = SampleWaterBilinear(coord);
                 }
+                info.ba *= fade; // keep the windowed ripple faded to flat at the border (no-op when fade = 1)
 
                 // Combine the ripple normal (info.ba = normal.xz) with the wind-wave
                 // tilt. A height gradient g contributes normal.xz = -g, so the two
@@ -235,6 +269,8 @@ Shader "WebGLWater/WaterSurface"
                     float2 ruvU = i.screenPos.xy / max(i.screenPos.w, 1e-5) + normal.xz * _RefractionDistortion;
                     refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
                 #endif
+
+                    refractedColor = ApplyWaterOpacity(refractedColor); // turbidity from below too
 
                     float tUnder = (1.0 - fresnel) * length(refractedRay);
                     tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
@@ -270,6 +306,14 @@ Shader "WebGLWater/WaterSurface"
                     float2 ruv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
                     ruv += normal.xz * _RefractionDistortion;
                     refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb * ABOVEWATER_COLOR;
+
+                    // Fog the transmitted view by the water thickness behind the surface
+                    // (scene eye-depth - surface eye-depth). The analytic path fogs itself
+                    // below; this brings depth fog to the real-refraction path it used to skip,
+                    // so heavy fog reads through the surface too.
+                    float sceneEyeR = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(ruv), 0, 0)));
+                    float surfEyeR  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
+                    refractedColor = ApplyWaterFog(refractedColor, max(0.0, sceneEyeR - surfEyeR));
                 #endif
 
                     // ---- Water fog. With REAL refraction the sampled scene is already
@@ -285,6 +329,7 @@ Shader "WebGLWater/WaterSurface"
                     refractedColor = ApplyWaterFog(refractedColor, length(exitWorld - i.worldPos));
                 #endif
 
+                    refractedColor = ApplyWaterOpacity(refractedColor); // art-directed turbidity floor
                     float3 outColor = lerp(refractedColor, reflectedColor, fresnel * _ReflectionStrength);
 
                     // ---- Shoreline gradient from the real terrain depth (baked bed map).
@@ -303,12 +348,14 @@ Shader "WebGLWater/WaterSurface"
                     // ---- Foam: advected buffer + shoreline border + waterline contact ----
                     if (_FoamEnabled > 0.5)
                     {
-                        float2 fcoord = i.position.xz * 0.5 + 0.5;
+                        // Windowed bodies read the foam buffer in the window frame too.
+                        float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
+                                                             : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
                         float advected = tex2D(_FoamMask, fcoord).r;
 
-                        // shoreline foam against the pool walls
+                        // shoreline foam against the pool walls (whole-body only; a window has no walls)
                         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
-                        float border = 1.0 - smoothstep(0.0, _FoamBorderWidth, edge);
+                        float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
 
                         // contact foam where geometry pierces the waterline. Needs the
                         // depth texture; when it's unavailable (or uses a different Z

@@ -38,6 +38,26 @@ namespace WebGLWater
                  "the water. Set extent/transform before Play; the obstacle map reads them at startup.")]
         public Vector3 volumeExtent = Vector3.one;
 
+        [Header("Large-water sim window")]
+        [Tooltip("For bodies larger than the threshold, run the interactive ripple sim in a " +
+                 "camera-following window instead of stretching the fixed grid over the whole " +
+                 "surface (which goes blocky on big water). Analytic wind waves still cover " +
+                 "everywhere. Small/medium bodies are unaffected.")]
+        public bool enableLargeBodyWindow = true;
+        [Tooltip("World half-extent (max of X,Z) above which windowing turns on. At/below this " +
+                 "the whole-body sim is used exactly as before.")]
+        [Min(1f)] public float largeBodyThreshold = DefaultLargeBodyThreshold;
+        [Tooltip("Half-size (world metres) of the camera-following sim window. Ripple detail is " +
+                 "2 * this / sim resolution per texel.")]
+        [Min(1f)] public float simWindowMeters = DefaultSimWindowMeters;
+        [Tooltip("On: keep the window fully inside the body footprint (enclosed bodies). Off: the " +
+                 "window may overhang the edge and water beyond the footprint is analytic-only " +
+                 "(natural for open water).")]
+        public bool clampWindowToShore = false;
+        [Tooltip("Width, in sim texels, over which the window's ripple fades to analytic-only at " +
+                 "its border so there is no seam.")]
+        [Range(0f, 32f)] public float simWindowEdgeFadeTexels = 8f;
+
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
                  "pool, god rays). Assigned by the scene builder.")]
@@ -125,9 +145,15 @@ namespace WebGLWater
         [Tooltip("Global depth absorption, shared by the surface, objects and pool.")]
         public bool waterFog = false;
         public Color fogColor = new Color(0.10f, 0.30f, 0.40f);
-        [Tooltip("Per-channel extinction; red highest so it absorbs first.")]
-        public Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
-        [Range(0f, 8f)] public float fogDensity = 2f;
+        [Tooltip("Per-channel extinction; red highest so it absorbs first. HDR: push a channel " +
+                 "above 1 for very heavy absorption (fully opaque water on short paths).")]
+        [ColorUsage(false, true)] public Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
+        [Tooltip("Overall fog multiplier. Higher = thicker; crank it (with extinction) for pea-soup water.")]
+        [Range(0f, MaxFogDensity)] public float fogDensity = 2f;
+        [Tooltip("Art-directed turbidity independent of depth: lerp the view THROUGH the surface " +
+                 "toward the fog colour. 0 = clear, 1 = fully non-transparent water. Reflections " +
+                 "still show on top (tune with the material's Reflection Strength).")]
+        [Range(0f, 1f)] public float waterOpacity = 0f;
 
         [Header("Depth attenuation (downwelling)")]
         [Tooltip("Darken submerged surfaces, caustics and god rays the DEEPER they sit, " +
@@ -261,6 +287,12 @@ namespace WebGLWater
 
         bool _paused;
 
+        // ---- large-water sim window (camera-following) ----
+        bool _windowed;           // this body runs the windowed sim (decided at OnEnable)
+        Vector3 _simCenter;       // world centre of the window, on the surface plane, texel-snapped
+        int _simCellX, _simCellZ; // window centre as integer texel indices in the volume's local frame
+        bool _simCenterInit;
+
         // ---- sim culling / active-sim budget (Phase 3) ----
         // Only the nearest bodies simulate each frame; off-screen bodies also stop drawing.
         // The schedule is computed once per frame (frame-guarded) for ALL bodies, so it is
@@ -281,6 +313,16 @@ namespace WebGLWater
         // Baked bed-height map resolution bounds (pool-space).
         const int MinBedResolution = 64;
         const int MaxBedResolution = 1024;
+
+        // Large-water sim-window defaults (world metres). Threshold sits above the window
+        // half-size so a body only marginally larger than the window stays whole-body
+        // (windowing it would scroll for near-zero detail gain).
+        const float DefaultLargeBodyThreshold = 48f;
+        const float DefaultSimWindowMeters = 32f;
+
+        // Upper bound on fog density; high enough that (with extinction) water can read fully
+        // opaque even on short view paths.
+        const float MaxFogDensity = 50f;
 
         // Startup pool seeding: a few random ripples so the surface isn't dead-flat on load.
         const int SeedRippleCount = 20;
@@ -313,6 +355,7 @@ namespace WebGLWater
         static readonly int ID_FogExt = Shader.PropertyToID("_WaterExtinction");
         static readonly int ID_FogDensity = Shader.PropertyToID("_WaterFogDensity");
         static readonly int ID_FogEnabled = Shader.PropertyToID("_WaterFogEnabled");
+        static readonly int ID_WaterOpacity = Shader.PropertyToID("_WaterOpacity");
         static readonly int ID_DepthExt = Shader.PropertyToID("_DepthExtinction");
         static readonly int ID_DepthStrength = Shader.PropertyToID("_DepthDarkenStrength");
         static readonly int ID_DepthEnabled = Shader.PropertyToID("_DepthDarkenEnabled");
@@ -340,6 +383,10 @@ namespace WebGLWater
         static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
         static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
         static readonly int ID_GodRaySteps = Shader.PropertyToID("_GodRaySteps");
+        static readonly int ID_SimWindowed = Shader.PropertyToID("_SimWindowed");
+        static readonly int ID_SimCenter = Shader.PropertyToID("_SimCenter");
+        static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
+        static readonly int ID_SimEdgeFade = Shader.PropertyToID("_SimEdgeFadeTexels");
 
         void OnEnable()
         {
@@ -350,6 +397,7 @@ namespace WebGLWater
             ApplyQuality();     // sets _simRes, causticResolution, _godRaysAllowed + god-ray steps
 
             _water = new WaterSimulation(simCompute, _simRes);
+            _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
 
             if (obstacleShader != null)
                 _obstacle = new WaterObstacle(obstacleShader, _simRes,
@@ -402,7 +450,9 @@ namespace WebGLWater
 
             PublishSharedGlobals();
             EnsureWaveBank();
-            UpdateCaustics();
+            _simCenter = VolumeCenter;
+            if (_windowed) UpdateSimWindow();   // prime the window centre before first publish
+            if (!_windowed) UpdateCaustics();   // caustics are out of scope for windowed bodies
             ApplyBodyBlock();
             if (isPrimary) PublishBodyGlobals();
         }
@@ -535,7 +585,10 @@ namespace WebGLWater
 
             PublishSharedGlobals();     // sun, sky, tiles, camera-independent shared clock
             EnsureWaveBank();
-            if (_simulate) UpdateCaustics();  // renders THIS body's caustic RT from its own sim
+            // Caustics/god rays are out of scope for windowed bodies (the caustic pass maps the
+            // whole floor from _WaterTex, which now holds only the moving window). See the
+            // floor-relative scheme noted in docs/large-water-sim-window-plan.md.
+            if (_simulate && !_windowed) UpdateCaustics();  // renders THIS body's caustic RT from its own sim
 
             ApplyBodyBlock();           // per-body uniforms -> this body's renderers (MPB)
             // Primary bridge: mirror this body's data to globals as the fallback for objects
@@ -593,6 +646,11 @@ namespace WebGLWater
             mpb.SetVector(ID_VolumeExtent, VolumeExtentSafe);
             mpb.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
 
+            mpb.SetFloat(ID_SimWindowed, _windowed ? 1f : 0f);
+            mpb.SetVector(ID_SimCenter, _simCenter);
+            mpb.SetVector(ID_SimExtent, SimHalfExtent);
+            mpb.SetFloat(ID_SimEdgeFade, simWindowEdgeFadeTexels);
+
             mpb.SetVectorArray(ID_WaveA, _waveBank.PackedA);
             mpb.SetVectorArray(ID_WaveB, _waveBank.PackedB);
             mpb.SetFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
@@ -603,6 +661,7 @@ namespace WebGLWater
             mpb.SetColor(ID_FogExt, fogExtinction);
             mpb.SetFloat(ID_FogDensity, fogDensity);
             mpb.SetFloat(ID_FogEnabled, waterFog ? 1f : 0f);
+            mpb.SetFloat(ID_WaterOpacity, waterOpacity);
 
             mpb.SetColor(ID_DepthExt, EffectiveDepthExtinction);
             mpb.SetFloat(ID_DepthStrength, depthDarkenStrength);
@@ -727,8 +786,9 @@ namespace WebGLWater
             SetRendererEnabled(surfaceUnder, on);
             SetRendererEnabled(poolRenderer, on);
             // God rays obey the quality tier as well as culling: a tier that disables them
-            // keeps the renderer off even when the body is on-screen.
-            SetRendererEnabled(godRayRenderer, on && _godRaysAllowed);
+            // keeps the renderer off even when the body is on-screen. Windowed bodies also
+            // suppress god rays (out of scope, same reason as caustics).
+            SetRendererEnabled(godRayRenderer, on && _godRaysAllowed && !_windowed);
         }
 
         static void SetRendererEnabled(Renderer r, bool on) { if (r != null && r.enabled != on) r.enabled = on; }
@@ -745,6 +805,7 @@ namespace WebGLWater
             }
             if (_causticRT != null) Shader.SetGlobalTexture(ID_Caustic, _causticRT);
             PublishVolume();
+            PublishSimWindow();
             PublishFog();
             PublishDepth();
             PublishBed();
@@ -777,9 +838,20 @@ namespace WebGLWater
         /// in world units (kept round via the average horizontal extent).</summary>
         public void AddRipple(float worldX, float worldZ, float radius, float strength)
         {
+            if (_water == null) return;
+
+            // Windowed bodies inject into the sim WINDOW frame; ripples outside it are dropped.
+            if (_windowed)
+            {
+                Vector3 sim = WorldToSim(new Vector3(worldX, _simCenter.y, worldZ));
+                if (sim.x < -1f || sim.x > 1f || sim.z < -1f || sim.z > 1f) return;
+                _water.AddDrop(sim.x, sim.z, radius / SimHorizontalExtent, strength / VolumeExtentSafe.y);
+                return;
+            }
+
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return;
-            _water?.AddDrop(px, pz, radius / VolumeHorizontalExtent, strength / VolumeExtentSafe.y);
+            _water.AddDrop(px, pz, radius / VolumeHorizontalExtent, strength / VolumeExtentSafe.y);
         }
 
         /// <summary>World-space height (Y) of the water surface above WORLD (x,z).
@@ -791,7 +863,7 @@ namespace WebGLWater
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
 
-            float poolHeight = SamplePoolHeight(px, pz);
+            float poolHeight = SamplePoolHeight(probe, px, pz);
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y; // pool -> world Y
             return true;
         }
@@ -807,7 +879,7 @@ namespace WebGLWater
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
 
-            Color sample = SamplePoolTexel(px, pz);
+            Color sample = SampleRipple(probe, px, pz);
             float poolHeight = sample.r;
             Vector2 poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
             if (windWaves)
@@ -835,7 +907,7 @@ namespace WebGLWater
             Vector3 pool = WorldToPool(worldPoint);
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return false;
 
-            Color sample = SamplePoolTexel(pool.x, pool.z);
+            Color sample = SampleRipple(worldPoint, pool.x, pool.z);
             float surfaceH = sample.r;
             Vector2 poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
             if (windWaves)
@@ -894,17 +966,31 @@ namespace WebGLWater
             return true;
         }
 
-        // Pool-space height (sim ripple + wind waves) at pool xz in [-1,1].
-        float SamplePoolHeight(float poolX, float poolZ)
+        // Pool-space height (sim ripple + wind waves) at a world point (pool xz in [-1,1]).
+        float SamplePoolHeight(Vector3 world, float poolX, float poolZ)
         {
-            float h = SamplePoolTexel(poolX, poolZ).r;
+            float h = SampleRipple(world, poolX, poolZ).r;
             if (windWaves) h += _waveBank.SampleHeight(poolX, poolZ, _waveTime, WaveMetersPerUnit);
             return h;
         }
 
-        Color SamplePoolTexel(float poolX, float poolZ)
+        // Interactive ripple sample (r = height, b/a = normal.xz) at a world point. Windowed
+        // bodies read the camera-following window by world position (rest outside it); whole-body
+        // bodies read the fixed grid at pool UV. Mirrors the shader's SampleRipple.
+        Color SampleRipple(Vector3 world, float poolX, float poolZ)
         {
-            float u = poolX * 0.5f + 0.5f, v = poolZ * 0.5f + 0.5f;
+            float u, v;
+            if (_windowed)
+            {
+                Vector3 sim = WorldToSim(new Vector3(world.x, _simCenter.y, world.z));
+                if (sim.x < -1f || sim.x > 1f || sim.z < -1f || sim.z > 1f)
+                    return new Color(0f, 0f, 0f, 0f); // outside the window: flat rest
+                u = sim.x * 0.5f + 0.5f; v = sim.z * 0.5f + 0.5f;
+            }
+            else
+            {
+                u = poolX * 0.5f + 0.5f; v = poolZ * 0.5f + 0.5f;
+            }
             int px = Mathf.Clamp((int)(u * _simRes), 0, _simRes - 1);
             int pz = Mathf.Clamp((int)(v * _simRes), 0, _simRes - 1);
             return _heightCpu[pz * _simRes + px];
@@ -914,9 +1000,15 @@ namespace WebGLWater
         {
             if (seconds > 1f) return;
 
+            // Scroll the sim window to track the camera before injecting/stepping, so ripples
+            // stay world-anchored. No-op for whole-body bodies.
+            if (_windowed) UpdateSimWindow();
+
             // Push the surface with the live submerged footprint of interactable objects.
             if (_obstacle != null)
             {
+                // Windowed bodies re-frame the footprint onto the scrolling window each frame.
+                if (_windowed) _obstacle.SetFrame(_simCenter, VolumeRotation, SimHalfExtent);
                 _obstacle.Render(VolumeCenter.y);
                 // Compensate for extent.y so an object's displacement is a fixed world height
                 // regardless of pool depth (PoolToWorld scales surface height by extent.y).
@@ -975,6 +1067,99 @@ namespace WebGLWater
             Vector3 e = VolumeExtentSafe;
             Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - VolumeCenter);
             return new Vector3(local.x / e.x, local.y / e.y, local.z / e.z);
+        }
+
+        // ---- large-water sim window frame ----------------------------------
+        // Half-size (world) of the window: simWindowMeters horizontally, the body's depth
+        // scale vertically (ripple height stays coupled to extent.y like the whole-body sim).
+        Vector3 SimHalfExtent => new Vector3(
+            Mathf.Max(simWindowMeters, 1e-3f),
+            VolumeExtentSafe.y,
+            Mathf.Max(simWindowMeters, 1e-3f));
+
+        // Average horizontal window half-size, keeping an injected ripple round in world units.
+        float SimHorizontalExtent => Mathf.Max(simWindowMeters, 1e-3f);
+
+        /// <summary>True if this body runs the camera-following windowed sim (decided at
+        /// startup from its size and the threshold).</summary>
+        public bool IsWindowed => _windowed;
+        /// <summary>World centre of the active sim window (follows the camera at runtime).</summary>
+        public Vector3 SimWindowCenter => _simCenter;
+        /// <summary>World half-size (x,z) and depth scale (y) of the sim window.</summary>
+        public Vector3 SimWindowHalfExtent => SimHalfExtent;
+
+        // World -> sim-window normalised coords (.xz in [-1,1] inside the window). Shares the
+        // volume rotation; centred on the scrolling window centre.
+        Vector3 WorldToSim(Vector3 world)
+        {
+            Vector3 e = SimHalfExtent;
+            Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - _simCenter);
+            return new Vector3(local.x / e.x, local.y / e.y, local.z / e.z);
+        }
+
+        // Windowing turns on for bodies whose horizontal half-extent exceeds the threshold.
+        bool ShouldWindow()
+        {
+            if (!enableLargeBodyWindow) return false;
+            Vector3 e = VolumeExtentSafe;
+            return Mathf.Max(e.x, e.z) > largeBodyThreshold;
+        }
+
+        // Move the window to the camera: project the camera onto the surface plane, clamp into
+        // the footprint, snap to the sim-texel lattice, and scroll the sim state by the integer
+        // texel delta so ripples stay pinned in world space. Called once per simulated frame.
+        void UpdateSimWindow()
+        {
+            if (targetCamera == null || _water == null) return;
+
+            // Camera projected onto the surface plane (through the volume centre, along up).
+            Vector3 up = VolumeUp;
+            Vector3 camPos = targetCamera.transform.position;
+            Vector3 onPlane = camPos - Vector3.Dot(camPos - VolumeCenter, up) * up;
+
+            // Work in the volume's local horizontal frame so the lattice is axis-aligned.
+            Vector3 local = Quaternion.Inverse(VolumeRotation) * (onPlane - VolumeCenter);
+
+            float texel = 2f * simWindowMeters / _simRes;
+            // Clamp the window centre so it stays inside the footprint (or may overhang the edge).
+            Vector3 e = VolumeExtentSafe;
+            float limitX = clampWindowToShore ? Mathf.Max(0f, e.x - simWindowMeters) : e.x;
+            float limitZ = clampWindowToShore ? Mathf.Max(0f, e.z - simWindowMeters) : e.z;
+            float clampedX = Mathf.Clamp(local.x, -limitX, limitX);
+            float clampedZ = Mathf.Clamp(local.z, -limitZ, limitZ);
+
+            int cellX = Mathf.RoundToInt(clampedX / texel);
+            int cellZ = Mathf.RoundToInt(clampedZ / texel);
+
+            if (!_simCenterInit)
+            {
+                _simCellX = cellX; _simCellZ = cellZ;
+                _simCenterInit = true;
+            }
+            else
+            {
+                int dx = cellX - _simCellX;
+                int dz = cellZ - _simCellZ;
+                if (dx != 0 || dz != 0)
+                {
+                    // Local x -> sim texel u, local z -> sim texel v. The kernel does
+                    // Dst[p] = Src[p - offset]; offsetting by -delta keeps world features fixed
+                    // (see WaterSimulation.Scroll).
+                    _water.Scroll(-dx, -dz);
+                    _simCellX = cellX; _simCellZ = cellZ;
+                }
+            }
+
+            _simCenter = VolumeCenter + VolumeRotation * new Vector3(_simCellX * texel, 0f, _simCellZ * texel);
+        }
+
+        // Sim-window uniforms mirrored to globals (same bridge fog/volume use).
+        void PublishSimWindow()
+        {
+            Shader.SetGlobalFloat(ID_SimWindowed, _windowed ? 1f : 0f);
+            Shader.SetGlobalVector(ID_SimCenter, _simCenter);
+            Shader.SetGlobalVector(ID_SimExtent, SimHalfExtent);
+            Shader.SetGlobalFloat(ID_SimEdgeFade, simWindowEdgeFadeTexels);
         }
 
         void PublishVolume()
@@ -1051,6 +1236,7 @@ namespace WebGLWater
             Shader.SetGlobalColor(ID_FogExt, fogExtinction);
             Shader.SetGlobalFloat(ID_FogDensity, fogDensity);
             Shader.SetGlobalFloat(ID_FogEnabled, waterFog ? 1f : 0f);
+            Shader.SetGlobalFloat(ID_WaterOpacity, waterOpacity);
         }
 
         // Downwelling depth-darkening params, mirrored to globals for the analytic receivers /

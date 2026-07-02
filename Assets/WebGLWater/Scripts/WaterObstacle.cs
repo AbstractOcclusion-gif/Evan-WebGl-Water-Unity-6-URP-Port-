@@ -38,16 +38,25 @@ namespace WebGLWater
             _prev = Create();
             _curr = Create();
 
-            // Orthographic view looking DOWN the volume's up axis, so the submerged
+            SetFrame(volumeCenter, volumeRotation, volumeExtent);
+        }
+
+        /// <summary>Rebuild the top-down orthographic view/projection for a frame given its
+        /// centre, rotation and half-extent. Whole-body bodies set this once (the volume
+        /// frame); a windowed large body calls it each frame so the footprint tracks the
+        /// scrolling sim window.</summary>
+        public void SetFrame(Vector3 center, Quaternion rotation, Vector3 extent)
+        {
+            // Orthographic view looking DOWN the frame's up axis, so the submerged
             // footprint maps into the RT along the same axis the surface is displaced.
-            // Extents (X half-width, Z half-length) set the ortho size; up = volume forward
-            // so the RT's u<->pool x and v<->pool z (the sim's coordinate convention).
-            float ex = Mathf.Max(volumeExtent.x, MinExtent);
-            float ez = Mathf.Max(volumeExtent.z, MinExtent);
-            float ey = Mathf.Max(volumeExtent.y, MinExtent);
-            Vector3 up = volumeRotation * Vector3.up;
-            Vector3 eye = volumeCenter + up * (EyeHeightInExtents * ey);
-            Quaternion rot = Quaternion.LookRotation(-up, volumeRotation * Vector3.forward);
+            // Extents (X half-width, Z half-length) set the ortho size; up = frame forward
+            // so the RT's u<->x and v<->z (the sim's coordinate convention).
+            float ex = Mathf.Max(extent.x, MinExtent);
+            float ez = Mathf.Max(extent.z, MinExtent);
+            float ey = Mathf.Max(extent.y, MinExtent);
+            Vector3 up = rotation * Vector3.up;
+            Vector3 eye = center + up * (EyeHeightInExtents * ey);
+            Quaternion rot = Quaternion.LookRotation(-up, rotation * Vector3.forward);
             Matrix4x4 camToWorld = Matrix4x4.TRS(eye, rot, Vector3.one);
             _view = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * camToWorld.inverse;
 

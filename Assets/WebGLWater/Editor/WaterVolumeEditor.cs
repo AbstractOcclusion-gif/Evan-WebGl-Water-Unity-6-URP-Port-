@@ -26,6 +26,7 @@ namespace WebGLWater.EditorTools
         static readonly Color BoxColorIdle = new Color(0.35f, 0.75f, 1f, 0.3f);
         static readonly Color SurfaceColor = new Color(0.6f, 0.9f, 1f, 1f);
         static readonly Color ExtentHandleColor = new Color(0.4f, 0.9f, 1f, 1f);
+        static readonly Color SimWindowColor = new Color(1f, 0.85f, 0.3f, 0.9f);
 
         // ---- gizmo: the oriented volume box + a highlighted surface rectangle ----
         [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected)]
@@ -46,6 +47,46 @@ namespace WebGLWater.EditorTools
             DrawSurfaceRect();
 
             Gizmos.matrix = previous;
+
+            // Sim window (large bodies): the camera-following interactive-sim footprint. In play
+            // mode it sits at the live (scrolled) centre; at edit time it previews at the body
+            // centre as a sizing aid. Drawn in world metres, so it uses a rotation-only matrix.
+            if (TryGetSimWindow(volume, out Vector3 windowCenter, out float windowHalf))
+            {
+                Gizmos.matrix = Matrix4x4.TRS(windowCenter, volume.transform.rotation, Vector3.one);
+                Gizmos.color = SimWindowColor;
+                DrawWindowRect(windowHalf);
+                Gizmos.matrix = previous;
+            }
+        }
+
+        // The active sim window as a world centre + horizontal half-size, or false when this
+        // body is whole-body. Uses the live window at runtime, the authored size at edit time.
+        static bool TryGetSimWindow(WaterVolume volume, out Vector3 center, out float half)
+        {
+            half = Mathf.Max(MinExtent, volume.simWindowMeters);
+            if (Application.isPlaying)
+            {
+                center = volume.SimWindowCenter;
+                return volume.IsWindowed;
+            }
+            center = volume.transform.position;
+            if (!volume.enableLargeBodyWindow) return false;
+            Vector3 e = SafeExtent(volume.volumeExtent);
+            return Mathf.Max(e.x, e.z) > volume.largeBodyThreshold;
+        }
+
+        // Wire rectangle at the surface (y = 0), half-size 'half' in world units on x and z.
+        static void DrawWindowRect(float half)
+        {
+            Vector3 backLeft = new Vector3(-half, 0f, -half);
+            Vector3 backRight = new Vector3(half, 0f, -half);
+            Vector3 frontRight = new Vector3(half, 0f, half);
+            Vector3 frontLeft = new Vector3(-half, 0f, half);
+            Gizmos.DrawLine(backLeft, backRight);
+            Gizmos.DrawLine(backRight, frontRight);
+            Gizmos.DrawLine(frontRight, frontLeft);
+            Gizmos.DrawLine(frontLeft, backLeft);
         }
 
         // The four surface edges in pool space (y = 0, corners at +/-PoolHalfExtent).

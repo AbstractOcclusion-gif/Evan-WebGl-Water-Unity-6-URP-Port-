@@ -9,6 +9,7 @@ float4 _WaterFogColor;    // deep-water colour (inscattering target)
 float4 _WaterExtinction;  // per-channel extinction (red highest -> dies first)
 float  _WaterFogDensity;   // overall multiplier
 float  _WaterFogEnabled;   // 0 / 1
+float  _WaterOpacity;      // 0..1 depth-independent turbidity (lerp view toward fog colour)
 
 // Absorb 'color' over 'dist' world units of water. No-op when disabled.
 float3 ApplyWaterFog(float3 color, float dist)
@@ -16,6 +17,14 @@ float3 ApplyWaterFog(float3 color, float dist)
     if (_WaterFogEnabled < 0.5) return color;
     float3 absorb = exp(-_WaterExtinction.rgb * (_WaterFogDensity * max(0.0, dist)));
     return lerp(_WaterFogColor.rgb, color, absorb);
+}
+
+// Depth-independent turbidity: pull a transmitted colour toward the fog colour by
+// _WaterOpacity, so water can be made non-transparent regardless of what's behind it.
+// Active whenever opacity > 0 (independent of the Beer-Lambert fog toggle).
+float3 ApplyWaterOpacity(float3 color)
+{
+    return lerp(color, _WaterFogColor.rgb, saturate(_WaterOpacity));
 }
 
 // ---- Downwelling depth attenuation --------------------------------------

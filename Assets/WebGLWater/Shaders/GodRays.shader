@@ -139,13 +139,13 @@ Shader "WebGLWater/GodRays"
                     float4 shadowCoord = TransformWorldToShadowCoord(pWorld);
                     float shadow = MainLightRealtimeShadow(shadowCoord);
 
-                    // Fade the shaft with depth (the light feeding it is thinned on the way down)
-                    // and haze it out along the view path with the SAME fog as the rest of the scene.
-                    // Both are gated by the depth master switch, so god rays are unchanged until
-                    // the feature is enabled (view-path haze additionally needs the fog turned on).
+                    // Fade the shaft with depth (the light feeding it is thinned on the way down),
+                    // gated by the depth master switch; and haze it out along the view path with
+                    // the SAME fog as the rest of the scene, gated by the fog toggle alone so foggy
+                    // water always thins the shafts consistently with the surface and geometry.
                     float depthFade = DepthFadeScalar(pWorld.y, surfaceLevel, _GodRayDepthFade);
                     float3 viewFog = float3(1.0, 1.0, 1.0);
-                    if (_DepthDarkenEnabled > 0.5 && _WaterFogEnabled > 0.5)
+                    if (_WaterFogEnabled > 0.5)
                         viewFog = exp(-_WaterExtinction.rgb * (_WaterFogDensity * WaterPathLength(pWorld, _WorldSpaceCameraPos, surfaceLevel)));
 
                     accum += caustic * shadow * depthFade * viewFog;

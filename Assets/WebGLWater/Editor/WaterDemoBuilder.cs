@@ -4,7 +4,7 @@
 // One command per demo, each showcasing a coherent slice of the feature set. Every demo
 // composes WaterBuildKit primitives (shared assets, wired water bodies, props), builds into
 // the CURRENT scene, and expects a fresh/empty scene (it creates its own camera, sun, splash).
-// Each demo writes its materials into its OWN folder (Generated/Demos/<Name>) so building or
+// Each demo writes its materials into its OWN folder (Demos/Materials/<Name>) so building or
 // rebuilding one scene never resets another scene's tuned materials.
 using UnityEditor;
 using UnityEngine;
@@ -238,7 +238,8 @@ namespace WebGLWater.EditorTools
         }
 
         // ---- helpers ---------------------------------------------------------
-        static string DemoFolder(string name) => Gen + "/Demos/" + name;
+        const string DemoMaterialsRoot = "Assets/WebGLWater/Demos/Materials";
+        static string DemoFolder(string name) => DemoMaterialsRoot + "/" + name;
 
         static void FrameCamera(BuildContext ctx, Vector3 pivot, float pitch, float distance)
         {

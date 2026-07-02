@@ -18,6 +18,8 @@ namespace WebGLWater
         const string KernelObstacle = "Obstacle";
         const string KernelFoam = "Foam";
         const string KernelConserve = "Conserve";
+        const string KernelScroll = "Scroll";
+        const string KernelScrollFoam = "ScrollFoam";
 
         // Compute property ids, cached once instead of re-hashing strings every dispatch.
         static readonly int ID_Size = Shader.PropertyToID("_Size");
@@ -42,12 +44,13 @@ namespace WebGLWater
         static readonly int ID_FoamSrc = Shader.PropertyToID("FoamSrc");
         static readonly int ID_FoamDst = Shader.PropertyToID("FoamDst");
         static readonly int ID_HeightMip = Shader.PropertyToID("HeightMip");
+        static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
 
         readonly ComputeShader _cs;
-        readonly int _kDrop, _kUpdate, _kNormal, _kObstacle, _kFoam, _kConserve;
+        readonly int _kDrop, _kUpdate, _kNormal, _kObstacle, _kFoam, _kConserve, _kScroll, _kScrollFoam;
         readonly int _groups;
         readonly Vector4 _delta; // (1/Resolution, 1/Resolution, 0, 0), precomputed once
 
@@ -78,6 +81,8 @@ namespace WebGLWater
             _kObstacle = cs.FindKernel(KernelObstacle);
             _kFoam = cs.FindKernel(KernelFoam);
             _kConserve = cs.FindKernel(KernelConserve);
+            _kScroll = cs.FindKernel(KernelScroll);
+            _kScrollFoam = cs.FindKernel(KernelScrollFoam);
             _groups = Resolution / ThreadGroupSize;
 
             _a = Create(RenderTextureFormat.ARGBFloat, "WaterSimState");
@@ -186,6 +191,31 @@ namespace WebGLWater
         {
             _cs.SetTexture(_kConserve, ID_HeightMip, heightMip);
             Dispatch(_kConserve);
+        }
+
+        /// <summary>
+        /// Shift the whole sim state (height/velocity/normal and foam) by an integer
+        /// texel offset so ripples stay world-anchored while a windowed body's sim
+        /// follows the camera. The offset is the raw kernel shift: <c>Dst[p] = Src[p - offset]</c>,
+        /// so cells exposed at the trailing edge reset to rest. The caller (WaterVolume)
+        /// computes the grid-space offset from the window-centre movement. No-op at (0,0).
+        /// </summary>
+        public void Scroll(int offsetX, int offsetY)
+        {
+            if (offsetX == 0 && offsetY == 0) return;
+
+            SetGridUniforms();
+            _cs.SetInts(ID_ScrollOffset, offsetX, offsetY);
+
+            _cs.SetTexture(_kScroll, ID_Src, _a);
+            _cs.SetTexture(_kScroll, ID_Dst, _b);
+            _cs.Dispatch(_kScroll, _groups, _groups, 1);
+            (_a, _b) = (_b, _a);
+
+            _cs.SetTexture(_kScrollFoam, ID_FoamSrc, _foamA);
+            _cs.SetTexture(_kScrollFoam, ID_FoamDst, _foamB);
+            _cs.Dispatch(_kScrollFoam, _groups, _groups, 1);
+            (_foamA, _foamB) = (_foamB, _foamA);
         }
     }
 }

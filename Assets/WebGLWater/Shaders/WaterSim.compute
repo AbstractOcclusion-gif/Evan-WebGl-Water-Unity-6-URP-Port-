@@ -10,6 +10,8 @@
 #pragma kernel Obstacle
 #pragma kernel Foam
 #pragma kernel Conserve
+#pragma kernel Scroll
+#pragma kernel ScrollFoam
 
 // Compute thread-group size. MUST equal WaterSimulation.ThreadGroupSize on the C# side.
 #define THREAD_GROUP_SIZE 8
@@ -28,6 +30,10 @@ static const float PI = 3.141592653589793;
 // objects vanish). Bounds sit far above normal ripple amplitude so visuals are unaffected.
 static const float MAX_ABS_HEIGHT   = 1.0;
 static const float MAX_ABS_VELOCITY = 0.5;
+
+// Rest state written into cells newly exposed by a window scroll: flat surface
+// (height 0, velocity 0) with an upward normal (normal.xz = 0, stored in .ba).
+static const float4 REST_STATE = float4(0.0, 0.0, 0.0, 0.0);
 
 // Cap the per-step foam backtrace so a steep ripple can't fling foam across the
 // pool in a single step (keeps the semi-Lagrangian advection stable).
@@ -50,6 +56,11 @@ SamplerState sampler_HeightMip;
 
 float  _Size;     // texture resolution (set per quality tier from C#)
 float2 _Delta;    // 1.0 / _Size
+
+// Scroll (windowed large bodies): integer texel shift of the whole sim state so
+// ripples stay world-anchored while the sim window follows the camera. C# passes
+// the offset with the sign that keeps world features fixed (see WaterSimulation.Scroll).
+int2 _ScrollOffset;
 
 // Drop
 float2 _Center;   // in [-1, 1]
@@ -232,4 +243,26 @@ void Conserve(uint3 id : SV_DispatchThreadID)
     float mean = HeightMip.SampleLevel(sampler_HeightMip, float2(0.5, 0.5), MEAN_MIP_LOD).r;
     info.r -= mean;
     Dst[p] = info;
+}
+
+// True when a source texel index lies inside the grid.
+bool InGrid(int2 p) { return all(p >= 0) && all(p < (int)_Size); }
+
+// Shift the height/velocity/normal state by _ScrollOffset texels. Cells whose
+// source falls outside the grid (newly exposed at the trailing edge) reset to rest.
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void Scroll(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    int2 src = p - _ScrollOffset;
+    Dst[p] = InGrid(src) ? Src.Load(int3(src, 0)) : REST_STATE;
+}
+
+// Same shift for the foam buffer; newly exposed cells reset to zero foam.
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ScrollFoam(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    int2 src = p - _ScrollOffset;
+    FoamDst[p] = InGrid(src) ? FoamSrc.Load(int3(src, 0)) : 0.0;
 }
