@@ -302,6 +302,9 @@ namespace AbstractOcclusion.WebGpuWater
         // CPU copy of the height field for buoyancy queries
         Color[] _heightCpu;
         bool _heightReady, _readbackInFlight;
+        // True on backends without AsyncGPUReadback (e.g. WebGPU): buoyancy and surface queries
+        // fall back to the analytic waterline (flat rest + wind waves) so objects still float.
+        bool _analyticBuoyancyFallback;
         int _simRes = WaterQuality.Default.SimResolution; // grid resolution, set from the quality tier at OnEnable
         bool _godRaysAllowed = true;                       // false when the tier turns god rays off
         bool _richReflectionsAllowed = true;               // false when the tier caps reflections to SkyOnly
@@ -437,6 +440,7 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyQuality();     // sets _simRes, causticResolution, _godRaysAllowed + god-ray steps
 
             _water = new WaterSimulation(simCompute, _simRes);
+            _analyticBuoyancyFallback = !SystemInfo.supportsAsyncGPUReadback; // no readback -> analytic waterline
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
 
             if (obstacleShader != null)
@@ -895,7 +899,7 @@ namespace AbstractOcclusion.WebGpuWater
         void RequestHeightReadback()
         {
             if (_readbackInFlight || _water == null) return;
-            if (!SystemInfo.supportsAsyncGPUReadback) return; // buoyancy degrades gracefully
+            if (!SystemInfo.supportsAsyncGPUReadback) return; // no readback; TrySamplePoolSurface uses the analytic fallback
             _readbackInFlight = true;
             AsyncGPUReadback.Request(_water.Texture, 0, TextureFormat.RGBAFloat, OnHeightReadback);
         }
@@ -937,11 +941,10 @@ namespace AbstractOcclusion.WebGpuWater
         public bool TryGetWaterHeight(float worldX, float worldZ, out float height)
         {
             height = 0f;
-            if (!_heightReady || _heightCpu == null) return false;
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
+            if (!TrySamplePoolSurface(probe, px, pz, out float poolHeight, out _)) return false;
 
-            float poolHeight = SamplePoolHeight(probe, px, pz);
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y; // pool -> world Y
             return true;
         }
@@ -953,18 +956,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             height = 0f;
             flow = Vector2.zero;
-            if (!_heightReady || _heightCpu == null) return false;
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
+            if (!TrySamplePoolSurface(probe, px, pz, out float poolHeight, out Vector2 poolFlow)) return false;
 
-            Color sample = SampleRipple(probe, px, pz);
-            float poolHeight = sample.r;
-            Vector2 poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
-            if (windWaves)
-            {
-                poolHeight += _waveBank.SampleHeight(px, pz, _waveTime, WaveMetersPerUnit);
-                poolFlow -= _waveBank.SampleSlope(px, pz, _waveTime, WaveMetersPerUnit) * waveNormalStrength;
-            }
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
             Vector3 worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
             flow = new Vector2(worldFlow.x, worldFlow.z);
@@ -980,19 +975,10 @@ namespace AbstractOcclusion.WebGpuWater
             depthWorld = 0f;
             up = VolumeUp;
             worldFlow = Vector3.zero;
-            if (!_heightReady || _heightCpu == null) return false;
 
             Vector3 pool = WorldToPool(worldPoint);
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return false;
-
-            Color sample = SampleRipple(worldPoint, pool.x, pool.z);
-            float surfaceH = sample.r;
-            Vector2 poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
-            if (windWaves)
-            {
-                surfaceH += _waveBank.SampleHeight(pool.x, pool.z, _waveTime, WaveMetersPerUnit);
-                poolFlow -= _waveBank.SampleSlope(pool.x, pool.z, _waveTime, WaveMetersPerUnit) * waveNormalStrength;
-            }
+            if (!TrySamplePoolSurface(worldPoint, pool.x, pool.z, out float surfaceH, out Vector2 poolFlow)) return false;
 
             depthWorld = (surfaceH - pool.y) * VolumeExtentSafe.y; // pool depth -> world depth along up
             worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
@@ -1063,12 +1049,35 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
-        // Pool-space height (sim ripple + wind waves) at a world point (pool xz in [-1,1]).
-        float SamplePoolHeight(Vector3 world, float poolX, float poolZ)
+        // Pool-space surface height + flow (normal.xz) at a world point (pool xz in [-1,1]).
+        // Uses the GPU readback ripple field when available; on backends without AsyncGPUReadback
+        // it falls back to the analytic surface (flat rest + wind waves) so buoyancy and surface
+        // queries keep working (interactive ripples / obstacle displacement are simply absent there).
+        // Returns false only when readback is supported but hasn't landed yet (first frames).
+        bool TrySamplePoolSurface(Vector3 world, float poolX, float poolZ, out float surfaceH, out Vector2 poolFlow)
         {
-            float h = SampleRipple(world, poolX, poolZ).r;
-            if (windWaves) h += _waveBank.SampleHeight(poolX, poolZ, _waveTime, WaveMetersPerUnit);
-            return h;
+            surfaceH = 0f;
+            poolFlow = Vector2.zero;
+
+            bool haveReadback = _heightReady && _heightCpu != null;
+            if (haveReadback)
+            {
+                Color sample = SampleRipple(world, poolX, poolZ);
+                surfaceH = sample.r;
+                poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
+            }
+            else if (!_analyticBuoyancyFallback)
+            {
+                return false; // readback supported but not ready yet
+            }
+            // else: analytic fallback -> rest surface (0) + wind waves added below
+
+            if (windWaves)
+            {
+                surfaceH += _waveBank.SampleHeight(poolX, poolZ, _waveTime, WaveMetersPerUnit);
+                poolFlow -= _waveBank.SampleSlope(poolX, poolZ, _waveTime, WaveMetersPerUnit) * waveNormalStrength;
+            }
+            return true;
         }
 
         // Interactive ripple sample (r = height, b/a = normal.xz) at a world point. Windowed
