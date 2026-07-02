@@ -18,6 +18,16 @@ namespace WebGLWater
     [DefaultExecutionOrder(-50)]
     public class WaterVolume : MonoBehaviour
     {
+        /// <summary>How WaterInteractable objects disturb the surface.</summary>
+        public enum ObjectInteraction
+        {
+            /// <summary>Analytic cosine drops from bobbing/drift, cloned from the mouse
+            /// interaction (WaterInteractable emits via AddRipple).</summary>
+            MouseLikeDrops,
+            /// <summary>Rasterized submerged-footprint displacement (prev - curr delta).</summary>
+            FootprintDelta
+        }
+
         [Header("Assigned by the scene builder")]
         public ComputeShader simCompute;
         public Shader causticsShader;
@@ -143,10 +153,21 @@ namespace WebGLWater
         public int causticResolution = 1024;
 
         [Header("Object interaction")]
-        [Tooltip("MASTER strength for how strongly submerged objects displace the water " +
-                 "(height units, comparable to Ripple Strength). Per-object weighting is " +
-                 "WaterInteractable.displaceScale (leave those at 1 for uniform objects).")]
+        [Tooltip("How floating objects disturb the water. MouseLikeDrops clones the mouse " +
+                 "interaction: analytic cosine drops from bobbing and drift (uses Ripple " +
+                 "Radius/Strength below; smooth, zero rasterization noise, slow rotation is " +
+                 "silent). FootprintDelta displaces by the rasterized submerged footprint " +
+                 "(shaped wakes for large hulls; costlier and noisier).")]
+        public ObjectInteraction objectInteraction = ObjectInteraction.MouseLikeDrops;
+        [Tooltip("FootprintDelta mode: MASTER strength for how strongly submerged objects " +
+                 "displace the water (height units, comparable to Ripple Strength). " +
+                 "Per-object weighting is WaterInteractable.displaceScale.")]
         [Range(0f, 0.5f)] public float obstacleStrength = 0.08f;
+        [Tooltip("Temporal smoothing of the object footprint (0 = off). Low-pass filters " +
+                 "the displacement a floater injects, so continuous bobbing/rotation emits " +
+                 "a few long clean waves instead of a dense packet of tight rings. The " +
+                 "total displaced volume is unchanged; higher = calmer but lazier response.")]
+        [Range(0f, 0.95f)] public float obstacleSmoothing = 0.65f;
         [Tooltip("Flip the obstacle map in Z if object ripples appear mirrored.")]
         public bool obstacleFlipY = true;
 
@@ -1023,6 +1044,25 @@ namespace WebGLWater
             return true;
         }
 
+        /// <summary>Waterline for the obstacle footprint: the ANALYTIC surface only (rest
+        /// plane + wind waves), deliberately EXCLUDING the interactive ripples. Including
+        /// them fed an object's own displacement back into its footprint through the stale
+        /// async readback - a delayed feedback loop that kept re-exciting micro-ripples
+        /// around every floater. Wind waves stay in, so a wave-riding float keeps a constant
+        /// submerged depth against its waterline and injects nothing; scattering off passing
+        /// ripples becomes a small, damped, open-loop effect (like the mouse, which injects
+        /// without ever being influenced by the water). No readback needed: valid from frame 0.</summary>
+        public bool TryGetAnalyticWaterline(float worldX, float worldZ, out float height)
+        {
+            height = 0f;
+            Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
+            if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
+
+            float poolHeight = windWaves ? _waveBank.SampleHeight(px, pz, _waveTime, WaveMetersPerUnit) : 0f;
+            height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
+            return true;
+        }
+
         // Pool-space height (sim ripple + wind waves) at a world point (pool xz in [-1,1]).
         float SamplePoolHeight(Vector3 world, float poolX, float poolZ)
         {
@@ -1034,6 +1074,9 @@ namespace WebGLWater
         // Interactive ripple sample (r = height, b/a = normal.xz) at a world point. Windowed
         // bodies read the camera-following window by world position (rest outside it); whole-body
         // bodies read the fixed grid at pool UV. Mirrors the shader's SampleRipple.
+        // BILINEAR across the four surrounding texels: the old nearest-texel read made every
+        // CPU consumer (buoyancy, splash drift, waterline queries) jump in a step whenever a
+        // mover crossed a texel boundary - one visible micro-pulse per crossing.
         Color SampleRipple(Vector3 world, float poolX, float poolZ)
         {
             float u, v;
@@ -1048,9 +1091,17 @@ namespace WebGLWater
             {
                 u = poolX * 0.5f + 0.5f; v = poolZ * 0.5f + 0.5f;
             }
-            int px = Mathf.Clamp((int)(u * _simRes), 0, _simRes - 1);
-            int pz = Mathf.Clamp((int)(v * _simRes), 0, _simRes - 1);
-            return _heightCpu[pz * _simRes + px];
+
+            float sx = Mathf.Clamp(u * _simRes - 0.5f, 0f, _simRes - 1f);
+            float sz = Mathf.Clamp(v * _simRes - 0.5f, 0f, _simRes - 1f);
+            int x0 = (int)sx, z0 = (int)sz;
+            int x1 = Mathf.Min(x0 + 1, _simRes - 1);
+            int z1 = Mathf.Min(z0 + 1, _simRes - 1);
+            float tx = sx - x0, tz = sz - z0;
+
+            Color bottom = Color.Lerp(_heightCpu[z0 * _simRes + x0], _heightCpu[z0 * _simRes + x1], tx);
+            Color top    = Color.Lerp(_heightCpu[z1 * _simRes + x0], _heightCpu[z1 * _simRes + x1], tx);
+            return Color.Lerp(bottom, top, tz);
         }
 
         void Step(float seconds)
@@ -1061,12 +1112,14 @@ namespace WebGLWater
             // stay world-anchored. No-op for whole-body bodies.
             if (_windowed) UpdateSimWindow();
 
-            // Push the surface with the live submerged footprint of interactable objects.
-            if (_obstacle != null)
+            // FootprintDelta mode only: push the surface with the temporally-smoothed
+            // submerged footprint. In MouseLikeDrops mode the WaterInteractables emit
+            // analytic drops themselves (via AddRipple) and this pass is skipped entirely.
+            if (_obstacle != null && objectInteraction == ObjectInteraction.FootprintDelta)
             {
                 // Windowed bodies re-frame the footprint onto the scrolling window each frame.
                 if (_windowed) _obstacle.SetFrame(_simCenter, VolumeRotation, SimHalfExtent);
-                _obstacle.Render(VolumeCenter.y);
+                _obstacle.Render(VolumeCenter.y, 1f - obstacleSmoothing);
                 // Compensate for extent.y so an object's displacement is a fixed world height
                 // regardless of pool depth (PoolToWorld scales surface height by extent.y).
                 _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr,
@@ -1137,6 +1190,63 @@ namespace WebGLWater
 
         // Average horizontal window half-size, keeping an injected ripple round in world units.
         float SimHorizontalExtent => Mathf.Max(simWindowMeters, 1e-3f);
+
+        // ---- GPU consumer API (foam particles and similar per-body effects) ----
+
+        /// <summary>Sim state texture (height, velocity, normal.xz) for GPU consumers.</summary>
+        public RenderTexture SimStateTexture => _water?.Texture;
+        /// <summary>Current foam-amount texture (R channel) for GPU consumers.</summary>
+        public RenderTexture FoamMaskTexture => _water?.FoamTexture;
+        /// <summary>Grid resolution of the active sim (per side), fixed at startup.</summary>
+        public int SimResolution => _simRes;
+        /// <summary>True when this body runs its GPU sim this frame (visible, in range,
+        /// within the sim budget, not paused). GPU consumers should idle when false.</summary>
+        public bool IsSimulating => _simulate && !_paused;
+        /// <summary>True when this body's renderers draw this frame (frustum cull).</summary>
+        public bool IsVisibleToCamera => _visible;
+
+        /// <summary>Push this body's placement-frame uniforms (volume + sim window) onto a
+        /// compute shader so GPU consumers can include WaterVolume.hlsl and share the exact
+        /// same pool/window/world transforms as the render side.</summary>
+        public void WriteSimFrameUniforms(ComputeShader cs)
+        {
+            if (cs == null) throw new System.ArgumentNullException(nameof(cs));
+            cs.SetVector(ID_VolumeCenter, VolumeCenter);
+            cs.SetVector(ID_VolumeExtent, VolumeExtentSafe);
+            cs.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
+            cs.SetFloat(ID_SimWindowed, _windowed ? 1f : 0f);
+            cs.SetVector(ID_SimCenter, _simCenter);
+            cs.SetVector(ID_SimExtent, SimHalfExtent);
+        }
+
+        /// <summary>World-space area covered by one sim texel (m^2), for density-normalised
+        /// GPU spawning. Uses the window frame when windowed, else the whole volume.</summary>
+        public float SimTexelWorldArea
+        {
+            get
+            {
+                Vector3 half = _windowed ? SimHalfExtent : VolumeExtentSafe;
+                float texelX = 2f * half.x / _simRes;
+                float texelZ = 2f * half.z / _simRes;
+                return texelX * texelZ;
+            }
+        }
+
+        /// <summary>Loose world bounds of the active sim frame (surface plane plus wave
+        /// headroom), for culling GPU-driven draws that follow this body.</summary>
+        public Bounds SimWorldBounds
+        {
+            get
+            {
+                Vector3 center = _windowed ? _simCenter : VolumeCenter;
+                Vector3 half = _windowed ? SimHalfExtent : VolumeExtentSafe;
+                // Rotation-safe: expand horizontally by the diagonal, vertically by the
+                // depth plus wave headroom.
+                float horizontal = Mathf.Sqrt(half.x * half.x + half.z * half.z);
+                float vertical = half.y * (1f + WaveHeightMargin);
+                return new Bounds(center, 2f * new Vector3(horizontal, vertical, horizontal));
+            }
+        }
 
         /// <summary>True if this body runs the camera-following windowed sim (decided at
         /// startup from its size and the threshold).</summary>

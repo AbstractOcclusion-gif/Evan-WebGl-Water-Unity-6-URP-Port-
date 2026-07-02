@@ -53,5 +53,34 @@ Shader "WebGLWater/ObstacleDepth"
             }
             ENDCG
         }
+
+        // Pass 1: temporal EMA combine. smoothed = lerp(lastSmoothed, raw, blend).
+        // Low-pass filters the footprint over time: per-frame flicker (bob jitter,
+        // rasterization noise, slow-rotation silhouette churn) is absorbed before it can
+        // force the sim, so floaters emit a few long clean waves instead of a dense
+        // packet of tight rings. The injected deltas telescope, so the TOTAL displaced
+        // volume is unchanged - only the frequency content is filtered.
+        Pass
+        {
+            Cull Off
+            ZWrite Off
+            ZTest Always
+
+            CGPROGRAM
+            #pragma vertex vert_img
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            sampler2D _MainTex;      // raw footprint (blit source)
+            sampler2D _SmoothedPrev; // last frame's smoothed footprint
+            float _TemporalBlend;    // 1 = no smoothing, ->0 = heavier smoothing
+
+            float4 frag(v2f_img i) : SV_Target
+            {
+                float smoothed = lerp(tex2D(_SmoothedPrev, i.uv).r, tex2D(_MainTex, i.uv).r, _TemporalBlend);
+                return float4(smoothed, 0, 0, 0);
+            }
+            ENDCG
+        }
     }
 }

@@ -33,6 +33,8 @@ Shader "WebGLWater/WaterSurface"
         _FoamTex ("Foam Pattern (optional, may be a flipbook)", 2D) = "white" {}
         _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
         _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
+        _FoamNormalTex ("Foam Normal Map (same flipbook grid)", 2D) = "bump" {}
+        _FoamNormalStrength ("Foam Normal Strength", Range(0, 3)) = 1
     }
     SubShader
     {
@@ -96,6 +98,10 @@ Shader "WebGLWater/WaterSurface"
             // (foam scatters light), plus a flat ambient floor from the sky.
             #define FOAM_LIGHT_WRAP     0.4
             #define FOAM_AMBIENT        0.35
+            // Seen from BELOW, dense foam blocks the sky transmitted through the surface,
+            // while thin lace scatters a faint sunlit glow through.
+            #define FOAM_UNDERSIDE_DARKEN 0.6
+            #define FOAM_UNDERSIDE_GLOW   0.4
 
             float _Underwater;
             float _ReflectionStrength;
@@ -119,9 +125,11 @@ Shader "WebGLWater/WaterSurface"
             // is an optional per-material pattern (defaults white = flat foam).
             sampler2D _FoamMask;
             sampler2D _FoamTex;
+            sampler2D _FoamNormalTex; // relief matching _FoamTex frame-for-frame (raw RGB encode)
             float4 _FoamTex_ST;
             float4 _FoamTexFrames; // (cols, rows) of the flipbook grid; (1,1) = plain texture
             float  _FoamTexFPS;
+            float  _FoamNormalStrength;
             float4 _FoamColor;
             float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
 
@@ -185,28 +193,74 @@ Shader "WebGLWater/WaterSurface"
                 return info;
             }
 
-            // Sample the foam pattern. When _FoamTexFrames describes a flipbook grid the
-            // frame advances at _FoamTexFPS and consecutive frames are cross-faded, so the
-            // foam churns internally even where the mask is static. A (1,1) grid reduces
-            // to a plain tiled lookup, so existing single-image materials are unaffected.
-            float3 SampleFoamPattern(float2 uv)
+            // Flipbook frame pair + crossfade weight for the current time. Both the foam
+            // pattern and its normal map use this, so their frames can never drift apart.
+            // A (1,1) grid reduces to a plain tiled lookup (existing materials unaffected).
+            void FoamFlipbookFrames(out float2 cellA, out float2 cellB, out float2 grid, out float blend)
             {
-                float cols = max(1.0, _FoamTexFrames.x);
-                float rows = max(1.0, _FoamTexFrames.y);
-                float frameCount = cols * rows;
+                grid = max(float2(1.0, 1.0), _FoamTexFrames.xy);
+                float frameCount = grid.x * grid.y;
                 float framePos = _Time.y * _FoamTexFPS;
-                float frameBlend = frac(framePos);
+                blend = frac(framePos);
 
                 float frameA = fmod(floor(framePos), frameCount);
                 float frameB = fmod(frameA + 1.0, frameCount);
                 // Flipbooks read left-to-right, top-to-bottom; texture V runs bottom-up.
-                float2 cellA = float2(fmod(frameA, cols), rows - 1.0 - floor(frameA / cols));
-                float2 cellB = float2(fmod(frameB, cols), rows - 1.0 - floor(frameB / cols));
+                cellA = float2(fmod(frameA, grid.x), grid.y - 1.0 - floor(frameA / grid.x));
+                cellB = float2(fmod(frameB, grid.x), grid.y - 1.0 - floor(frameB / grid.x));
+            }
 
+            // Foam pattern with frame advance + crossfade: the foam churns internally
+            // even where the mask is static.
+            float3 SampleFoamPattern(float2 uv)
+            {
+                float2 cellA, cellB, grid; float blend;
+                FoamFlipbookFrames(cellA, cellB, grid, blend);
                 float2 tiled = frac(uv);
-                float3 a = tex2D(_FoamTex, (tiled + cellA) / float2(cols, rows)).rgb;
-                float3 b = tex2D(_FoamTex, (tiled + cellB) / float2(cols, rows)).rgb;
-                return lerp(a, b, frameBlend);
+                float3 a = tex2D(_FoamTex, (tiled + cellA) / grid).rgb;
+                float3 b = tex2D(_FoamTex, (tiled + cellB) / grid).rgb;
+                return lerp(a, b, blend);
+            }
+
+            // Tangent-plane tilt (xy) of the foam relief. The map is raw-RGB encoded
+            // (n * 0.5 + 0.5) and imported LINEAR - deliberately NOT a Unity "Normal map"
+            // import, so the decode is identical on every backend. Default "bump" decodes
+            // to zero tilt, so materials without the map are unaffected.
+            float2 SampleFoamNormalTilt(float2 uv)
+            {
+                float2 cellA, cellB, grid; float blend;
+                FoamFlipbookFrames(cellA, cellB, grid, blend);
+                float2 tiled = frac(uv);
+                float2 a = tex2D(_FoamNormalTex, (tiled + cellA) / grid).rg * 2.0 - 1.0;
+                float2 b = tex2D(_FoamNormalTex, (tiled + cellB) / grid).rg * 2.0 - 1.0;
+                return lerp(a, b, blend);
+            }
+
+            // Shared foam evaluation for BOTH sides of the surface. Pattern: tiled/flipbook
+            // texture dragged along the local flow; two half-offset phases cross-faded by a
+            // seesaw weight give endless drift with no visible reset. Layers: dense white
+            // core where the mask is thick; as it thins the pattern's dark regions erode
+            // away first, so decaying foam breaks into filaments instead of ghosting out.
+            // Tilt: the relief normal, sampled at the SAME phases/frames, scaled by the
+            // mask so sparse foam doesn't dent the shading.
+            void EvaluateFoam(float2 fuv, float2 flowXZ, float mask,
+                              out float3 pattern, out float core, out float lace,
+                              out float alpha, out float2 tilt)
+            {
+                float2 flowDir = flowXZ * FOAM_FLOW_DISTANCE;
+                float phaseA = frac(_Time.y * FOAM_FLOW_RATE);
+                float phaseB = frac(phaseA + 0.5);
+                float seesaw = abs(phaseA * 2.0 - 1.0);
+                pattern = lerp(SampleFoamPattern(fuv - flowDir * phaseA),
+                               SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+
+                core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
+                lace = saturate((pattern.r - (1.0 - mask)) / FOAM_LACE_SOFTNESS);
+                alpha = max(core, lace * mask);
+
+                tilt = lerp(SampleFoamNormalTilt(fuv - flowDir * phaseA),
+                            SampleFoamNormalTilt(fuv - flowDir * phaseB), seesaw)
+                     * (_FoamNormalStrength * mask);
             }
 
             struct appdata { float4 vertex : POSITION; };
@@ -338,6 +392,34 @@ Shader "WebGLWater/WaterSurface"
                     tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
                     float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
 
+                    // ---- Foam seen from below: the same advected mask, but instead of lit
+                    // white it reads as a SILHOUETTE - dense foam blocks the sky coming
+                    // through the surface, thin lace scatters a faint sun glow through.
+                    // No contact foam here: the depth texture holds the scene ABOVE the
+                    // surface from this side, so the contact heuristic is meaningless. ----
+                    if (_FoamEnabled > 0.5)
+                    {
+                        float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
+                                                             : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
+                        float advected = tex2D(_FoamMask, fcoord).r;
+                        float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
+                        float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
+                        float mask = saturate((advected + border) * _FoamStrength);
+
+                        if (mask > FOAM_MASK_EPSILON)
+                        {
+                            float2 fuv = fcoord * _FoamTex_ST.xy + _FoamTex_ST.zw + normal.xz * FOAM_NORMAL_NUDGE;
+                            float3 pattern; float core, lace, foamAlpha; float2 tilt;
+                            EvaluateFoam(fuv, nxz, mask, pattern, core, lace, foamAlpha, tilt);
+
+                            // Applied BEFORE the downwelling dim below, so the silhouette
+                            // and its glow fade with eye depth like the rest of the scene.
+                            float sunThrough = saturate(_LightDir.y);
+                            underColor *= 1.0 - FOAM_UNDERSIDE_DARKEN * foamAlpha;
+                            underColor += _FoamColor.rgb * pattern * (FOAM_UNDERSIDE_GLOW * sunThrough * lace * mask);
+                        }
+                    }
+
                     // Dim the underwater view by the CAMERA's depth: the deeper the eye, the less
                     // downwelling light reaches it, so the whole submerged scene reads darker.
                     underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, _VolumeCenter.y);
@@ -435,28 +517,19 @@ Shader "WebGLWater/WaterSurface"
 
                         if (mask > FOAM_MASK_EPSILON)
                         {
-                            // ---- Pattern: tiled/flipbook texture dragged along the local
-                            // surface flow. Two half-offset phases cross-faded by a seesaw
-                            // weight give endless drift with no visible reset. ----
                             float2 fuv = fcoord * _FoamTex_ST.xy + _FoamTex_ST.zw + normal.xz * FOAM_NORMAL_NUDGE;
-                            float2 flowDir = nxz * FOAM_FLOW_DISTANCE; // ripple + wind-wave slope = flow
-                            float phaseA = frac(_Time.y * FOAM_FLOW_RATE);
-                            float phaseB = frac(phaseA + 0.5);
-                            float seesaw = abs(phaseA * 2.0 - 1.0);
-                            float3 pattern = lerp(SampleFoamPattern(fuv - flowDir * phaseA),
-                                                  SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+                            float3 pattern; float core, lace, foamAlpha; float2 tilt;
+                            EvaluateFoam(fuv, nxz, mask, pattern, core, lace, foamAlpha, tilt);
 
-                            // ---- Two layers. Core: dense white where the mask is thick.
-                            // Lace: as the mask thins, the pattern's dark regions erode away
-                            // first, so decaying foam breaks into filaments instead of
-                            // uniformly ghosting out. ----
-                            float core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
-                            float lace = saturate((pattern.r - (1.0 - mask)) / FOAM_LACE_SOFTNESS);
-                            float foamAlpha = max(core, lace * mask);
+                            // ---- Foam relief: tilt the lighting normal by the foam's own
+                            // normal map so the lace shades three-dimensionally. ----
+                            float3 foamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+                            float3 foamBitangent = cross(normal, foamTangent);
+                            float3 foamNormal = normalize(normal + foamTangent * tilt.x + foamBitangent * tilt.y);
 
                             // ---- Lit foam: wrapped diffuse from the sun over an ambient
                             // floor, so foam shades with the waves instead of flat white. ----
-                            float wrapped = saturate(dot(normal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+                            float wrapped = saturate(dot(foamNormal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
                             float3 albedo = _FoamColor.rgb * lerp(pattern, float3(1.0, 1.0, 1.0), core * FOAM_CORE_WHITEN);
                             float3 foamLook = albedo * (FOAM_AMBIENT + _SunColor * wrapped);
 

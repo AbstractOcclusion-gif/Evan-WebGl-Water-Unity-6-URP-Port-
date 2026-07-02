@@ -49,6 +49,12 @@ static const float FOAM_FRESH_THRESHOLD = 0.5;
 static const float OBSTACLE_BLUR_W[5] = { 1.0, 4.0, 6.0, 4.0, 1.0 };
 static const float OBSTACLE_BLUR_SUM = 256.0;
 
+// Soft dead-band on the blurred footprint delta (pool units, pre-strength). Residual
+// sub-threshold flicker - rasterization noise as an object drifts or slowly rotates -
+// is swallowed instead of stamped into the pool as micro-ripples (which then shimmer
+// through the caustics and god rays). Genuine plunges lose only this same tiny bias.
+static const float OBSTACLE_DELTA_DEADBAND = 0.0015;
+
 // Dst is a write-only storage texture; Src is sampled (read). Keeping the read
 // path as a sampled Texture2D instead of a read-write RWTexture2D is required by
 // the WebGPU backend, which only allows r32 formats as read-write storage.
@@ -190,7 +196,11 @@ void Obstacle(uint3 id : SV_DispatchThreadID)
             delta += (ObstaclePrev.Load(int3(q, 0)).r - ObstacleCurr.Load(int3(q, 0)).r) * w;
         }
     }
-    info.r += (delta / OBSTACLE_BLUR_SUM) * _ObstacleStrength;
+    // Soft knee: shift the delta toward zero by the dead-band instead of hard-gating,
+    // so the response stays continuous (no pop when a real motion crosses the threshold).
+    float blurred = delta / OBSTACLE_BLUR_SUM;
+    blurred = sign(blurred) * max(0.0, abs(blurred) - OBSTACLE_DELTA_DEADBAND);
+    info.r += blurred * _ObstacleStrength;
 
     Dst[p] = info;
 }

@@ -95,6 +95,84 @@ namespace WebGLWater.EditorTools
                       "Drop it into a scene with a camera - it resolves the camera and sun automatically.");
         }
 
+        // Retrofit GPU foam particles onto an existing body. Demo scenes are create-once,
+        // so they don't pick the feature up automatically; this wires the compute, the
+        // procedural-quad material (shared, in Generated/) and the component in one click.
+        [MenuItem("Tools/WebGL Water/Add Foam Particles To Selected Water")]
+        static void AddFoamParticlesToSelection()
+        {
+            var selected = Selection.activeGameObject;
+            var volume = selected != null ? selected.GetComponentInChildren<WaterVolume>() : null;
+            if (volume == null)
+            {
+                Debug.LogError("[WebGL Water] Select a GameObject with a WaterVolume first.");
+                return;
+            }
+            if (volume.GetComponent<WaterFoamParticles>() != null)
+            {
+                Debug.LogWarning("[WebGL Water] That body already has foam particles.");
+                return;
+            }
+            EnsureGenFolder();
+            AddFoamParticles(volume, MaterialFolderForActiveScene());
+            Selection.activeObject = volume.gameObject;
+        }
+
+        // Upgrade the shared splash materials (Generated/SplashDroplet.mat + SplashCrown.mat)
+        // to the lit splash shader in place. They are shared by every demo scene, so one
+        // click upgrades them all; hand-tuned values on matching properties are kept.
+        [MenuItem("Tools/WebGL Water/Upgrade Splash Materials (lit)")]
+        static void UpgradeSplashMaterialsMenu()
+        {
+            UpgradeSplashMaterials();
+            Debug.Log("[WebGL Water] Splash materials now use " + ShaderSplashParticles + ".");
+        }
+
+        // Assign the animated foam flipbook + relief normal map to every water surface
+        // material in the open scene (above AND under). Demo materials are create-once,
+        // so new foam textures don't reach them automatically; this is the retrofit.
+        [MenuItem("Tools/WebGL Water/Assign Foam Textures To Scene Water")]
+        static void AssignFoamTexturesToSceneWater()
+        {
+            var volumes = Object.FindObjectsByType<WaterVolume>(FindObjectsSortMode.None);
+            if (volumes.Length == 0)
+            {
+                Debug.LogError("[WebGL Water] No WaterVolume in the open scene.");
+                return;
+            }
+
+            int touched = 0;
+            foreach (WaterVolume volume in volumes)
+            {
+                touched += AssignFoamTextures(volume.surfaceAbove);
+                touched += AssignFoamTextures(volume.surfaceUnder);
+            }
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[WebGL Water] Foam flipbook + normal map assigned to {touched} water material(s).");
+        }
+
+        static int AssignFoamTextures(Renderer surface)
+        {
+            if (surface == null || surface.sharedMaterial == null) return 0;
+            AssignFoamFlipbook(surface.sharedMaterial);
+            EditorUtility.SetDirty(surface.sharedMaterial);
+            return 1;
+        }
+
+        // The per-demo material folder for the open scene ("3. Terrain Lake" ->
+        // Demos/Materials/TerrainLake), so a retrofitted material lives (and is tweaked)
+        // next to that demo's other materials. Falls back to Generated/ for custom scenes.
+        static string MaterialFolderForActiveScene()
+        {
+            const string DemoMaterialsRoot = WaterBuildKit.Root + "/Demos/Materials/";
+            string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            var compact = new System.Text.StringBuilder(sceneName.Length);
+            foreach (char c in sceneName)
+                if (char.IsLetter(c)) compact.Append(c);
+            string candidate = DemoMaterialsRoot + compact;
+            return AssetDatabase.IsValidFolder(candidate) ? candidate : Gen;
+        }
+
         // Adds a SECOND (non-primary) water body next to the primary, sharing the sun, camera,
         // compute and shaders. The new body renders through its own MaterialPropertyBlock, so it
         // must look independent - proof the de-globalisation works.

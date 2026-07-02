@@ -1,7 +1,14 @@
 // WebGL Water - marker for objects that interact with the water (Unity 6 / URP).
-// Add this to any Renderer that should displace the surface. It self-registers in
-// a static list that WaterObstacle iterates each step, so detection is automatic:
-// no manual wiring, no per-frame FindObjectsOfType.
+// Add this to any Renderer that should disturb the surface. It self-registers in a
+// static list, so detection is automatic: no manual wiring, no per-frame Find.
+//
+// Two interaction modes, chosen on the WaterVolume (objectInteraction):
+// - MouseLikeDrops (default): this component emits analytic cosine drops CLONED from
+//   the mouse rules - one drop per fixed step of vertical plunge/rise, one wake drop
+//   per fixed step of horizontal travel (the mouse drag's spacing rule). Smooth by
+//   construction: no rasterization, and slow rotation emits nothing at all.
+// - FootprintDelta: WaterObstacle rasterizes the submerged footprint top-down and the
+//   sim injects the frame-to-frame delta (shaped wakes for large hulls).
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -16,10 +23,27 @@ namespace WebGLWater
         /// callers; membership is managed by OnEnable/OnDisable.</summary>
         public static IReadOnlyList<WaterInteractable> Active => _active;
 
-        [Tooltip("Per-object RELATIVE weight on how strongly it displaces the water. Leave " +
+        // Safety cap on drops emitted in one frame (a teleporting object would otherwise
+        // burst-fire its whole accumulated travel as a stack of drops).
+        const int MaxDropsPerFrame = 4;
+
+        [Tooltip("Per-object RELATIVE weight on how strongly it disturbs the water. Leave " +
                  "at 1 unless one object should push more or less than the others; the " +
-                 "master strength is 'Obstacle Strength' on the WaterVolume.")]
+                 "master strengths live on the WaterVolume (Ripple Strength in drop mode, " +
+                 "Obstacle Strength in footprint mode).")]
         public float displaceScale = 1f;
+
+        [Header("Mouse-like drop emission")]
+        [Tooltip("Vertical plunge/rise (world units) that emits one drop. Smaller = more " +
+                 "frequent bobbing ripples.")]
+        [Range(0.002f, 0.1f)] public float verticalEmitSpacing = 0.012f;
+        [Tooltip("Horizontal travel (world units) that emits one wake drop - the same " +
+                 "spacing rule the mouse drag uses.")]
+        [Range(0.005f, 0.2f)] public float horizontalEmitSpacing = 0.02f;
+
+        Vector3 _lastDropPosition;
+        float _prevRelDepth;
+        bool _tracking;
 
         public Renderer Renderer { get; private set; }
 
@@ -34,11 +58,76 @@ namespace WebGLWater
         }
         void OnDisable() { _active.Remove(this); }
 
-        /// <summary>Local water surface height (world Y) under the object, used as the
-        /// per-object waterline for the submerged-thickness footprint. A float riding a
+        // Mouse-like drop emission. LateUpdate so physics (FixedUpdate) and the volume's
+        // sim step have settled; AddRipple dispatches immediately and is safe any time.
+        void LateUpdate()
+        {
+            if (Renderer == null) return;
+            Bounds bounds = Renderer.bounds;
+            WaterVolume body = WaterVolume.BodyContaining(bounds.center);
+            if (body == null || body.objectInteraction != WaterVolume.ObjectInteraction.MouseLikeDrops)
+            {
+                _tracking = false;
+                return;
+            }
+            if (!body.TryGetAnalyticWaterline(bounds.center.x, bounds.center.z, out float waterlineY)
+                || !IsSubmerged(waterlineY))
+            {
+                _tracking = false;
+                return;
+            }
+
+            // Plunge depth tracked from the TRANSFORM, not the AABB: a rotating object's
+            // bounds breathe with its orientation, which would fake vertical motion.
+            float relDepth = waterlineY - transform.position.y;
+            Vector3 position = bounds.center;
+
+            if (!_tracking)
+            {
+                // (Re)entered the water: prime the trackers; the physical entry splash is
+                // WaterSplash's job, steady-state disturbance starts next frame.
+                _tracking = true;
+                _prevRelDepth = relDepth;
+                _lastDropPosition = position;
+                return;
+            }
+
+            // Drop look: the object's own size sets the radius (never below the mouse's),
+            // the volume's mouse strength sets the amplitude, weighted per object.
+            float radius = Mathf.Max(body.rippleRadius, Mathf.Max(bounds.extents.x, bounds.extents.z));
+            float strength = body.rippleStrength * displaceScale;
+            int budget = MaxDropsPerFrame;
+
+            // Vertical bobbing: one drop per spacing step of plunge/rise. Signed like the
+            // footprint delta was: sinking dips the surface, rising lifts it. The
+            // un-emitted remainder keeps accumulating across frames.
+            float depthDelta = relDepth - _prevRelDepth;
+            while (Mathf.Abs(depthDelta) >= verticalEmitSpacing && budget-- > 0)
+            {
+                float direction = Mathf.Sign(depthDelta);
+                body.AddRipple(position.x, position.z, radius, -direction * strength);
+                depthDelta -= direction * verticalEmitSpacing;
+            }
+            _prevRelDepth = relDepth - depthDelta;
+
+            // Horizontal drift: the mouse drag rule - one wake drop per spacing step.
+            Vector3 travel = position - _lastDropPosition;
+            travel.y = 0f;
+            if (travel.magnitude >= horizontalEmitSpacing && budget > 0)
+            {
+                body.AddRipple(position.x, position.z, radius, strength);
+                _lastDropPosition = position;
+            }
+        }
+
+        /// <summary>Local ANALYTIC waterline (world Y) under the object - rest plane plus
+        /// wind waves, deliberately NOT the live rippled surface. A float riding a wind
         /// wave keeps a constant submerged depth against this moving line, so it injects
-        /// nothing; only genuine plunging through the surface changes it. Falls back to
-        /// the flat rest plane (restY) until the height readback is available.</summary>
+        /// nothing; only genuine motion through the surface (plunge, drift, bob) changes
+        /// it. Using the live readback height here fed the object's own ripples back into
+        /// its footprint (stale by the async readback) - a delayed feedback loop that kept
+        /// re-exciting micro-ripples around every floater. Falls back to the flat rest
+        /// plane (restY) outside every body's footprint.</summary>
         public float WaterlineY(float restY)
         {
             if (Renderer == null) return restY;
@@ -46,7 +135,7 @@ namespace WebGLWater
             // Resolve the body under the object each call so the waterline follows the lake
             // it is actually in, not a single body cached at startup.
             WaterVolume ctrl = WaterVolume.BodyContaining(b.center);
-            if (ctrl != null && ctrl.TryGetWaterHeight(b.center.x, b.center.z, out float surfaceY))
+            if (ctrl != null && ctrl.TryGetAnalyticWaterline(b.center.x, b.center.z, out float surfaceY))
                 return surfaceY;
             return restY;
         }

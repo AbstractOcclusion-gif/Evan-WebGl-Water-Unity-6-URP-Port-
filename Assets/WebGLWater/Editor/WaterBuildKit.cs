@@ -50,7 +50,6 @@ namespace WebGLWater.EditorTools
         internal const string ShaderObstacle = "WebGLWater/ObstacleDepth";
         internal const string ShaderReceiver = "WebGLWater/WaterReceiver";
         internal const string ShaderGodRays = "WebGLWater/GodRays";
-        internal const string ShaderSpritesDefault = "Sprites/Default";
 
         // Material property names (keep in sync with the shader Properties blocks).
         internal const string PropUnderwater = "_Underwater";
@@ -61,10 +60,26 @@ namespace WebGLWater.EditorTools
         internal const string PropGodRayColor = "_GodRayColor";
         internal const string PropFoamTex = "_FoamTex";
         internal const string PropFoamTexFrames = "_FoamTexFrames";
+        internal const string PropFoamNormalTex = "_FoamNormalTex";
+        internal const string PropParticleTex = "_ParticleTex";
+
+        // GPU foam particles (compute + procedural-quad shader + sprite atlas).
+        internal const string ShaderFoamParticles = "WebGLWater/FoamParticles";
+        internal const string FoamParticleComputePath = Root + "/Shaders/WaterFoamParticles.compute";
+        internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
+
+        // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
+        internal const string ShaderSplashParticles = "WebGLWater/SplashParticles";
+        internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
+        internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
+        internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
+        internal const string DropletTexturePath = Gen + "/Droplet.png";
 
         // Foam pattern flipbook (frames laid out in a grid; the surface shader
-        // cross-fades frames over time so the foam churns internally).
+        // cross-fades frames over time so the foam churns internally) and its
+        // frame-matched relief normal map (raw-RGB encoded, imported linear).
         const string FoamFlipbookPath = Gen + "/FoamFlipbook_4x4.png";
+        const string FoamNormalFlipbookPath = Gen + "/FoamFlipbookNormal_4x4.png";
         const int FoamFlipbookCols = 4;
         const int FoamFlipbookRows = 4;
 
@@ -177,8 +192,39 @@ namespace WebGLWater.EditorTools
                 if (godGO != null) volume.godRayRenderer = godGO.GetComponent<Renderer>();
             }
 
+            AddFoamParticles(volume, ctx.Folder);
+
             EditorUtility.SetDirty(volume);
             return volume;
+        }
+
+        // GPU foam/spray particles alongside the body's WaterVolume. The component idles
+        // until the body's foam toggle is on, so bodies without foam pay nothing. Skipped
+        // silently when the compute/shader/atlas assets are missing (feature simply absent).
+        internal static WaterFoamParticles AddFoamParticles(WaterVolume volume, string materialFolder)
+        {
+            if (volume == null) return null;
+
+            var compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(FoamParticleComputePath);
+            var shader = Shader.Find(ShaderFoamParticles);
+            if (compute == null || shader == null)
+            {
+                Debug.LogWarning("WebGL Water: foam particle compute/shader missing; skipping particle setup.");
+                return null;
+            }
+
+            var material = LoadOrCreateMaterial(materialFolder + "/FoamParticles.mat", shader, m =>
+            {
+                var atlas = LoadFlipbook(FoamParticleAtlasPath, TextureWrapMode.Clamp, true);
+                if (atlas != null) m.SetTexture(PropParticleTex, atlas);
+            });
+
+            var particles = volume.gameObject.AddComponent<WaterFoamParticles>();
+            particles.volume = volume;
+            particles.particleCompute = compute;
+            particles.particleMaterial = material;
+            EditorUtility.SetDirty(particles);
+            return particles;
         }
 
         // ---------------------------------------------------------------- demo props
@@ -309,14 +355,18 @@ namespace WebGLWater.EditorTools
             m.EnableKeyword(KeywordRealRefraction);
         }
 
-        // Give a new above-water material the animated foam pattern. Skipped silently when
-        // the flipbook asset is absent: the shader's white default degrades to flat foam.
-        static void AssignFoamFlipbook(Material m)
+        // Give a water surface material the animated foam pattern + its relief normal
+        // map. Skipped silently when the flipbook asset is absent: the shader's white/bump
+        // defaults degrade to flat foam.
+        internal static void AssignFoamFlipbook(Material m)
         {
             var flipbook = LoadFlipbook(FoamFlipbookPath, TextureWrapMode.Repeat, true);
             if (flipbook == null) return;
             m.SetTexture(PropFoamTex, flipbook);
             m.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
+
+            var relief = LoadFlipbook(FoamNormalFlipbookPath, TextureWrapMode.Repeat, true, linear: true);
+            if (relief != null) m.SetTexture(PropFoamNormalTex, relief);
         }
 
         // Underwater god-ray volume (caustic-masked light shafts). Returns null if the shader is
@@ -384,6 +434,8 @@ namespace WebGLWater.EditorTools
         }
 
         // Shared, fully editable splash particles (drift droplets + a flipbook crown).
+        // Materials are create-once assets on the lit splash shader, so hand-tuning
+        // survives rebuilds (same convention as the water/foam-particle materials).
         internal static WaterSplashEmitter CreateSplashEmitter(Transform parent)
         {
             var splashGO = new GameObject("Splash Particles");
@@ -391,13 +443,8 @@ namespace WebGLWater.EditorTools
             var splashPS = splashGO.AddComponent<ParticleSystem>();
             WaterSplashEmitter.ConfigureForDrift(splashPS);
             var splashPSR = splashGO.GetComponent<ParticleSystemRenderer>();
-            var sfSprite = Shader.Find(ShaderSpritesDefault);
-            if (sfSprite != null)
-            {
-                var dm = new Material(sfSprite) { mainTexture = LoadOrBuildDroplet(Gen + "/Droplet.png") };
-                dm.color = new Color(0.92f, 0.97f, 1f, 1f);
-                splashPSR.sharedMaterial = SaveMaterial(dm, Gen + "/SplashDroplet.mat");
-            }
+            splashPSR.sharedMaterial = LoadOrCreateSplashMaterial(
+                SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
             splashPSR.renderMode = ParticleSystemRenderMode.Billboard;
             var splashEmitter = splashGO.AddComponent<WaterSplashEmitter>();
             splashEmitter.particles = splashPS;
@@ -409,15 +456,45 @@ namespace WebGLWater.EditorTools
             var crownPSR = crownGO.GetComponent<ParticleSystemRenderer>();
             crownPSR.renderMode = ParticleSystemRenderMode.VerticalBillboard;
             crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
-            var crownSheet = LoadFlipbook(Gen + "/SplashFlipbook_8x8.png", TextureWrapMode.Clamp, false);
-            if (sfSprite != null && crownSheet != null)
-            {
-                var cm = new Material(sfSprite) { mainTexture = crownSheet };
-                cm.color = new Color(0.95f, 0.98f, 1f, 1f);
-                crownPSR.sharedMaterial = SaveMaterial(cm, Gen + "/SplashCrown.mat");
-            }
+            crownPSR.sharedMaterial = LoadOrCreateSplashMaterial(
+                SplashCrownMaterialPath, LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false));
             splashEmitter.crownParticles = crownPS;
             return splashEmitter;
+        }
+
+        // Upgrade (or create) both shared splash materials on the lit shader. They are
+        // referenced by every demo scene, so this fixes all of them at once.
+        internal static void UpgradeSplashMaterials()
+        {
+            EnsureGenFolder();
+            LoadOrCreateSplashMaterial(SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
+            LoadOrCreateSplashMaterial(SplashCrownMaterialPath, LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false));
+            AssetDatabase.SaveAssets();
+        }
+
+        // A splash material on the lit shader (create-once). Also the one-click upgrade
+        // path for materials created before the lit shader existed: an existing material
+        // still on another shader is switched in place, keeping its texture.
+        static Material LoadOrCreateSplashMaterial(string path, Texture2D sprite)
+        {
+            var shader = Shader.Find(ShaderSplashParticles);
+            if (shader == null)
+            {
+                Debug.LogWarning($"WebGL Water: shader '{ShaderSplashParticles}' missing; splash material not created.");
+                return null;
+            }
+
+            var material = LoadOrCreateMaterial(path, shader, m =>
+            {
+                if (sprite != null) m.mainTexture = sprite;
+            });
+            if (material.shader != shader)
+            {
+                material.shader = shader; // upgrade in place; _MainTex carries over by name
+                if (material.mainTexture == null && sprite != null) material.mainTexture = sprite;
+                EditorUtility.SetDirty(material);
+            }
+            return material;
         }
 
         // ---------------------------------------------------------------- meshes
@@ -618,14 +695,17 @@ namespace WebGLWater.EditorTools
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }
 
-        static Texture2D LoadFlipbook(string path, TextureWrapMode wrap, bool mipmaps)
+        // 'linear' is for data textures (e.g. the raw-RGB foam normal map): sRGB sampling
+        // would distort the decoded vectors.
+        static Texture2D LoadFlipbook(string path, TextureWrapMode wrap, bool mipmaps, bool linear = false)
         {
             if (!File.Exists(path)) return null;
             AssetDatabase.ImportAsset(path);
             if (AssetImporter.GetAtPath(path) is TextureImporter imp)
             {
                 imp.textureType = TextureImporterType.Default;
-                imp.alphaIsTransparency = true;
+                imp.sRGBTexture = !linear;
+                imp.alphaIsTransparency = !linear;
                 imp.wrapMode = wrap;
                 imp.mipmapEnabled = mipmaps;
                 imp.SaveAndReimport();

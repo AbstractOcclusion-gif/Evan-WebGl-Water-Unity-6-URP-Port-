@@ -1,0 +1,229 @@
+// WebGL Water - GPU foam particles (KWS-inspired)
+//
+// Particles spawn on the GPU where the sim's foam/turbulence is strong, drift with
+// the surface flow, and are drawn by FoamParticles.shader straight from the buffer
+// (no CPU round trip). WebGPU-safe by construction:
+//   - no Append/Consume buffers: a ring cursor advanced with InterlockedAdd,
+//   - the sim state is read with Load + manual bilinear (r32/float RTs are not
+//     filterable on WebGPU),
+//   - fixed-capacity pool; dead slots are skipped by the vertex shader.
+//
+// Two particle kinds share one pool:
+//   KIND_SURFACE: floats on the water, dragged by the local flow + wind.
+//   KIND_SPRAY:   ballistic droplets thrown off strong turbulence; on landing they
+//                 convert to KIND_SURFACE and keep drifting as foam.
+
+#pragma kernel BeginFrame
+#pragma kernel Spawn
+#pragma kernel Update
+
+#include "WaterVolume.hlsl" // pool/window <-> world frame (same uniforms as the render side)
+
+// MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
+#define SPAWN_THREAD_GROUP_SIZE  8
+#define UPDATE_THREAD_GROUP_SIZE 64
+
+static const float KIND_SURFACE = 0.0;
+static const float KIND_SPRAY   = 1.0;
+
+// Counters buffer layout.
+static const uint COUNTER_RING_CURSOR = 0; // ever-increasing spawn cursor (ring index)
+static const uint COUNTER_FRAME_SPAWNS = 1; // spawns so far this frame (budget check)
+
+// Spray landing: below this height offset the droplet becomes surface foam.
+static const float SPRAY_LANDING_EPSILON = 0.005;
+// Landing keeps a fraction of the horizontal speed (energy lost to the impact).
+static const float SPRAY_LANDING_KEEP = 0.4;
+// Kill particles this far outside the active sim frame (pool or window), in
+// normalised units; a little slack so foam can hug the walls before dying.
+static const float FRAME_KILL_MARGIN = 0.02;
+
+// One particle = 48 bytes. MUST match FoamParticle in FoamParticles.shader and
+// the stride in WaterFoamParticles.cs.
+struct FoamParticle
+{
+    float3 worldPos; // world xz; y = height offset ABOVE the local water surface
+    float3 velocity; // world units/sec (y used while KIND_SPRAY)
+    float  age;      // seconds since spawn
+    float  life;     // seconds; <= 0 marks a dead slot
+    float  size;     // world half-size of the quad
+    float  seed;     // 0..1, fixed per particle (sprite variant, yaw, jitter)
+    float  kind;     // KIND_SURFACE or KIND_SPRAY
+    float  strength; // foam amount at spawn, scales opacity
+};
+
+RWStructuredBuffer<FoamParticle> Particles;
+RWStructuredBuffer<uint> Counters;
+
+// Sim inputs (same textures the Foam kernel reads).
+Texture2D<float4> Sim;      // (height, velocity, normal.x, normal.z)
+Texture2D<float>  FoamTex;  // foam amount (R)
+
+float _Size;              // sim grid resolution
+uint  _Capacity;          // particle pool size (power of two)
+uint  _FrameSeed;         // per-frame random salt
+float _DeltaTime;
+
+// Spawn tuning
+float _SpawnThreshold;    // foam level below which nothing spawns
+float _SpawnRate;         // expected spawns / second / world-unit^2 at foam = 1
+uint  _MaxSpawnPerFrame;  // hard budget per frame
+float _SprayChance;       // 0..1 fraction of spawns thrown as ballistic spray
+float _SprayLaunchSpeed;  // world units/sec initial upward speed of spray
+float _LifeMin, _LifeMax; // seconds
+float _SizeMin, _SizeMax; // world units
+float _TexelWorldArea;    // world-space area covered by one sim texel
+
+// Update tuning
+float _Gravity;           // world units/sec^2 (positive down)
+float _FlowDrift;         // world units/sec of drift per unit of surface slope
+float2 _WindDrift;        // constant world-space xz drift from the wind
+float _Drag;              // 1/sec velocity relaxation toward the driven speed
+
+// ---------------------------------------------------------------- helpers
+int2 ClampTexel(int2 p) { return clamp(p, int2(0, 0), int2((int)_Size - 1, (int)_Size - 1)); }
+
+// PCG hash -> float in [0,1). Deterministic per (texel, salt).
+uint Pcg(uint v)
+{
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float Rand01(uint2 p, uint salt)
+{
+    return Pcg(p.x ^ Pcg(p.y ^ Pcg(salt))) / 4294967296.0;
+}
+
+// Normalised sim-frame coords (.xz in [-1,1]) of a world point: window frame when
+// windowed, else the whole pool. Mirrors the fcoord convention of WaterSurface.
+float2 WorldToSimNorm(float3 world)
+{
+    return (_SimWindowed < 0.5) ? WorldToPool(world).xz : WorldToSim(world).xz;
+}
+
+// World position of a sim texel centre on the surface plane (y = 0).
+float3 TexelToWorld(int2 texel)
+{
+    float2 norm = ((float2(texel) + 0.5) / _Size) * 2.0 - 1.0;
+    if (_SimWindowed < 0.5)
+        return PoolToWorld(float3(norm.x, 0.0, norm.y));
+    return _SimCenter + mul(VolumeRot(), float3(norm.x, 0.0, norm.y) * SimExtentSafe());
+}
+
+// Manual bilinear fetch of the sim state at normalised frame coords.
+float4 SampleSim(float2 simNorm)
+{
+    float2 st = (simNorm * 0.5 + 0.5) * _Size - 0.5;
+    int2   s0 = (int2)floor(st);
+    float2 t  = st - float2(s0);
+    float4 c00 = Sim.Load(int3(ClampTexel(s0 + int2(0, 0)), 0));
+    float4 c10 = Sim.Load(int3(ClampTexel(s0 + int2(1, 0)), 0));
+    float4 c01 = Sim.Load(int3(ClampTexel(s0 + int2(0, 1)), 0));
+    float4 c11 = Sim.Load(int3(ClampTexel(s0 + int2(1, 1)), 0));
+    return lerp(lerp(c00, c10, t.x), lerp(c01, c11, t.x), t.y);
+}
+
+// ---------------------------------------------------------------- kernels
+[numthreads(1, 1, 1)]
+void BeginFrame(uint3 id : SV_DispatchThreadID)
+{
+    Counters[COUNTER_FRAME_SPAWNS] = 0;
+}
+
+// One thread per sim texel: roll a spawn where foam exceeds the threshold. The
+// probability is normalised by the texel's world area, so particle density (per
+// square metre of foamy water) is independent of grid resolution and body size.
+[numthreads(SPAWN_THREAD_GROUP_SIZE, SPAWN_THREAD_GROUP_SIZE, 1)]
+void Spawn(uint3 id : SV_DispatchThreadID)
+{
+    int2 texel = int2(id.xy);
+    float foam = FoamTex.Load(int3(texel, 0));
+    float excess = foam - _SpawnThreshold;
+    if (excess <= 0.0) return;
+
+    float probability = excess * _SpawnRate * _TexelWorldArea * _DeltaTime;
+    if (Rand01(id.xy, _FrameSeed) >= probability) return;
+
+    // Per-frame budget: count first, back out if over. A few threads may race past
+    // the limit; the budget is a soft cap, so that is acceptable.
+    uint frameSpawns;
+    InterlockedAdd(Counters[COUNTER_FRAME_SPAWNS], 1, frameSpawns);
+    if (frameSpawns >= _MaxSpawnPerFrame) return;
+
+    uint cursor;
+    InterlockedAdd(Counters[COUNTER_RING_CURSOR], 1, cursor);
+    uint slot = cursor & (_Capacity - 1u); // capacity is a power of two
+
+    float4 info = Sim.Load(int3(texel, 0));
+    float r0 = Rand01(id.xy, _FrameSeed ^ 0x9E3779B9u);
+    float r1 = Rand01(id.xy, _FrameSeed ^ 0x85EBCA6Bu);
+    float r2 = Rand01(id.xy, _FrameSeed ^ 0xC2B2AE35u);
+
+    bool spray = r0 < _SprayChance;
+    // Surface flow: normal.xz = -gradient(height) = downhill = flow direction.
+    float3 flowWorld = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift;
+
+    FoamParticle particle;
+    particle.worldPos = TexelToWorld(texel);
+    particle.worldPos.y = 0.0;
+    particle.velocity = flowWorld + float3(_WindDrift.x, 0.0, _WindDrift.y);
+    if (spray) particle.velocity.y = _SprayLaunchSpeed * (0.6 + 0.4 * r1);
+    particle.age = 0.0;
+    particle.life = lerp(_LifeMin, _LifeMax, r1);
+    particle.size = lerp(_SizeMin, _SizeMax, r2);
+    particle.seed = r2;
+    particle.kind = spray ? KIND_SPRAY : KIND_SURFACE;
+    particle.strength = saturate(foam);
+    Particles[slot] = particle;
+}
+
+// One thread per pool slot: integrate, convert landed spray to surface foam, and
+// kill particles that age out or leave the active sim frame.
+[numthreads(UPDATE_THREAD_GROUP_SIZE, 1, 1)]
+void Update(uint3 id : SV_DispatchThreadID)
+{
+    uint slot = id.x;
+    if (slot >= _Capacity) return;
+
+    FoamParticle particle = Particles[slot];
+    if (particle.life <= 0.0) return;
+
+    particle.age += _DeltaTime;
+    if (particle.age >= particle.life) { particle.life = 0.0; Particles[slot] = particle; return; }
+
+    float2 simNorm = WorldToSimNorm(particle.worldPos);
+    if (any(abs(simNorm) > 1.0 + FRAME_KILL_MARGIN))
+    {
+        particle.life = 0.0;
+        Particles[slot] = particle;
+        return;
+    }
+
+    if (particle.kind == KIND_SPRAY)
+    {
+        particle.velocity.y -= _Gravity * _DeltaTime;
+        particle.worldPos += particle.velocity * _DeltaTime;
+        if (particle.worldPos.y <= SPRAY_LANDING_EPSILON && particle.velocity.y < 0.0)
+        {
+            particle.worldPos.y = 0.0;
+            particle.velocity = float3(particle.velocity.x, 0.0, particle.velocity.z) * SPRAY_LANDING_KEEP;
+            particle.kind = KIND_SURFACE;
+        }
+    }
+    else
+    {
+        // Relax the drift toward the driven velocity (local flow + wind): foam has
+        // no inertia to speak of, but the relaxation keeps direction changes smooth.
+        float4 info = SampleSim(simNorm);
+        float3 driven = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift
+                      + float3(_WindDrift.x, 0.0, _WindDrift.y);
+        particle.velocity = lerp(particle.velocity, driven, saturate(_Drag * _DeltaTime));
+        particle.velocity.y = 0.0;
+        particle.worldPos += particle.velocity * _DeltaTime;
+        particle.worldPos.y = 0.0;
+    }
+
+    Particles[slot] = particle;
+}
