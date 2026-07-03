@@ -1,7 +1,6 @@
 // WebGL Water - reusable orbit camera (Unity 6 / URP port)
 // Orbits a pivot, scroll to zoom. WaterVolume calls Rotate() when the user
-// drags the background; zoom is handled here every frame. Publishes the camera
-// world position to the _Eye global used by the water shaders.
+// drags the background; zoom is handled here every frame.
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -37,8 +36,6 @@ namespace AbstractOcclusion.WebGpuWater
         const float NoActivePinch = -1f;            // sentinel: no pinch gesture in progress
 
         float _lastPinchDist = NoActivePinch;
-
-        static readonly int ID_Eye = Shader.PropertyToID("_Eye");
 
         void OnEnable() => Apply();
 
@@ -116,7 +113,6 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 eye = rot * new Vector3(0f, 0f, distance) + p;
             transform.position = eye;
             transform.LookAt(p, Vector3.up);
-            Shader.SetGlobalVector(ID_Eye, eye);
         }
 
         static float ScrollDelta()

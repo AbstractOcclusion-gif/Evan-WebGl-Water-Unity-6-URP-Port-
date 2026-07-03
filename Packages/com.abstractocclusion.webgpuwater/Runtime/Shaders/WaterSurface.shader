@@ -75,8 +75,11 @@ Shader "WebGLWater/WaterSurface"
             #define FRESNEL_MIN_ABOVE       0.25
             #define FRESNEL_MIN_BELOW       0.5
 
-            // Peaked-look refine: a few short steps along the ripple normal sharpen wave crests.
-            #define PEAKED_REFINE_STEPS 5
+            // Peaked-look refine: short steps along the ripple normal sharpen wave crests.
+            // The step COUNT is tier-driven (_PeakedRefineSteps via the body's property
+            // block): each step is a dependent texture fetch per pixel, the single biggest
+            // fragment cost on mobile. The cap bounds the loop for the compiler.
+            #define PEAKED_REFINE_MAX_STEPS 8
             #define PEAKED_REFINE_STEP  0.005
             // Perturb the foam texture UV by the surface tilt so foam rides the ripples.
             #define FOAM_NORMAL_NUDGE   0.1
@@ -106,6 +109,7 @@ Shader "WebGLWater/WaterSurface"
             float _Underwater;
             float _ReflectionStrength;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
+            float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
             float3 _SunColor; // Unity directional light color * intensity (global)
 
             sampler2D _PlanarReflectionTex;
@@ -132,6 +136,23 @@ Shader "WebGLWater/WaterSurface"
             float  _FoamNormalStrength;
             float4 _FoamColor;
             float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
+
+            // Manual bilinear sample of the float foam mask - same fix as SampleWaterBilinear:
+            // WebGPU cannot hardware-filter float32, so a plain tex2D point-samples there and
+            // the foam edges go blocky in builds only. The foam RT matches the sim resolution,
+            // so _WaterTexel applies. tex2Dlod keeps it valid in any control flow.
+            float SampleFoamMaskBilinear(float2 uv)
+            {
+                float2 texel = _WaterTexel.xy;
+                float2 st = uv * _WaterTexel.zw - 0.5;
+                float2 f = frac(st);
+                float2 baseUV = (floor(st) + 0.5) * texel;
+                float c00 = tex2Dlod(_FoamMask, float4(baseUV, 0, 0)).r;
+                float c10 = tex2Dlod(_FoamMask, float4(baseUV + float2(texel.x, 0.0), 0, 0)).r;
+                float c01 = tex2Dlod(_FoamMask, float4(baseUV + float2(0.0, texel.y), 0, 0)).r;
+                float c11 = tex2Dlod(_FoamMask, float4(baseUV + texel, 0, 0)).r;
+                return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+            }
 
             // Screen-space ray march along 'dir' from world 'p0'. On a depth hit it
             // returns the scene colour and sets hit=1; otherwise hit=0 (caller falls
@@ -352,8 +373,9 @@ Shader "WebGLWater/WaterSurface"
                 // in the active UV domain (pool for whole-body, sim window for windowed).
                 float2 coord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                                     : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
-                [unroll]
-                for (int k = 0; k < PEAKED_REFINE_STEPS; k++)
+                int refineSteps = clamp((int)_PeakedRefineSteps, 0, PEAKED_REFINE_MAX_STEPS);
+                [loop] // uniform trip count (tier knob); explicit-LOD samples are loop-safe
+                for (int k = 0; k < refineSteps; k++)
                 {
                     coord += info.ba * PEAKED_REFINE_STEP;
                     info = SampleWaterBilinear(coord);
@@ -375,7 +397,13 @@ Shader "WebGLWater/WaterSurface"
                     normal = -normal;
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_WATER / IOR_AIR);
-                    float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(1.0 - dot(normal, -incomingRay), FRESNEL_POWER));
+                    // Total internal reflection (common at grazing angles from below, eta > 1)
+                    // returns a ZERO vector; tracing it divides by zero in IntersectCube and
+                    // poisons the pixel with NaN. Fall back to the reflected ray.
+                    if (dot(refractedRay, refractedRay) < 1e-6) refractedRay = reflectedRay;
+                    // saturate: float error can push the dot above 1, making the pow base
+                    // negative -> NaN sparkle.
+                    float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
 
                     float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, UNDERWATER_COLOR);
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
@@ -401,7 +429,7 @@ Shader "WebGLWater/WaterSurface"
                     {
                         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                                              : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
-                        float advected = tex2D(_FoamMask, fcoord).r;
+                        float advected = SampleFoamMaskBilinear(fcoord);
                         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
                         float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
                         float mask = saturate((advected + border) * _FoamStrength);
@@ -429,7 +457,7 @@ Shader "WebGLWater/WaterSurface"
                 {
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
-                    float fresnel = lerp(FRESNEL_MIN_ABOVE, 1.0, pow(1.0 - dot(normal, -incomingRay), FRESNEL_POWER));
+                    float fresnel = lerp(FRESNEL_MIN_ABOVE, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
 
                     float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, ABOVEWATER_COLOR);
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
@@ -495,7 +523,7 @@ Shader "WebGLWater/WaterSurface"
                         // Windowed bodies read the foam buffer in the window frame too.
                         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                                              : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
-                        float advected = tex2D(_FoamMask, fcoord).r;
+                        float advected = SampleFoamMaskBilinear(fcoord);
 
                         // shoreline foam against the pool walls (whole-body only; a window has no walls)
                         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));

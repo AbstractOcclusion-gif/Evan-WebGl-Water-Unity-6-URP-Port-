@@ -196,8 +196,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
         }
 
-        // A buoyant prop mirrors WaterBuildKit.CreateFloatingProp's component set, applied in place
-        // so the user's own mesh/material/transform are preserved.
+        // A buoyant prop's full component set (floats, displaces, splashes, lit by its lake),
+        // applied in place so the user's own mesh/material/transform are preserved.
         static void MakeFloatable(GameObject go)
         {
             EnsureComponent<Rigidbody>(go);
@@ -207,8 +207,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EnsureComponent<WaterMembership>(go);
         }
 
-        // A static interactable displaces the surface but stays put (no Rigidbody), mirroring
-        // WaterBuildKit.CreateStaticObstacle.
+        // A static interactable displaces the surface but stays put (no Rigidbody).
         static void MakeInteractable(GameObject go)
         {
             EnsureComponent<WaterInteractable>(go);

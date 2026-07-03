@@ -67,7 +67,17 @@ namespace AbstractOcclusion.WebGpuWater
                 else DestroyImmediate(_reflectionCamera.gameObject);
                 _reflectionCamera = null;
             }
-            if (_rt != null) { _rt.Release(); _rt = null; }
+            ReleaseAndDestroy(ref _rt);
+        }
+
+        // Release frees the GPU surface; Destroy frees the wrapper object, which otherwise
+        // accumulates across disable cycles and resolution changes until scene unload.
+        static void ReleaseAndDestroy(ref RenderTexture rt)
+        {
+            if (rt == null) return;
+            rt.Release();
+            if (Application.isPlaying) Destroy(rt); else DestroyImmediate(rt);
+            rt = null;
         }
 
         void OnBeginCamera(ScriptableRenderContext ctx, Camera cam)
@@ -95,19 +105,28 @@ namespace AbstractOcclusion.WebGpuWater
 
             _reflectionCamera.transform.position = mirroredPos;
 
-            // Reflections invert winding order.
+            // Reflections invert winding order. try/finally: if the render request throws
+            // (e.g. device loss on the experimental WebGPU editor backend), leaked state
+            // would otherwise render the whole scene inside-out and permanently disable
+            // reflections via the stuck re-entrancy guard.
             GL.invertCulling = true;
             _rendering = true;
+            try
+            {
 #if UNITY_2022_1_OR_NEWER
-            UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(
-                _reflectionCamera,
-                new UniversalRenderPipeline.SingleCameraRequest { destination = _rt });
+                UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(
+                    _reflectionCamera,
+                    new UniversalRenderPipeline.SingleCameraRequest { destination = _rt });
 #else
-            _reflectionCamera.targetTexture = _rt;
-            _reflectionCamera.Render();
+                _reflectionCamera.targetTexture = _rt;
+                _reflectionCamera.Render();
 #endif
-            _rendering = false;
-            GL.invertCulling = false;
+            }
+            finally
+            {
+                _rendering = false;
+                GL.invertCulling = false;
+            }
 
             Shader.SetGlobalTexture(ID_PlanarTex, _rt);
         }
@@ -118,12 +137,13 @@ namespace AbstractOcclusion.WebGpuWater
             int height = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelHeight * resolutionScale));
             if (_rt == null || _rtSize.x != width || _rtSize.y != height)
             {
-                if (_rt != null) _rt.Release();
+                ReleaseAndDestroy(ref _rt); // a resolution change must not leak the old wrapper
                 _rt = new RenderTexture(width, height, ReflectionDepthBits, RenderTextureFormat.DefaultHDR)
                 {
                     name = "PlanarReflectionTex",
                     wrapMode = TextureWrapMode.Clamp,
                     filterMode = FilterMode.Bilinear,
+                    hideFlags = HideFlags.HideAndDontSave
                 };
                 _rt.Create();
                 _rtSize = new Vector2Int(width, height);

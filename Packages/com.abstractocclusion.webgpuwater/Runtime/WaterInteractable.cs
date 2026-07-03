@@ -134,8 +134,8 @@ namespace AbstractOcclusion.WebGpuWater
             Bounds b = Renderer.bounds;
             // Resolve the body under the object each call so the waterline follows the lake
             // it is actually in, not a single body cached at startup.
-            WaterVolume ctrl = WaterVolume.BodyContaining(b.center);
-            if (ctrl != null && ctrl.TryGetAnalyticWaterline(b.center.x, b.center.z, out float surfaceY))
+            WaterVolume body = WaterVolume.BodyContaining(b.center);
+            if (body != null && body.TryGetAnalyticWaterline(b.center.x, b.center.z, out float surfaceY))
                 return surfaceY;
             return restY;
         }

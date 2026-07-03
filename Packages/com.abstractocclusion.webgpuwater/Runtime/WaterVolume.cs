@@ -1,20 +1,27 @@
-// WebGL Water - main controller (Unity 6 / URP port)
-// Drives the simulation, caustics, mouse interaction and the
-// orbiting camera. Port of main.js / renderer.js by Evan Wallace (MIT).
+// WebGL Water - one water body: identity, lifecycle and public facade (Unity 6 / URP port).
+// Port of main.js / renderer.js by Evan Wallace (MIT).
+//
+// WaterVolume is the single scene component; each responsibility lives in a collaborator
+// it owns and orchestrates from Update:
+//   WaterSimulation      - GPU heightfield sim (ping-pong RTs, compute dispatch)
+//   WaterObstacle        - rasterized submerged-footprint pass (FootprintDelta mode)
+//   WaterCausticsPass    - per-body caustic material/RT/command buffer
+//   WaterSurfaceSampler  - async height readback + CPU bilinear surface queries
+//   WaterSimWindow       - camera-following scrolling sim window for large bodies
+//   WaterBedBaker        - terrain -> pool-space bed-height bake (lazy)
+//   WaterUniformPublisher- per-body shader uniforms (property block + global mirror)
+//   WaterInputRouter     - scene input (primary body only, play mode only)
+//   WaterSimScheduler    - static per-frame visibility / sim-budget schedule
 //
 // Coordinate convention (identical to the original demo):
 //   - water surface at y = 0, pool spans x,z in [-1, 1], floor at y = -1.
 //   - light points toward the light source; default normalize(2, 2, -1).
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Rendering;
-using Unity.Collections;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 namespace AbstractOcclusion.WebGpuWater
 {
+    [ExecuteAlways]
     [DefaultExecutionOrder(-50)]
     public class WaterVolume : MonoBehaviour
     {
@@ -119,7 +126,20 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Resolve the body an object should use when it isn't inside any specific
         /// one: the primary body, or any found body as a fallback. Prefer
         /// <see cref="BodyContaining"/> for objects that have a world position.</summary>
-        public static WaterVolume Resolve() => Primary != null ? Primary : FindFirstObjectByType<WaterVolume>();
+        public static WaterVolume Resolve()
+        {
+            if (Primary != null) return Primary;
+            // Frame-cache the scene search: per-particle callers (splash drift) would
+            // otherwise degrade to a whole-scene FindFirstObjectByType per particle per frame.
+            if (_fallbackBodyFrame != Time.frameCount || _fallbackBody == null)
+            {
+                _fallbackBodyFrame = Time.frameCount;
+                _fallbackBody = FindFirstObjectByType<WaterVolume>();
+            }
+            return _fallbackBody;
+        }
+        static WaterVolume _fallbackBody;
+        static int _fallbackBodyFrame = -1;
 
         /// <summary>The water body a world point belongs to: the body whose horizontal
         /// footprint contains the point, nearest-centre wins when several overlap, and the
@@ -143,9 +163,10 @@ namespace AbstractOcclusion.WebGpuWater
             return best != null ? best : Resolve();
         }
 
-        /// <summary>All live water bodies. Used by the primary's input router to send a
-        /// click to whichever body's surface the ray hits, and by <see cref="BodyContaining"/>.</summary>
-        static readonly List<WaterVolume> Bodies = new List<WaterVolume>();
+        /// <summary>All live water bodies. Used by the input router to send a click to
+        /// whichever body's surface the ray hits, by the sim scheduler, and by
+        /// <see cref="BodyContaining"/>.</summary>
+        internal static readonly List<WaterVolume> Bodies = new List<WaterVolume>();
 
         [Header("Simulation")]
         [Tooltip("Direction TOWARD the light. Auto-driven from 'sun' when one is assigned.")]
@@ -211,7 +232,7 @@ namespace AbstractOcclusion.WebGpuWater
                  "item) if the terrain changes.")]
         public Terrain bedTerrain;
         [Tooltip("Resolution of the baked pool-space bed-height map.")]
-        [Range(MinBedResolution, MaxBedResolution)] public int bedResolution = 256;
+        [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] public int bedResolution = 256;
         [Tooltip("Colour the surface tints toward over deep water.")]
         public Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
         [Tooltip("World-unit depth at which the shoreline gradient reaches ~63% toward the deep " +
@@ -279,83 +300,99 @@ namespace AbstractOcclusion.WebGpuWater
         public bool seedRipplesOnStart = true;
         [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
         public bool conserveVolume = true;
+        [Tooltip("Caps how far Conserve Volume can shift the whole surface per step (pool units). " +
+                 "The true drift mean is tiny, so this doesn't affect normal conservation - it only " +
+                 "blocks the over-simulation 'plane pop' from an imprecise float-mip mean on WebGPU/GLES.")]
+        [Range(0.005f, 0.5f)] public float conserveMaxCorrection = 0.05f;
 
         [Header("Camera")]
         public OrbitCamera orbit;
+        [Tooltip("Apply the package's default framing (FOV, near/far clip) to the target camera " +
+                 "at enable. Off by default: a drop-in water body must not silently overwrite a " +
+                 "game's camera setup. The demo scene builder frames its camera at build time.")]
+        public bool configureCamera = false;
 
         [Header("Splash")]
         [Tooltip("Shared splash emitter used for mouse interaction (and objects).")]
         public WaterSplashEmitter splashEmitter;
 
-        // runtime
+        // runtime collaborators (see the header comment for the responsibility map)
         WaterSimulation _water;
         WaterObstacle _obstacle;
+        WaterCausticsPass _caustics;
+        WaterSurfaceSampler _sampler;
+        WaterSimWindow _simWindow;
+        WaterBedBaker _bedBaker;
+        WaterUniformPublisher _publisher;
+        WaterInputRouter _inputRouter;
+
+        // Lazy: the bed baker serves the context-menu RebakeBed even on an uninitialized
+        // body, and the publisher serves WriteBodyProps callers defensively.
+        WaterBedBaker BedBaker => _bedBaker ??= new WaterBedBaker(this);
+        WaterUniformPublisher Publisher => _publisher ??= new WaterUniformPublisher(this);
+        WaterInputRouter InputRouter => _inputRouter ??= new WaterInputRouter(this);
+
+        // Internal collaborator surface (same assembly only).
+        internal WaterSimulation Simulation => _water;
+        internal WaterWaveBank WaveBank => _waveBank;
+        internal float WaveTime => _waveTime;
+        internal RenderTexture CausticTexture => _caustics?.Texture;
+        internal Texture2D BedTexture => _bedBaker?.Texture;
+        internal bool IsBedBaked => _bedBaker != null && _bedBaker.IsBaked;
+        internal int GodRaySteps => _godRaySteps;
+        internal int PeakedRefineSteps => _peakedRefineSteps;
+        internal void TogglePause() => _paused = !_paused;
 
         // wind-wave layer (shared by the surface shader and CPU buoyancy)
         readonly WaterWaveBank _waveBank = new WaterWaveBank();
         float _waveTime;
-        Vector4 _waveGenSignature = new Vector4(float.NaN, 0f, 0f, 0f);
+        // Bank-generation inputs baked into the current bank, compared field-by-field. (A
+        // packed signature could alias two distinct states and silently keep stale amplitudes.)
+        float _waveGenWindSpeed = float.NaN;
+        float _waveGenWindFrom;
+        float _waveGenExtentMeters;
+        int _waveGenCount;
+        float _waveGenAmpScale;
         float _waveGenSpread = float.NaN;
         float _waveGenVerticalExtent = float.NaN; // volume y-extent baked into the current bank
         bool _waveGenEnabled;
 
-        // CPU copy of the height field for buoyancy queries
-        Color[] _heightCpu;
-        bool _heightReady, _readbackInFlight;
-        // True on backends without AsyncGPUReadback (e.g. WebGPU): buoyancy and surface queries
-        // fall back to the analytic waterline (flat rest + wind waves) so objects still float.
-        bool _analyticBuoyancyFallback;
         int _simRes = WaterQuality.Default.SimResolution; // grid resolution, set from the quality tier at OnEnable
         bool _godRaysAllowed = true;                       // false when the tier turns god rays off
         bool _richReflectionsAllowed = true;               // false when the tier caps reflections to SkyOnly
+        // Tier cost knobs delivered per-body through the property block (never by writing the
+        // shared god-ray/surface material, which dirties the asset and lets bodies stomp each other).
+        int _godRaySteps = WaterQuality.Default.GodRaySteps;
+        int _maxWaveCount = WaterQuality.Default.MaxWaveCount;
+        int _peakedRefineSteps = WaterQuality.Default.RefineSteps;
         // Per-body surface material instances so reflection keywords don't leak across bodies
-        // that share the source material. Created at OnEnable, destroyed at OnDisable.
+        // that share the source material. Created at OnEnable (play mode only) and destroyed at
+        // OnDisable, which also restores the renderer's original shared material so an
+        // enable/disable cycle never leaves a renderer pointing at a destroyed instance.
         Material _surfaceAboveInstance, _surfaceUnderInstance;
+        Material _surfaceAboveOriginal, _surfaceUnderOriginal;
         const string KW_SSR = "_USE_SSR";
         const string KW_PLANAR = "_USE_PLANAR";
         const string KW_URP_PROBE = "_USE_URP_PROBE";
-        Material _causticMat;
-        RenderTexture _causticRT;
-        Texture2D _bedTex;   // pool-space terrain bed height (R), baked from the Terrain
-        bool _bedBaked;
-        RenderTexture _heightMip;
-        CommandBuffer _cb;
+        RenderTexture _heightMip; // mipped copy of the height field; top 1x1 mip = mean (volume conservation)
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
-
-        // Two sinks over the SAME uniform derivations (see WriteBodyUniforms): one writes into
-        // this body's property block (per-body renderers), one writes the global fallback that
-        // object shaders without a WaterMembership read. Cached to avoid per-frame allocation.
-        readonly MpbUniformSink _mpbSink = new MpbUniformSink();
-        readonly GlobalUniformSink _globalSink = new GlobalUniformSink();
 
         bool _paused;
 
-        // ---- large-water sim window (camera-following) ----
-        bool _windowed;           // this body runs the windowed sim (decided at OnEnable)
-        Vector3 _simCenter;       // world centre of the window, on the surface plane, texel-snapped
-        int _simCellX, _simCellZ; // window centre as integer texel indices in the volume's local frame
-        bool _simCenterInit;
+        bool _windowed; // this body runs the camera-following windowed sim (decided at OnEnable)
 
-        // ---- sim culling / active-sim budget (Phase 3) ----
-        // Only the nearest bodies simulate each frame; off-screen bodies also stop drawing.
-        // The schedule is computed once per frame (frame-guarded) for ALL bodies, so it is
-        // independent of the arbitrary order in which the bodies Update.
-        const int ActiveSimBudget = 4;        // nearest bodies allowed to simulate at once
+        // Per-frame schedule flags, written for every body by WaterSimScheduler (frame-guarded,
+        // so the result is independent of the arbitrary order in which the bodies Update).
         const float WaveHeightMargin = 0.1f;  // pool-space headroom above y=0 for wind-wave crests in the cull box
-        static readonly Plane[] _frustumPlanes = new Plane[6];
-        static int _scheduleFrame = -1;
-        bool _visible = true;   // inside the camera frustum -> its renderers draw
-        bool _simulate = true;  // visible AND in range AND within the sim budget -> runs the GPU sim
+        internal bool _visible = true;   // inside the camera frustum -> its renderers draw
+        internal bool _simulate = true;  // visible AND in range AND within the sim budget -> runs the GPU sim
 
         // Camera framing. activationDistance defaults to the far clip so "beyond the far clip"
         // is exactly what pauses a distant body - the two stay coupled, not coincidentally equal.
-        const float CameraFieldOfView = 45f;
-        const float CameraNearClip = 0.01f;
-        const float CameraFarClip = 100f;
-
-        // Baked bed-height map resolution bounds (pool-space).
-        const int MinBedResolution = 64;
-        const int MaxBedResolution = 1024;
+        // Internal so the editor build kit frames its demo camera from the same constants.
+        internal const float CameraFieldOfView = 45f;
+        internal const float CameraNearClip = 0.01f;
+        internal const float CameraFarClip = 100f;
 
         // Large-water sim-window defaults (world metres). Threshold sits above the window
         // half-size so a body only marginally larger than the window stays whole-body
@@ -372,68 +409,44 @@ namespace AbstractOcclusion.WebGpuWater
         const float SeedRippleRadius = 0.03f;
         const float SeedRippleStrength = 0.01f;
 
-        // interaction (only the primary body runs this; it routes clicks to the hit body)
-        const int MODE_NONE = -1, MODE_ADD_DROPS = 0, MODE_ORBIT = 2;
+        // Skip a sim step after an editor hitch/breakpoint: integrating one huge dt would
+        // slam the explicit solver with energy in a single step.
+        const float MaxStepSeconds = 1f;
 
-        // World distance the cursor must travel between injected ripples while dragging.
-        // Holding still otherwise re-injects into the same texels every frame, pumping
-        // unbounded energy into the explicit solver. The initial press bypasses this.
-        const float MinDragWorldSpacing = 0.02f;
+        // Numeric guards.
+        const float MinVolumeExtent = 1e-5f;        // a zero extent would collapse the pool-space transforms
+        const float MinWindowHalfExtent = 1e-3f;    // same guard for the scrolling sim window
+        const float RayParallelEpsilon = 1e-6f;     // surface picking: treat near-parallel rays as a miss
+        internal const float MinShorelineFadeDepth = 0.01f; // keeps the shoreline depth scale finite (publisher)
+        const float MinWaveMetersPerUnit = 1e-3f;   // keeps wave-space conversions finite
 
-        int _mode = MODE_NONE;
-        Vector2 _oldMouse;
-        Vector3 _prevWorld;         // last world-space ripple point during a drag
-        WaterVolume _dragBody;  // body being rippled this drag
-        bool _forceDrop;
+        // Edit-mode preview: Update ticks come from the editor loop at an uneven cadence, so
+        // the sim integrates real elapsed time, clamped so a pause between repaints doesn't
+        // feed one huge step into the solver.
+        const float MaxEditorDeltaSeconds = 1f / 30f;
 
-        // shader global ids
-        static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
-        static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
-        static readonly int ID_Caustic = Shader.PropertyToID("_CausticTex");
-        static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
-        static readonly int ID_Sky = Shader.PropertyToID("_Sky");
-        static readonly int ID_Light = Shader.PropertyToID("_LightDir");
-        static readonly int ID_SunColor = Shader.PropertyToID("_SunColor");
-        static readonly int ID_FogColor = Shader.PropertyToID("_WaterFogColor");
-        static readonly int ID_FogExt = Shader.PropertyToID("_WaterExtinction");
-        static readonly int ID_FogDensity = Shader.PropertyToID("_WaterFogDensity");
-        static readonly int ID_FogEnabled = Shader.PropertyToID("_WaterFogEnabled");
-        static readonly int ID_WaterOpacity = Shader.PropertyToID("_WaterOpacity");
-        static readonly int ID_DepthExt = Shader.PropertyToID("_DepthExtinction");
-        static readonly int ID_DepthStrength = Shader.PropertyToID("_DepthDarkenStrength");
-        static readonly int ID_DepthEnabled = Shader.PropertyToID("_DepthDarkenEnabled");
-        static readonly int ID_CausticDepthFade = Shader.PropertyToID("_CausticDepthFade");
-        static readonly int ID_GodRayDepthFade = Shader.PropertyToID("_GodRayDepthFade");
-        static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
-        static readonly int ID_BedValid = Shader.PropertyToID("_BedValid");
-        static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
-        static readonly int ID_DeepWaterColor = Shader.PropertyToID("_DeepWaterColor");
-        static readonly int ID_ShorelineScale = Shader.PropertyToID("_ShorelineDepthScale");
-        static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
-        static readonly int ID_FoamMask = Shader.PropertyToID("_FoamMask");
-        static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
-        static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
-        static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
-        static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
-        static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
-        static readonly int ID_WaveA = Shader.PropertyToID("_WaveA");
-        static readonly int ID_WaveB = Shader.PropertyToID("_WaveB");
-        static readonly int ID_WaveCount = Shader.PropertyToID("_WaveCount");
-        static readonly int ID_WaveTime = Shader.PropertyToID("_WaveTime");
-        static readonly int ID_WaveMeters = Shader.PropertyToID("_WaveMetersPerUnit");
-        static readonly int ID_WaveNormal = Shader.PropertyToID("_WaveNormalStrength");
-        static readonly int ID_VolumeCenter = Shader.PropertyToID("_VolumeCenter");
-        static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
-        static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
-        static readonly int ID_GodRaySteps = Shader.PropertyToID("_GodRaySteps");
-        static readonly int ID_SimWindowed = Shader.PropertyToID("_SimWindowed");
-        static readonly int ID_SimCenter = Shader.PropertyToID("_SimCenter");
-        static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
-        static readonly int ID_SimEdgeFade = Shader.PropertyToID("_SimEdgeFadeTexels");
+        // True once the GPU resources exist and the body is registered; guards teardown and
+        // the edit-mode lazy-init retry (see TryInitialize).
+        bool _initialized;
 
         void OnEnable()
         {
-            if (simCompute == null) { Debug.LogError("WaterVolume: simCompute not assigned."); enabled = false; return; }
+            TryInitialize();
+        }
+
+        // Full setup, run once per enable. In edit mode ([ExecuteAlways]) missing wiring is
+        // NOT an error yet: the scene builders AddComponent first and wire fields afterwards,
+        // and Update retries, so a hand-wired body starts previewing the moment the last
+        // reference lands. In play mode missing wiring fails fast and loud.
+        void TryInitialize()
+        {
+            if (_initialized || !enabled) return;
+
+            if (!HasRequiredWiring())
+            {
+                if (Application.isPlaying) FailMissingWiring();
+                return;
+            }
 
             // Hard capability guard: the sim needs compute shaders + a float random-write RT. On a
             // backend without them, disable this body cleanly instead of dispatching into a crash.
@@ -449,33 +462,32 @@ namespace AbstractOcclusion.WebGpuWater
 
             ResolveSceneRefs(); // let a dropped-in prefab find the scene's camera/sun without manual wiring
 
-            ApplyQuality();     // sets _simRes, causticResolution, _godRaysAllowed + god-ray steps
+            ApplyQuality();     // sets _simRes, causticResolution, _godRaysAllowed + per-body cost knobs
 
             _water = new WaterSimulation(simCompute, _simRes);
-            _analyticBuoyancyFallback = !SystemInfo.supportsAsyncGPUReadback; // no readback -> analytic waterline
+            _sampler = new WaterSurfaceSampler(this); // probes readback support itself
+            _simWindow = new WaterSimWindow(this);
+            _lastEditorTick = 0d;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
 
             if (obstacleShader != null)
                 _obstacle = new WaterObstacle(obstacleShader, _simRes,
                                               VolumeCenter, VolumeRotation, VolumeExtentSafe);
 
-            _causticMat = new Material(causticsShader);
-            _causticRT = new RenderTexture(causticResolution, causticResolution, 0, RenderTextureFormat.ARGB32)
-            {
-                filterMode = FilterMode.Bilinear,
-                wrapMode = TextureWrapMode.Clamp,
-                name = "CausticTex"
-            };
-            _causticRT.Create();
-            _cb = new CommandBuffer { name = "WebGLWater.Caustics" };
+            _caustics = new WaterCausticsPass(causticsShader, causticResolution);
 
+            // Runtime-created GPU objects are HideAndDontSave so an edit-mode preview can never
+            // serialize them into the scene.
             _heightMip = new RenderTexture(_simRes, _simRes, 0, RenderTextureFormat.RFloat)
             {
                 useMipMap = true,
                 autoGenerateMips = false,
-                filterMode = FilterMode.Bilinear,
+                // Point: only the 1x1 top mip is ever read, and a filtering sampler bound to an
+                // unfilterable float32 texture is a WebGPU validation hazard.
+                filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp,
-                name = "HeightMip"
+                name = "HeightMip",
+                hideFlags = HideFlags.HideAndDontSave
             };
             _heightMip.Create();
 
@@ -490,41 +502,105 @@ namespace AbstractOcclusion.WebGpuWater
                                    (i & 1) == 1 ? seedStrength : -seedStrength);
             }
 
-            if (targetCamera != null)
+            // Opt-in only: a package component must not silently hijack the game's camera.
+            if (configureCamera && targetCamera != null)
             {
                 targetCamera.fieldOfView = CameraFieldOfView;
                 targetCamera.nearClipPlane = CameraNearClip;
                 targetCamera.farClipPlane = CameraFarClip;
             }
 
-            if (isPrimary) Primary = this;
+            if (isPrimary)
+            {
+                if (Primary != null && Primary != this)
+                    Debug.LogWarning("WaterVolume: multiple bodies are marked Is Primary; the last " +
+                                     "one enabled wins. Exactly one body should be primary.", this);
+                Primary = this;
+            }
             if (!Bodies.Contains(this)) Bodies.Add(this);
             _mpb = new MaterialPropertyBlock();
             ApplyReflections();
 
-            RebakeBed(); // one-time terrain -> pool-space bed-height map (no-op without a Terrain)
+            BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
 
-            PublishSharedGlobals();
+            Publisher.PublishSharedGlobals();
             EnsureWaveBank();
-            _simCenter = VolumeCenter;
-            if (_windowed) UpdateSimWindow();   // prime the window centre before first publish
-            if (!_windowed) UpdateCaustics();   // caustics are out of scope for windowed bodies
+            if (_windowed) _simWindow.Track();  // prime the window centre before first publish
+            if (!_windowed) RenderCaustics();   // caustics are out of scope for windowed bodies
             ApplyBodyBlock();
-            if (isPrimary) PublishBodyGlobals();
+            if (isPrimary) Publisher.PublishBodyGlobals();
+
+            _initialized = true;
         }
 
         void OnDisable()
         {
-            if (Primary == this) Primary = null;
+            if (!_initialized) return; // never initialized (missing wiring / capability guard)
+
+            _initialized = false;
+            if (Primary == this) Primary = FindNextPrimary(this);
             Bodies.Remove(this);
-            _water?.Dispose();
-            _obstacle?.Dispose();
-            if (_causticRT != null) _causticRT.Release();
-            if (_heightMip != null) _heightMip.Release();
-            DestroyBedTexture(); _bedBaked = false;
-            _cb?.Release();
-            if (_surfaceAboveInstance != null) { Destroy(_surfaceAboveInstance); _surfaceAboveInstance = null; }
-            if (_surfaceUnderInstance != null) { Destroy(_surfaceUnderInstance); _surfaceUnderInstance = null; }
+            _water?.Dispose(); _water = null;
+            _obstacle?.Dispose(); _obstacle = null;
+            _caustics?.Dispose(); _caustics = null;
+            _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
+            ReleaseRenderTexture(ref _heightMip);
+            RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
+            RestoreSurfaceMaterial(surfaceUnder, ref _surfaceUnderInstance, ref _surfaceUnderOriginal);
+            // Fresh per-enable state: a re-enable must not float objects on a stale height
+            // field, and the window centre re-primes from the camera.
+            _sampler = null;
+            _simWindow = null;
+            _inputRouter = null;
+        }
+
+        bool HasRequiredWiring() => simCompute != null && causticsShader != null && waterMesh != null;
+
+        // Fail fast on the required wiring (play mode); a missing piece would otherwise surface
+        // later as a confusing downstream error (broken caustic material, per-frame DrawMesh errors).
+        void FailMissingWiring()
+        {
+            if (simCompute == null) Debug.LogError("WaterVolume: simCompute not assigned.", this);
+            else if (causticsShader == null) Debug.LogError("WaterVolume: causticsShader not assigned.", this);
+            else Debug.LogError("WaterVolume: waterMesh not assigned.", this);
+            enabled = false;
+        }
+
+        // Hand the primary role to another live body flagged isPrimary, so disabling one of two
+        // (misconfigured) primaries doesn't strand Primary at null while a candidate is alive -
+        // that would send every Resolve() into a per-call whole-scene search.
+        static WaterVolume FindNextPrimary(WaterVolume leaving)
+        {
+            for (int i = 0; i < Bodies.Count; i++)
+                if (Bodies[i] != leaving && Bodies[i].isPrimary) return Bodies[i];
+            return null;
+        }
+
+        // Restore the renderer's authored material before destroying the per-body instance, so
+        // a disable/enable cycle never leaves the renderer pointing at a destroyed material.
+        static void RestoreSurfaceMaterial(Renderer r, ref Material instance, ref Material original)
+        {
+            if (instance == null) { original = null; return; }
+            if (r != null && original != null) r.sharedMaterial = original;
+            DestroyRuntimeObject(instance);
+            instance = null;
+            original = null;
+        }
+
+        static void DestroyRuntimeObject(Object obj)
+        {
+            if (obj == null) return;
+            if (Application.isPlaying) Destroy(obj); else DestroyImmediate(obj);
+        }
+
+        // Release frees the GPU surface immediately; Destroy frees the wrapper object, which
+        // otherwise accumulates across enable/disable cycles until scene unload.
+        static void ReleaseRenderTexture(ref RenderTexture rt)
+        {
+            if (rt == null) return;
+            rt.Release();
+            DestroyRuntimeObject(rt);
+            rt = null;
         }
 
         // Fill in the scene-level references a prefab can't carry, so dropping the WaterVolume
@@ -554,18 +630,20 @@ namespace AbstractOcclusion.WebGpuWater
         // (_simRes stays at its default), so existing scenes are unaffected.
         void ApplyQuality()
         {
-            if (quality == null) return;
+            if (quality == null) return; // keep the inspector defaults / Default-tier cost knobs
 
             WaterQuality.Tier tier = quality.Resolve();
             _simRes = tier.SimResolution;
             causticResolution = tier.CausticResolution;
             _godRaysAllowed = tier.GodRays;
             _richReflectionsAllowed = tier.RichReflections;
-
-            // Clamp to >= 1 so a "god rays off" tier (0 steps) never bakes a divide-by-zero
-            // into the shared god-ray material; the renderer is disabled separately via _godRaysAllowed.
-            if (godRayRenderer != null && godRayRenderer.sharedMaterial != null)
-                godRayRenderer.sharedMaterial.SetFloat(ID_GodRaySteps, Mathf.Max(1, tier.GodRaySteps));
+            // Delivered per-body through WriteBodyUniforms (property block), never by writing
+            // the shared god-ray material - which dirtied the asset in the editor and let
+            // multiple bodies stomp each other's step count. Clamped >= 1 so a "god rays off"
+            // tier (0 steps) can't bake a divide-by-zero; the renderer is disabled separately.
+            _godRaySteps = Mathf.Max(1, tier.GodRaySteps);
+            _maxWaveCount = tier.MaxWaveCount;
+            _peakedRefineSteps = tier.RefineSteps;
         }
 
         // Give the surface renderers per-body material instances and set their reflection
@@ -574,8 +652,13 @@ namespace AbstractOcclusion.WebGpuWater
         // planar reflection.
         void ApplyReflections()
         {
-            _surfaceAboveInstance = InstanceSurfaceMaterial(surfaceAbove);
-            _surfaceUnderInstance = InstanceSurfaceMaterial(surfaceUnder);
+            // Edit-mode preview leaves the authored shared materials untouched: an instance
+            // assigned to sharedMaterial could be saved into the scene as a dead reference.
+            // Preview reflections therefore follow the material's authored keywords.
+            if (!Application.isPlaying) return;
+
+            _surfaceAboveInstance = InstanceSurfaceMaterial(surfaceAbove, out _surfaceAboveOriginal);
+            _surfaceUnderInstance = InstanceSurfaceMaterial(surfaceUnder, out _surfaceUnderOriginal);
             ApplyReflectionKeywords(_surfaceAboveInstance);
             ApplyReflectionKeywords(_surfaceUnderInstance);
 
@@ -589,11 +672,14 @@ namespace AbstractOcclusion.WebGpuWater
             _richReflectionsAllowed ? reflectionMode : ReflectionMode.SkyOnly;
 
         // Replace the renderer's shared material with a per-body instance (play-mode only, so
-        // the scene asset is untouched; the instance is destroyed in OnDisable).
-        static Material InstanceSurfaceMaterial(Renderer r)
+        // the scene asset is untouched). The original is captured so OnDisable can restore it
+        // before destroying the instance.
+        static Material InstanceSurfaceMaterial(Renderer r, out Material original)
         {
+            original = null;
             if (r == null || r.sharedMaterial == null) return null;
-            var instance = new Material(r.sharedMaterial);
+            original = r.sharedMaterial;
+            var instance = new Material(original) { hideFlags = HideFlags.HideAndDontSave };
             r.sharedMaterial = instance;
             return instance;
         }
@@ -627,21 +713,27 @@ namespace AbstractOcclusion.WebGpuWater
 
         void Update()
         {
-            // Input is a scene-level concern: only the primary body handles mouse/keys and
-            // routes clicks to whichever body's surface the ray hits (avoids two controllers
-            // fighting over one camera). TODO(Phase 2): a dedicated WaterInput component.
-            if (isPrimary)
+            // Edit-mode lazy init: a body whose wiring was assigned after AddComponent (the
+            // builders' order) starts up here on the next editor tick.
+            if (!_initialized)
             {
-                HandleKeys();
-                HandleMouse();
+                TryInitialize();
+                if (!_initialized) return;
             }
+
+            // Input is a scene-level concern (and play-mode only): the primary body's router
+            // handles mouse/keys and routes clicks to whichever body's surface the ray hits
+            // (avoids two controllers fighting over one camera).
+            if (Application.isPlaying && isPrimary) InputRouter.Update();
 
             // Decide (once per frame, for every body) which bodies draw and which run the
             // heavy GPU sim, then stop drawing this one if it is off-screen.
-            EnsureSchedule();
+            WaterSimScheduler.EnsureSchedule();
             SetRenderersEnabled(_visible);
 
-            float dt = Time.deltaTime;
+            // Edit-mode ticks arrive from the editor loop, so the preview integrates real
+            // elapsed (clamped) time instead of the play-mode frame delta.
+            float dt = Application.isPlaying ? Time.deltaTime : EditorDeltaSeconds();
             if (!_paused)
             {
                 // The analytic wind waves are driven by the shared clock, so they keep moving
@@ -650,30 +742,20 @@ namespace AbstractOcclusion.WebGpuWater
                 if (_simulate) Step(dt);
             }
 
-            PublishSharedGlobals();     // sun, sky, tiles, camera-independent shared clock
+            Publisher.PublishSharedGlobals(); // sun, sky, tiles, camera-independent shared clock
             EnsureWaveBank();
+            BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
             // Caustics/god rays are out of scope for windowed bodies (the caustic pass maps the
             // whole floor from _WaterTex, which now holds only the moving window). See the
             // floor-relative scheme noted in docs/large-water-sim-window-plan.md.
-            if (_simulate && !_windowed) UpdateCaustics();  // renders THIS body's caustic RT from its own sim
+            if (_simulate && !_windowed) RenderCaustics();  // renders THIS body's caustic RT from its own sim
 
             ApplyBodyBlock();           // per-body uniforms -> this body's renderers (MPB)
             // Primary bridge: mirror this body's data to globals as the fallback for objects
             // without a WaterMembership (those resolve their own containing body instead).
-            if (isPrimary) PublishBodyGlobals();
+            if (isPrimary) Publisher.PublishBodyGlobals();
 
-            if (_simulate) RequestHeightReadback();  // paused bodies keep their last height (objects still float)
-        }
-
-        // Genuinely shared across all bodies: the sun, the environment, and the wave clock.
-        void PublishSharedGlobals()
-        {
-            if (sun != null) lightDir = -sun.transform.forward;
-            Shader.SetGlobalVector(ID_Light, lightDir.normalized);
-            Shader.SetGlobalColor(ID_SunColor, sun != null ? sun.color * sun.intensity : Color.white);
-            Shader.SetGlobalFloat(ID_WaveTime, _waveTime);
-            if (tiles != null) Shader.SetGlobalTexture(ID_Tiles, tiles);
-            if (sky != null) Shader.SetGlobalTexture(ID_Sky, sky);
+            if (_simulate) _sampler.RequestReadback();  // paused bodies keep their last height (objects still float)
         }
 
         // Per-body uniforms pushed to THIS body's own renderers via a property block, so
@@ -691,7 +773,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         // (1/res, 1/res, res, res) of the sim texture, so shaders can bilinear-filter it manually
         // (WebGPU won't hardware-filter the RGBAFloat sim RT). Paired with every _WaterTex bind.
-        Vector4 WaterTexel => new Vector4(1f / _simRes, 1f / _simRes, _simRes, _simRes);
+        internal Vector4 WaterTexel => new Vector4(1f / _simRes, 1f / _simRes, _simRes, _simRes);
 
         /// <summary>Overwrite <paramref name="mpb"/> with this body's per-renderer uniforms
         /// (sim + caustic textures, volume frame, waves, fog, foam). Used for this body's own
@@ -699,183 +781,16 @@ namespace AbstractOcclusion.WebGpuWater
         /// lake it is in. The block is cleared, so any per-object look must live in the material.</summary>
         public void WriteBodyProps(MaterialPropertyBlock mpb)
         {
-            mpb.Clear();
-            _mpbSink.Target = mpb;
-            WriteBodyUniforms(_mpbSink);
-        }
-
-        // Single source of truth for this body's per-frame uniform derivations. Written either
-        // into a property block (WriteBodyProps) or to shader globals (PublishBodyGlobals) via
-        // the sink, so the values are derived once. Texture guards match both former paths.
-        void WriteBodyUniforms(IUniformSink sink)
-        {
-            if (_water != null)
-            {
-                sink.SetTexture(ID_Water, _water.Texture);
-                sink.SetVector(ID_WaterTexel, WaterTexel);
-                if (_water.FoamTexture != null) sink.SetTexture(ID_FoamMask, _water.FoamTexture);
-            }
-            if (_causticRT != null) sink.SetTexture(ID_Caustic, _causticRT);
-
-            sink.SetVector(ID_VolumeCenter, VolumeCenter);
-            sink.SetVector(ID_VolumeExtent, VolumeExtentSafe);
-            sink.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
-
-            sink.SetFloat(ID_SimWindowed, _windowed ? 1f : 0f);
-            sink.SetVector(ID_SimCenter, _simCenter);
-            sink.SetVector(ID_SimExtent, SimHalfExtent);
-            sink.SetFloat(ID_SimEdgeFade, simWindowEdgeFadeTexels);
-
-            sink.SetVectorArray(ID_WaveA, _waveBank.PackedA);
-            sink.SetVectorArray(ID_WaveB, _waveBank.PackedB);
-            sink.SetFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
-            sink.SetFloat(ID_WaveMeters, WaveMetersPerUnit);
-            sink.SetFloat(ID_WaveNormal, waveNormalStrength);
-
-            sink.SetColor(ID_FogColor, fogColor);
-            sink.SetColor(ID_FogExt, fogExtinction);
-            sink.SetFloat(ID_FogDensity, fogDensity);
-            sink.SetFloat(ID_FogEnabled, waterFog ? 1f : 0f);
-            sink.SetFloat(ID_WaterOpacity, waterOpacity);
-
-            sink.SetColor(ID_DepthExt, EffectiveDepthExtinction);
-            sink.SetFloat(ID_DepthStrength, depthDarkenStrength);
-            sink.SetFloat(ID_DepthEnabled, depthDarken ? 1f : 0f);
-            sink.SetFloat(ID_CausticDepthFade, causticDepthFade);
-            sink.SetFloat(ID_GodRayDepthFade, godRayDepthFade);
-
-            if (_bedTex != null) sink.SetTexture(ID_BedTex, _bedTex);
-            sink.SetFloat(ID_BedValid, _bedBaked ? 1f : 0f);
-            sink.SetFloat(ID_UseBedDepth, useBedDepth ? 1f : 0f);
-            sink.SetColor(ID_DeepWaterColor, deepWaterColor);
-            sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(0.01f, shorelineFadeDepth));
-            sink.SetFloat(ID_ShorelineStrength, shorelineStrength);
-
-            sink.SetColor(ID_FoamColor, foamColor);
-            sink.SetFloat(ID_FoamEnabled, foam ? 1f : 0f);
-            sink.SetFloat(ID_FoamStrength, foamStrength);
-            sink.SetFloat(ID_FoamBorder, foamBorderWidth);
-            sink.SetFloat(ID_FoamContact, foamContactDepth);
-        }
-
-        // A write target for the per-body uniforms: either a MaterialPropertyBlock or the
-        // global shader state. Only the id-keyed setters WriteBodyUniforms needs are exposed.
-        interface IUniformSink
-        {
-            void SetFloat(int id, float value);
-            void SetColor(int id, Color value);
-            void SetVector(int id, Vector4 value);
-            void SetMatrix(int id, Matrix4x4 value);
-            void SetVectorArray(int id, Vector4[] value);
-            void SetTexture(int id, Texture value);
-        }
-
-        sealed class MpbUniformSink : IUniformSink
-        {
-            public MaterialPropertyBlock Target;
-            public void SetFloat(int id, float value) => Target.SetFloat(id, value);
-            public void SetColor(int id, Color value) => Target.SetColor(id, value);
-            public void SetVector(int id, Vector4 value) => Target.SetVector(id, value);
-            public void SetMatrix(int id, Matrix4x4 value) => Target.SetMatrix(id, value);
-            public void SetVectorArray(int id, Vector4[] value) => Target.SetVectorArray(id, value);
-            public void SetTexture(int id, Texture value) => Target.SetTexture(id, value);
-        }
-
-        sealed class GlobalUniformSink : IUniformSink
-        {
-            public void SetFloat(int id, float value) => Shader.SetGlobalFloat(id, value);
-            public void SetColor(int id, Color value) => Shader.SetGlobalColor(id, value);
-            public void SetVector(int id, Vector4 value) => Shader.SetGlobalVector(id, value);
-            public void SetMatrix(int id, Matrix4x4 value) => Shader.SetGlobalMatrix(id, value);
-            public void SetVectorArray(int id, Vector4[] value) => Shader.SetGlobalVectorArray(id, value);
-            public void SetTexture(int id, Texture value) => Shader.SetGlobalTexture(id, value);
+            if (mpb == null) throw new System.ArgumentNullException(nameof(mpb));
+            Publisher.WriteBodyProps(mpb);
         }
 
         void ApplyBlockTo(Renderer r) { if (r != null) r.SetPropertyBlock(_mpb); }
 
-        // ---- sim culling schedule (Phase 3) ---------------------------------
-        // Sets _visible / _simulate for EVERY live body, once per frame. Frame-guarded so
-        // whichever body Updates first does the work and the rest reuse it (order-independent).
-        static void EnsureSchedule()
-        {
-            if (_scheduleFrame == Time.frameCount) return;
-            _scheduleFrame = Time.frameCount;
-
-            Camera cam = ScheduleCamera();
-            if (cam != null) GeometryUtility.CalculateFrustumPlanes(cam, _frustumPlanes);
-
-            // Pass 1: visibility, plus a provisional "simulate" for visible + in-range bodies.
-            for (int i = 0; i < Bodies.Count; i++)
-            {
-                WaterVolume body = Bodies[i];
-                if (!body.enableCulling || cam == null)
-                {
-                    body._visible = true;
-                    body._simulate = true; // culling off -> always draw + simulate
-                    continue;
-                }
-                body._visible = GeometryUtility.TestPlanesAABB(_frustumPlanes, body.CullBounds());
-                body._simulate = IsSimEligible(body, cam.transform.position);
-            }
-
-            // Pass 2: cap the simulating set to the nearest ActiveSimBudget eligible bodies.
-            EnforceSimBudget(cam);
-        }
-
-        // Eligible to simulate = culling on, visible, and within the activation distance.
-        // Recomputed (not read from _simulate) so the budget pass can rank without its own
-        // writes skewing the counts.
-        static bool IsSimEligible(WaterVolume body, Vector3 camPos)
-        {
-            if (!body.enableCulling || !body._visible) return false;
-            float distSqr = (body.VolumeCenter - camPos).sqrMagnitude;
-            return distSqr <= body.activationDistance * body.activationDistance;
-        }
-
-        // Keep only the nearest ActiveSimBudget eligible bodies simulating; pause the rest.
-        // The body count is small, so an O(n^2) "how many eligible bodies are nearer than me"
-        // rank avoids allocating a sorted list each frame.
-        static void EnforceSimBudget(Camera cam)
-        {
-            if (cam == null) return;
-            Vector3 camPos = cam.transform.position;
-
-            int eligible = 0;
-            for (int i = 0; i < Bodies.Count; i++)
-                if (IsSimEligible(Bodies[i], camPos)) eligible++;
-            if (eligible <= ActiveSimBudget) return;
-
-            for (int i = 0; i < Bodies.Count; i++)
-            {
-                WaterVolume body = Bodies[i];
-                if (!IsSimEligible(body, camPos)) continue;
-                float d = (body.VolumeCenter - camPos).sqrMagnitude;
-
-                int nearer = 0;
-                for (int j = 0; j < Bodies.Count; j++)
-                {
-                    WaterVolume other = Bodies[j];
-                    if (other == body || !IsSimEligible(other, camPos)) continue;
-                    float od = (other.VolumeCenter - camPos).sqrMagnitude;
-                    if (od < d || (od == d && j < i)) nearer++; // stable tiebreak by registry index
-                }
-                if (nearer >= ActiveSimBudget) body._simulate = false;
-            }
-        }
-
-        // Prefer the primary's camera; fall back to any body's camera, then the main camera.
-        static Camera ScheduleCamera()
-        {
-            if (Primary != null && Primary.targetCamera != null) return Primary.targetCamera;
-            for (int i = 0; i < Bodies.Count; i++)
-                if (Bodies[i].targetCamera != null) return Bodies[i].targetCamera;
-            return Camera.main;
-        }
-
         // World-space AABB of this body's volume (pool box x,z in [-1,1], y in [-1,0]) plus a
         // little headroom for wind-wave crests. The renderers keep huge bounds to avoid wrong
         // culling under the volume transform, so frustum culling tests this real box instead.
-        Bounds CullBounds()
+        internal Bounds CullBounds()
         {
             Bounds b = new Bounds(PoolToWorld(new Vector3(-1f, -1f, -1f)), Vector3.zero);
             b.Encapsulate(PoolToWorld(new Vector3( 1f, -1f, -1f)));
@@ -901,32 +816,6 @@ namespace AbstractOcclusion.WebGpuWater
 
         static void SetRendererEnabled(Renderer r, bool on) { if (r != null && r.enabled != on) r.enabled = on; }
 
-        // Mirror this (primary) body's per-body data to global shader state, so objects and
-        // the analytic receivers - which still read globals in Phase 1 - follow this body.
-        // The primary body mirrors its per-body uniforms to shader globals, the fallback that
-        // object shaders without a WaterMembership read. Same derivations as the property block.
-        void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
-
-        // ---- height readback for buoyancy ----------------------------------
-        void RequestHeightReadback()
-        {
-            if (_readbackInFlight || _water == null) return;
-            if (!SystemInfo.supportsAsyncGPUReadback) return; // no readback; TrySamplePoolSurface uses the analytic fallback
-            _readbackInFlight = true;
-            AsyncGPUReadback.Request(_water.Texture, 0, TextureFormat.RGBAFloat, OnHeightReadback);
-        }
-
-        void OnHeightReadback(AsyncGPUReadbackRequest req)
-        {
-            _readbackInFlight = false;
-            if (req.hasError) return;
-            var data = req.GetData<Color>();
-            if (_heightCpu == null || _heightCpu.Length != data.Length)
-                _heightCpu = new Color[data.Length];
-            data.CopyTo(_heightCpu);
-            _heightReady = true;
-        }
-
         /// <summary>Inject a ripple at a WORLD position (x,z). Converted into the pool
         /// footprint via the volume frame; out-of-footprint calls are ignored. Radius is
         /// in world units (kept round via the average horizontal extent).</summary>
@@ -937,7 +826,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Windowed bodies inject into the sim WINDOW frame; ripples outside it are dropped.
             if (_windowed)
             {
-                Vector3 sim = WorldToSim(new Vector3(worldX, _simCenter.y, worldZ));
+                Vector3 sim = WorldToSim(new Vector3(worldX, SimWindowCenter.y, worldZ));
                 if (sim.x < -1f || sim.x > 1f || sim.z < -1f || sim.z > 1f) return;
                 _water.AddDrop(sim.x, sim.z, radius / SimHorizontalExtent, strength / VolumeExtentSafe.y);
                 return;
@@ -953,9 +842,10 @@ namespace AbstractOcclusion.WebGpuWater
         public bool TryGetWaterHeight(float worldX, float worldZ, out float height)
         {
             height = 0f;
+            if (_sampler == null) return false; // not initialized yet
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
-            if (!TrySamplePoolSurface(probe, px, pz, out float poolHeight, out _)) return false;
+            if (!_sampler.TrySamplePoolSurface(probe, px, pz, out float poolHeight, out _)) return false;
 
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y; // pool -> world Y
             return true;
@@ -968,9 +858,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             height = 0f;
             flow = Vector2.zero;
+            if (_sampler == null) return false; // not initialized yet
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
-            if (!TrySamplePoolSurface(probe, px, pz, out float poolHeight, out Vector2 poolFlow)) return false;
+            if (!_sampler.TrySamplePoolSurface(probe, px, pz, out float poolHeight, out Vector2 poolFlow)) return false;
 
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
             Vector3 worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
@@ -987,10 +878,11 @@ namespace AbstractOcclusion.WebGpuWater
             depthWorld = 0f;
             up = VolumeUp;
             worldFlow = Vector3.zero;
+            if (_sampler == null) return false; // not initialized yet
 
             Vector3 pool = WorldToPool(worldPoint);
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return false;
-            if (!TrySamplePoolSurface(worldPoint, pool.x, pool.z, out float surfaceH, out Vector2 poolFlow)) return false;
+            if (!_sampler.TrySamplePoolSurface(worldPoint, pool.x, pool.z, out float surfaceH, out Vector2 poolFlow)) return false;
 
             depthWorld = (surfaceH - pool.y) * VolumeExtentSafe.y; // pool depth -> world depth along up
             worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
@@ -1061,77 +953,15 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
-        // Pool-space surface height + flow (normal.xz) at a world point (pool xz in [-1,1]).
-        // Uses the GPU readback ripple field when available; on backends without AsyncGPUReadback
-        // it falls back to the analytic surface (flat rest + wind waves) so buoyancy and surface
-        // queries keep working (interactive ripples / obstacle displacement are simply absent there).
-        // Returns false only when readback is supported but hasn't landed yet (first frames).
-        bool TrySamplePoolSurface(Vector3 world, float poolX, float poolZ, out float surfaceH, out Vector2 poolFlow)
-        {
-            surfaceH = 0f;
-            poolFlow = Vector2.zero;
-
-            bool haveReadback = _heightReady && _heightCpu != null;
-            if (haveReadback)
-            {
-                Color sample = SampleRipple(world, poolX, poolZ);
-                surfaceH = sample.r;
-                poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
-            }
-            else if (!_analyticBuoyancyFallback)
-            {
-                return false; // readback supported but not ready yet
-            }
-            // else: analytic fallback -> rest surface (0) + wind waves added below
-
-            if (windWaves)
-            {
-                surfaceH += _waveBank.SampleHeight(poolX, poolZ, _waveTime, WaveMetersPerUnit);
-                poolFlow -= _waveBank.SampleSlope(poolX, poolZ, _waveTime, WaveMetersPerUnit) * waveNormalStrength;
-            }
-            return true;
-        }
-
-        // Interactive ripple sample (r = height, b/a = normal.xz) at a world point. Windowed
-        // bodies read the camera-following window by world position (rest outside it); whole-body
-        // bodies read the fixed grid at pool UV. Mirrors the shader's SampleRipple.
-        // BILINEAR across the four surrounding texels: the old nearest-texel read made every
-        // CPU consumer (buoyancy, splash drift, waterline queries) jump in a step whenever a
-        // mover crossed a texel boundary - one visible micro-pulse per crossing.
-        Color SampleRipple(Vector3 world, float poolX, float poolZ)
-        {
-            float u, v;
-            if (_windowed)
-            {
-                Vector3 sim = WorldToSim(new Vector3(world.x, _simCenter.y, world.z));
-                if (sim.x < -1f || sim.x > 1f || sim.z < -1f || sim.z > 1f)
-                    return new Color(0f, 0f, 0f, 0f); // outside the window: flat rest
-                u = sim.x * 0.5f + 0.5f; v = sim.z * 0.5f + 0.5f;
-            }
-            else
-            {
-                u = poolX * 0.5f + 0.5f; v = poolZ * 0.5f + 0.5f;
-            }
-
-            float sx = Mathf.Clamp(u * _simRes - 0.5f, 0f, _simRes - 1f);
-            float sz = Mathf.Clamp(v * _simRes - 0.5f, 0f, _simRes - 1f);
-            int x0 = (int)sx, z0 = (int)sz;
-            int x1 = Mathf.Min(x0 + 1, _simRes - 1);
-            int z1 = Mathf.Min(z0 + 1, _simRes - 1);
-            float tx = sx - x0, tz = sz - z0;
-
-            Color bottom = Color.Lerp(_heightCpu[z0 * _simRes + x0], _heightCpu[z0 * _simRes + x1], tx);
-            Color top    = Color.Lerp(_heightCpu[z1 * _simRes + x0], _heightCpu[z1 * _simRes + x1], tx);
-            return Color.Lerp(bottom, top, tz);
-        }
-
         void Step(float seconds)
         {
-            if (seconds > 1f) return;
+            if (seconds > MaxStepSeconds) return; // hitch/breakpoint guard, see the const
+
+            if (seconds <= 0f) return; // first edit-mode tick: no elapsed time yet
 
             // Scroll the sim window to track the camera before injecting/stepping, so ripples
             // stay world-anchored. No-op for whole-body bodies.
-            if (_windowed) UpdateSimWindow();
+            if (_windowed) _simWindow.Track();
 
             // FootprintDelta mode only: push the surface with the temporally-smoothed
             // submerged footprint. In MouseLikeDrops mode the WaterInteractables emit
@@ -1139,7 +969,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_obstacle != null && objectInteraction == ObjectInteraction.FootprintDelta)
             {
                 // Windowed bodies re-frame the footprint onto the scrolling window each frame.
-                if (_windowed) _obstacle.SetFrame(_simCenter, VolumeRotation, SimHalfExtent);
+                if (_windowed) _obstacle.SetFrame(SimWindowCenter, VolumeRotation, SimHalfExtent);
                 _obstacle.Render(VolumeCenter.y, 1f - obstacleSmoothing);
                 // Compensate for extent.y so an object's displacement is a fixed world height
                 // regardless of pool depth (PoolToWorld scales surface height by extent.y).
@@ -1155,7 +985,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 Graphics.Blit(_water.Texture, _heightMip); // copy height (R) into the mipped RT
                 _heightMip.GenerateMips();                 // top 1x1 mip = mean height
-                _water.ConserveVolume(_heightMip);         // subtract the mean
+                _water.ConserveVolume(_heightMip, conserveMaxCorrection); // subtract the (clamped) mean
             }
 
             _water.UpdateNormals();
@@ -1165,36 +995,25 @@ namespace AbstractOcclusion.WebGpuWater
                                 foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect);
         }
 
-        void UpdateCaustics()
-        {
-            // Feed THIS body's sim to its own caustic material so caustics don't come from
-            // whatever body last wrote the _WaterTex global.
-            if (_water != null) _causticMat.SetTexture(ID_Water, _water.Texture);
-
-            _cb.Clear();
-            _cb.SetRenderTarget(_causticRT);
-            _cb.ClearRenderTarget(true, true, Color.clear);
-            _cb.DrawMesh(waterMesh, Matrix4x4.identity, _causticMat, 0, 0);
-            Graphics.ExecuteCommandBuffer(_cb);
-            // The caustic RT reaches this body's renderers via the MPB; the primary also
-            // mirrors it to the _CausticTex global (PublishBodyGlobals) for objects.
-        }
+        // Render this body's own sim into its own caustic RT. The RT reaches the renderers
+        // via the MPB; the primary also mirrors it to the _CausticTex global for objects.
+        void RenderCaustics() => _caustics.Render(waterMesh, _water?.Texture);
 
         // ---- volume placement frame (center + rotation + non-uniform extent) ----
-        Vector3 VolumeExtentSafe => new Vector3(
-            Mathf.Max(volumeExtent.x, 1e-5f),
-            Mathf.Max(volumeExtent.y, 1e-5f),
-            Mathf.Max(volumeExtent.z, 1e-5f));
+        internal Vector3 VolumeExtentSafe => new Vector3(
+            Mathf.Max(volumeExtent.x, MinVolumeExtent),
+            Mathf.Max(volumeExtent.y, MinVolumeExtent),
+            Mathf.Max(volumeExtent.z, MinVolumeExtent));
         // Position + rotation come from this GameObject's transform (move it to place water).
-        Vector3 VolumeCenter => transform.position;
-        Quaternion VolumeRotation => transform.rotation;
-        Vector3 VolumeUp => VolumeRotation * Vector3.up;
+        internal Vector3 VolumeCenter => transform.position;
+        internal Quaternion VolumeRotation => transform.rotation;
+        internal Vector3 VolumeUp => VolumeRotation * Vector3.up;
         // Average horizontal extent, used to keep a click ripple round in world units.
         float VolumeHorizontalExtent => 0.5f * (VolumeExtentSafe.x + VolumeExtentSafe.z);
 
-        Vector3 PoolToWorld(Vector3 pool) => VolumeCenter + VolumeRotation * Vector3.Scale(pool, VolumeExtentSafe);
+        internal Vector3 PoolToWorld(Vector3 pool) => VolumeCenter + VolumeRotation * Vector3.Scale(pool, VolumeExtentSafe);
 
-        Vector3 WorldToPool(Vector3 world)
+        internal Vector3 WorldToPool(Vector3 world)
         {
             Vector3 e = VolumeExtentSafe;
             Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - VolumeCenter);
@@ -1204,13 +1023,13 @@ namespace AbstractOcclusion.WebGpuWater
         // ---- large-water sim window frame ----------------------------------
         // Half-size (world) of the window: simWindowMeters horizontally, the body's depth
         // scale vertically (ripple height stays coupled to extent.y like the whole-body sim).
-        Vector3 SimHalfExtent => new Vector3(
-            Mathf.Max(simWindowMeters, 1e-3f),
+        internal Vector3 SimHalfExtent => new Vector3(
+            Mathf.Max(simWindowMeters, MinWindowHalfExtent),
             VolumeExtentSafe.y,
-            Mathf.Max(simWindowMeters, 1e-3f));
+            Mathf.Max(simWindowMeters, MinWindowHalfExtent));
 
         // Average horizontal window half-size, keeping an injected ripple round in world units.
-        float SimHorizontalExtent => Mathf.Max(simWindowMeters, 1e-3f);
+        float SimHorizontalExtent => Mathf.Max(simWindowMeters, MinWindowHalfExtent);
 
         // ---- GPU consumer API (foam particles and similar per-body effects) ----
 
@@ -1232,12 +1051,7 @@ namespace AbstractOcclusion.WebGpuWater
         public void WriteSimFrameUniforms(ComputeShader cs)
         {
             if (cs == null) throw new System.ArgumentNullException(nameof(cs));
-            cs.SetVector(ID_VolumeCenter, VolumeCenter);
-            cs.SetVector(ID_VolumeExtent, VolumeExtentSafe);
-            cs.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
-            cs.SetFloat(ID_SimWindowed, _windowed ? 1f : 0f);
-            cs.SetVector(ID_SimCenter, _simCenter);
-            cs.SetVector(ID_SimExtent, SimHalfExtent);
+            Publisher.WriteSimFrameUniforms(cs);
         }
 
         /// <summary>World-space area covered by one sim texel (m^2), for density-normalised
@@ -1259,7 +1073,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             get
             {
-                Vector3 center = _windowed ? _simCenter : VolumeCenter;
+                Vector3 center = _windowed ? SimWindowCenter : VolumeCenter;
                 Vector3 half = _windowed ? SimHalfExtent : VolumeExtentSafe;
                 // Rotation-safe: expand horizontally by the diagonal, vertically by the
                 // depth plus wave headroom.
@@ -1272,19 +1086,14 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>True if this body runs the camera-following windowed sim (decided at
         /// startup from its size and the threshold).</summary>
         public bool IsWindowed => _windowed;
-        /// <summary>World centre of the active sim window (follows the camera at runtime).</summary>
-        public Vector3 SimWindowCenter => _simCenter;
+        /// <summary>World centre of the active sim window (follows the camera at runtime).
+        /// The volume centre until the window exists.</summary>
+        public Vector3 SimWindowCenter => _simWindow != null ? _simWindow.Center : VolumeCenter;
         /// <summary>World half-size (x,z) and depth scale (y) of the sim window.</summary>
         public Vector3 SimWindowHalfExtent => SimHalfExtent;
 
-        // World -> sim-window normalised coords (.xz in [-1,1] inside the window). Shares the
-        // volume rotation; centred on the scrolling window centre.
-        Vector3 WorldToSim(Vector3 world)
-        {
-            Vector3 e = SimHalfExtent;
-            Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - _simCenter);
-            return new Vector3(local.x / e.x, local.y / e.y, local.z / e.z);
-        }
+        // World -> sim-window normalised coords (.xz in [-1,1] inside the window).
+        internal Vector3 WorldToSim(Vector3 world) => _simWindow.WorldToSim(world);
 
         // Windowing turns on for bodies whose horizontal half-extent exceeds the threshold.
         bool ShouldWindow()
@@ -1292,54 +1101,6 @@ namespace AbstractOcclusion.WebGpuWater
             if (!enableLargeBodyWindow) return false;
             Vector3 e = VolumeExtentSafe;
             return Mathf.Max(e.x, e.z) > largeBodyThreshold;
-        }
-
-        // Move the window to the camera: project the camera onto the surface plane, clamp into
-        // the footprint, snap to the sim-texel lattice, and scroll the sim state by the integer
-        // texel delta so ripples stay pinned in world space. Called once per simulated frame.
-        void UpdateSimWindow()
-        {
-            if (targetCamera == null || _water == null) return;
-
-            // Camera projected onto the surface plane (through the volume centre, along up).
-            Vector3 up = VolumeUp;
-            Vector3 camPos = targetCamera.transform.position;
-            Vector3 onPlane = camPos - Vector3.Dot(camPos - VolumeCenter, up) * up;
-
-            // Work in the volume's local horizontal frame so the lattice is axis-aligned.
-            Vector3 local = Quaternion.Inverse(VolumeRotation) * (onPlane - VolumeCenter);
-
-            float texel = 2f * simWindowMeters / _simRes;
-            // Clamp the window centre so it stays inside the footprint (or may overhang the edge).
-            Vector3 e = VolumeExtentSafe;
-            float limitX = clampWindowToShore ? Mathf.Max(0f, e.x - simWindowMeters) : e.x;
-            float limitZ = clampWindowToShore ? Mathf.Max(0f, e.z - simWindowMeters) : e.z;
-            float clampedX = Mathf.Clamp(local.x, -limitX, limitX);
-            float clampedZ = Mathf.Clamp(local.z, -limitZ, limitZ);
-
-            int cellX = Mathf.RoundToInt(clampedX / texel);
-            int cellZ = Mathf.RoundToInt(clampedZ / texel);
-
-            if (!_simCenterInit)
-            {
-                _simCellX = cellX; _simCellZ = cellZ;
-                _simCenterInit = true;
-            }
-            else
-            {
-                int dx = cellX - _simCellX;
-                int dz = cellZ - _simCellZ;
-                if (dx != 0 || dz != 0)
-                {
-                    // Local x -> sim texel u, local z -> sim texel v. The kernel does
-                    // Dst[p] = Src[p - offset]; offsetting by -delta keeps world features fixed
-                    // (see WaterSimulation.Scroll).
-                    _water.Scroll(-dx, -dz);
-                    _simCellX = cellX; _simCellZ = cellZ;
-                }
-            }
-
-            _simCenter = VolumeCenter + VolumeRotation * new Vector3(_simCellX * texel, 0f, _simCellZ * texel);
         }
 
         // World point -> pool. Returns false if outside the [-1,1] horizontal footprint.
@@ -1358,7 +1119,7 @@ namespace AbstractOcclusion.WebGpuWater
             worldHit = Vector3.zero; poolX = 0f; poolZ = 0f;
             Vector3 n = VolumeUp;
             float denom = Vector3.Dot(dir, n);
-            if (Mathf.Abs(denom) < 1e-6f) return false;
+            if (Mathf.Abs(denom) < RayParallelEpsilon) return false;
             float t = Vector3.Dot(VolumeCenter - eye, n) / denom;
             if (t < 0f) return false;
             worldHit = eye + dir * t;
@@ -1368,98 +1129,75 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // ---- wind-wave layer -----------------------------------------------
-        float WaveMetersPerUnit => Mathf.Max(1e-3f, poolHalfExtentMeters);
+        internal float WaveMetersPerUnit => Mathf.Max(MinWaveMetersPerUnit, poolHalfExtentMeters);
 
         // Regenerate the bank only when a wind/scale parameter actually changes, so
         // the phases stay stable frame-to-frame (a fresh bank would pop the surface).
         void EnsureWaveBank()
         {
-            var signature = new Vector4(windSpeed, windFromDegrees, poolHalfExtentMeters,
-                                        waveCount + 100f * waveAmplitudeScale);
+            int count = EffectiveWaveCount;
             float verticalExtent = VolumeExtentSafe.y;
             bool dirty = windWaves != _waveGenEnabled
-                         || signature != _waveGenSignature
+                         || windSpeed != _waveGenWindSpeed
+                         || windFromDegrees != _waveGenWindFrom
+                         || poolHalfExtentMeters != _waveGenExtentMeters
+                         || count != _waveGenCount
+                         || waveAmplitudeScale != _waveGenAmpScale
                          || waveDirectionSpread != _waveGenSpread
                          || verticalExtent != _waveGenVerticalExtent;
             if (!dirty) return;
 
             _waveBank.Generate(windSpeed, windFromDegrees, 2f * poolHalfExtentMeters,
-                               waveCount, waveAmplitudeScale, waveDirectionSpread, WaveMetersPerUnit,
+                               count, waveAmplitudeScale, waveDirectionSpread, WaveMetersPerUnit,
                                verticalExtent);
-            _waveGenSignature = signature;
+            _waveGenWindSpeed = windSpeed;
+            _waveGenWindFrom = windFromDegrees;
+            _waveGenExtentMeters = poolHalfExtentMeters;
+            _waveGenCount = count;
+            _waveGenAmpScale = waveAmplitudeScale;
             _waveGenSpread = waveDirectionSpread;
             _waveGenVerticalExtent = verticalExtent;
             _waveGenEnabled = windWaves;
         }
+
+        // The authored component count capped by the quality tier (mobile tiers sum fewer
+        // sinusoids per vertex/pixel/buoyancy query).
+        int EffectiveWaveCount => Mathf.Min(waveCount, _maxWaveCount);
 
         // Wave arrays are per-body, mirrored to globals only by the primary (see WriteBodyUniforms).
         // The wave CLOCK (_WaveTime) is genuinely shared and published in PublishSharedGlobals.
 
         // With the link on, the depth colour tracks the fog extinction so a single dial drives
         // both; off, the depth colour is authored independently.
-        Color EffectiveDepthExtinction => linkDepthToFog ? fogExtinction : depthExtinction;
+        internal Color EffectiveDepthExtinction => linkDepthToFog ? fogExtinction : depthExtinction;
 
-        // ---- terrain bed-height bake ----------------------------------------
-        // Sample the terrain heightmap into a pool-space map so shaders can read the real
-        // water-column depth (surface - bed). One-time CPU bake aligned to THIS body's volume
-        // frame; re-run via the context menu / RebakeBed() if the terrain or placement changes.
+        // ---- terrain bed-height bake (WaterBedBaker) --------------------------
+
+        /// <summary>Re-sample the terrain heightmap into the pool-space bed map. Call after
+        /// the terrain or the volume placement changes.</summary>
         [ContextMenu("Rebake Bed")]
-        public void RebakeBed()
+        public void RebakeBed() => BedBaker.Rebake();
+
+        // ---- edit-mode preview ------------------------------------------------
+        // The editor preview driver (Editor/WaterEditorPreviewDriver) pumps the player loop
+        // while any body is alive so Update runs without Play; these support it.
+
+        /// <summary>Number of live (enabled) water bodies. Editor-preview driver hook.</summary>
+        internal static int ActiveBodyCount => Bodies.Count;
+
+        double _lastEditorTick;
+
+        // Real elapsed time between edit-mode ticks, clamped (see MaxEditorDeltaSeconds).
+        // First tick after enable returns 0 so no time is invented.
+        float EditorDeltaSeconds()
         {
-            Terrain terrain = bedTerrain != null ? bedTerrain : Terrain.activeTerrain;
-            if (terrain == null) { _bedBaked = false; return; }
-
-            int res = Mathf.Clamp(bedResolution, MinBedResolution, MaxBedResolution);
-            EnsureBedTexture(res);
-
-            float terrainBaseY = terrain.transform.position.y;
-            var pixels = new Color[res * res];
-            for (int z = 0; z < res; z++)
-            {
-                float poolZ = ((z + 0.5f) / res) * 2f - 1f;
-                for (int x = 0; x < res; x++)
-                {
-                    float poolX = ((x + 0.5f) / res) * 2f - 1f;
-                    Vector3 world = PoolToWorld(new Vector3(poolX, 0f, poolZ));
-                    float bedWorldY = terrainBaseY + terrain.SampleHeight(world);
-                    // Only the Y differs from the surface probe, so this yields the bed's pool-space
-                    // height under the same volume frame (correct under rotation / non-uniform extent).
-                    float bedPoolY = WorldToPool(new Vector3(world.x, bedWorldY, world.z)).y;
-                    pixels[z * res + x] = new Color(bedPoolY, 0f, 0f, 0f);
-                }
-            }
-            _bedTex.SetPixels(pixels);
-            _bedTex.Apply(false, false);
-            _bedBaked = true;
+            double now = Time.realtimeSinceStartupAsDouble;
+            float dt = _lastEditorTick > 0d ? (float)(now - _lastEditorTick) : 0f;
+            _lastEditorTick = now;
+            return Mathf.Min(dt, MaxEditorDeltaSeconds);
         }
 
-        void EnsureBedTexture(int res)
-        {
-            if (_bedTex != null && _bedTex.width == res) return;
-            if (_bedTex != null) DestroyBedTexture();
-            _bedTex = new Texture2D(res, res, TextureFormat.RFloat, false, true)
-            {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
-                name = "BedHeightPool"
-            };
-        }
-
-        // Destroy the bed texture safely from either play mode or the editor context menu.
-        void DestroyBedTexture()
-        {
-            if (_bedTex == null) return;
-            if (Application.isPlaying) Destroy(_bedTex); else DestroyImmediate(_bedTex);
-            _bedTex = null;
-        }
-
-        // ---- camera ---------------------------------------------------------
-        Ray PixelRay(Vector2 p)
-        {
-            return targetCamera.ScreenPointToRay(new Vector3(p.x, p.y, 0f));
-        }
-
-        // ---- interaction (primary body acts as the scene input router) -------
+        // ---- interaction (WaterInputRouter drives this) -----------------------
 
         /// <summary>Does this body's surface plane lie under the ray, within its footprint?
         /// Returns the world hit point. Lets the input router pick which lake was clicked.</summary>
@@ -1470,175 +1208,6 @@ namespace AbstractOcclusion.WebGpuWater
             if (Mathf.Abs(px) > 1f || Mathf.Abs(pz) > 1f) return false;
             worldHit = hit;
             return true;
-        }
-
-        // Nearest water body whose surface the ray hits (null = none, so we orbit instead).
-        static WaterVolume FindHitBody(Ray ray, out Vector3 worldHit)
-        {
-            worldHit = Vector3.zero;
-            WaterVolume best = null;
-            float bestSqr = float.MaxValue;
-            for (int i = 0; i < Bodies.Count; i++)
-            {
-                if (!Bodies[i].TryRaycastSurface(ray, out Vector3 hit)) continue;
-                float sqr = (hit - ray.origin).sqrMagnitude;
-                if (sqr < bestSqr) { bestSqr = sqr; best = Bodies[i]; worldHit = hit; }
-            }
-            return best;
-        }
-
-        void HandleMouse()
-        {
-            // No camera -> no rays to cast; skip input rather than NRE in PixelRay.
-            if (targetCamera == null) return;
-
-            // While pinching (2+ fingers), don't ripple/orbit — let the camera zoom.
-            if (MultiTouch()) { _mode = MODE_NONE; return; }
-
-            Vector2 m = MousePos();
-
-            if (MouseDown())
-            {
-                _oldMouse = m;
-                _dragBody = FindHitBody(PixelRay(m), out Vector3 hit);
-                if (_dragBody != null)
-                {
-                    _mode = MODE_ADD_DROPS;
-                    _prevWorld = hit;
-                    _forceDrop = true; // the initial press always injects one ripple
-                    DuringDrag(m);
-                }
-                else
-                {
-                    _mode = MODE_ORBIT; // clicked empty space -> orbit the camera
-                }
-            }
-            else if (MouseHeld())
-            {
-                DuringDrag(m);
-            }
-            else if (MouseUp())
-            {
-                _mode = MODE_NONE;
-                _dragBody = null;
-            }
-        }
-
-        void DuringDrag(Vector2 m)
-        {
-            switch (_mode)
-            {
-                case MODE_ADD_DROPS:
-                {
-                    if (_dragBody == null) break;
-                    if (!_dragBody.TryRaycastSurface(PixelRay(m), out Vector3 hit)) break;
-
-                    // Throttle injection by world distance travelled so holding the cursor
-                    // still doesn't pump energy into the same texels every frame.
-                    float moved = Vector2.Distance(new Vector2(hit.x, hit.z), new Vector2(_prevWorld.x, _prevWorld.z));
-                    if (!_forceDrop && moved < MinDragWorldSpacing) break;
-                    _forceDrop = false;
-
-                    // Route the ripple to the clicked body (world-space API; it converts).
-                    _dragBody.AddRipple(hit.x, hit.z, rippleRadius, rippleStrength);
-
-                    if (splashEmitter != null)
-                    {
-                        float strength = Mathf.Clamp01(moved / 0.08f);
-                        if (strength > 0.1f)
-                            splashEmitter.EmitSplash(hit, strength * 0.6f, rippleRadius * 4f);
-                    }
-                    _prevWorld = hit;
-                    break;
-                }
-                case MODE_ORBIT:
-                {
-                    if (orbit != null) orbit.Rotate(m.x - _oldMouse.x, m.y - _oldMouse.y);
-                    break;
-                }
-            }
-            _oldMouse = m;
-        }
-
-        void HandleKeys()
-        {
-            if (KeySpaceDown()) _paused = !_paused;
-            if (KeyLHeld() && targetCamera != null)
-            {
-                // Point the real sun along the camera view (or the fallback vector).
-                if (sun != null)
-                    sun.transform.rotation = Quaternion.LookRotation(targetCamera.transform.forward);
-                else
-                    lightDir = -targetCamera.transform.forward;
-            }
-        }
-
-        // ---- input abstraction (mouse, touch or pen via Pointer; legacy fallback) ---
-        // Pointer.current resolves to the mouse on desktop and the touchscreen on
-        // mobile, so the same drag logic drives both.
-        static Vector2 MousePos()
-        {
-#if ENABLE_INPUT_SYSTEM
-            return Pointer.current != null ? Pointer.current.position.ReadValue() : Vector2.zero;
-#else
-            return Input.mousePosition;
-#endif
-        }
-        static bool MouseDown()
-        {
-#if ENABLE_INPUT_SYSTEM
-            return Pointer.current != null && Pointer.current.press.wasPressedThisFrame;
-#else
-            return Input.GetMouseButtonDown(0);
-#endif
-        }
-        static bool MouseHeld()
-        {
-#if ENABLE_INPUT_SYSTEM
-            return Pointer.current != null && Pointer.current.press.isPressed;
-#else
-            return Input.GetMouseButton(0);
-#endif
-        }
-        static bool MouseUp()
-        {
-#if ENABLE_INPUT_SYSTEM
-            return Pointer.current != null && Pointer.current.press.wasReleasedThisFrame;
-#else
-            return Input.GetMouseButtonUp(0);
-#endif
-        }
-
-        // True while two or more fingers are down, so single-touch ripple/orbit
-        // yields to the camera's pinch-zoom.
-        static bool MultiTouch()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var ts = Touchscreen.current;
-            if (ts == null) return false;
-            int n = 0;
-            foreach (var t in ts.touches)
-                if (t.press.isPressed) n++;
-            return n >= 2;
-#else
-            return Input.touchCount >= 2;
-#endif
-        }
-        static bool KeySpaceDown()
-        {
-#if ENABLE_INPUT_SYSTEM
-            return Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame;
-#else
-            return Input.GetKeyDown(KeyCode.Space);
-#endif
-        }
-        static bool KeyLHeld()
-        {
-#if ENABLE_INPUT_SYSTEM
-            return Keyboard.current != null && Keyboard.current.lKey.isPressed;
-#else
-            return Input.GetKey(KeyCode.L);
-#endif
         }
     }
 }

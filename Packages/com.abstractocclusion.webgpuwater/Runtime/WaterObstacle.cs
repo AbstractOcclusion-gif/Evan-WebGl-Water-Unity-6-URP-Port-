@@ -47,8 +47,13 @@ namespace AbstractOcclusion.WebGpuWater
         public WaterObstacle(Shader obstacleShader, int resolution, Vector3 volumeCenter,
                              Quaternion volumeRotation, Vector3 volumeExtent)
         {
+            if (obstacleShader == null) throw new System.ArgumentNullException(nameof(obstacleShader));
+            if (resolution <= 0)
+                throw new System.ArgumentException($"WaterObstacle resolution must be positive, got {resolution}.",
+                                                   nameof(resolution));
+
             _resolution = resolution;
-            _mat = new Material(obstacleShader);
+            _mat = new Material(obstacleShader) { hideFlags = HideFlags.HideAndDontSave };
             _cb = new CommandBuffer { name = "WebGLWater.Obstacle" };
             _mpb = new MaterialPropertyBlock();
             _prev = Create(_resolution);
@@ -85,11 +90,16 @@ namespace AbstractOcclusion.WebGpuWater
 
         RenderTexture Create(int resolution)
         {
-            var rt = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.RFloat)
+            // RHalf, not RFloat: the footprint pass blends additively (Blend One One) and base
+            // WebGPU cannot blend into float32 targets (that needs the optional
+            // 'float32-blendable' feature, absent on many mobile GPUs). Half precision is
+            // ample for a submerged-depth coverage mask.
+            var rt = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.RHalf)
             {
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,
-                name = "WaterObstacle"
+                name = "WaterObstacle",
+                hideFlags = HideFlags.HideAndDontSave
             };
             rt.Create();
             return rt;
@@ -119,6 +129,10 @@ namespace AbstractOcclusion.WebGpuWater
                 float waterlineY = it.WaterlineY(waterY);
                 if (!it.IsSubmerged(waterlineY)) continue;
 
+                // Merge into the renderer's EXISTING block instead of replacing it: a bare
+                // SetPropertyBlock would wipe WaterMembership's per-body water uniforms (and
+                // any user-set per-instance values) from the floater every simulated frame.
+                it.Renderer.GetPropertyBlock(_mpb);
                 _mpb.SetFloat(ID_Waterline, waterlineY);
                 _mpb.SetFloat(ID_DisplaceScale, it.displaceScale);
                 it.Renderer.SetPropertyBlock(_mpb);
@@ -144,12 +158,27 @@ namespace AbstractOcclusion.WebGpuWater
 
         public void Dispose()
         {
-            if (_prev != null) _prev.Release();
-            if (_curr != null) _curr.Release();
-            if (_raw != null) _raw.Release();
-            if (_hiRes != null) _hiRes.Release();
-            if (_midRes != null) _midRes.Release();
+            ReleaseAndDestroy(ref _prev);
+            ReleaseAndDestroy(ref _curr);
+            ReleaseAndDestroy(ref _raw);
+            ReleaseAndDestroy(ref _hiRes);
+            ReleaseAndDestroy(ref _midRes);
             _cb?.Release();
+            DestroyRuntimeObject(_mat); // the footprint material leaked once per enable cycle
+        }
+
+        static void ReleaseAndDestroy(ref RenderTexture rt)
+        {
+            if (rt == null) return;
+            rt.Release();
+            DestroyRuntimeObject(rt);
+            rt = null;
+        }
+
+        static void DestroyRuntimeObject(Object obj)
+        {
+            if (obj == null) return;
+            if (Application.isPlaying) Object.Destroy(obj); else Object.DestroyImmediate(obj);
         }
     }
 }

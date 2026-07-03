@@ -19,7 +19,6 @@ sampler2D   _Tiles;        // pool wall/floor albedo (REPEAT)
 samplerCUBE _Sky;          // sky cubemap
 
 float3 _LightDir;          // normalized direction toward the light
-float3 _Eye;               // camera world position
 float4 _WaterTexel;        // (1/width, 1/height, width, height) of _WaterTex, pushed from C#
 
 // Manual bilinear sample of the float sim texture. WebGPU does NOT hardware-filter
@@ -66,7 +65,9 @@ float3 GetWallColor(float3 p)
 
     float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
     float diffuse = max(0.0, dot(refractedLight, normal));
-    float4 info = tex2D(_WaterTex, p.xz * 0.5 + 0.5);
+    // Manual bilinear (not tex2D): WebGPU point-samples float32 textures, which turned
+    // the above/below-waterline cut into a blocky stair-step in builds.
+    float4 info = SampleWaterBilinear(p.xz * 0.5 + 0.5);
     if (p.y < info.r)
     {
         float4 caustic = tex2D(_CausticTex, ProjectCausticUV(p, refractedLight));

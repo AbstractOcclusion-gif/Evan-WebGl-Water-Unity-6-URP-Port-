@@ -46,8 +46,14 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 center = _rb.worldCenterOfMass;
             // Resolve from the object's position so a splash fires into the lake it enters.
             WaterVolume body = WaterVolume.BodyContaining(center);
-            float surfaceY = 0f;
-            if (body != null) body.TryGetWaterHeight(center.x, center.z, out surfaceY);
+            if (body == null) { _wasUnder = false; return; }
+
+            // No height yet (first frames before the readback lands, or out of footprint):
+            // keep last frame's state rather than assume a surface at world y = 0, which
+            // would swallow the first entry splash of any body placed off the origin.
+            if (!body.TryGetWaterHeight(center.x, center.z, out float surfaceY) &&
+                !body.TryGetAnalyticWaterline(center.x, center.z, out surfaceY))
+                return;
 
             float halfY = _col != null ? _col.bounds.extents.y : FallbackHalfExtent;
             float halfX = _col != null ? _col.bounds.extents.x : FallbackHalfExtent;
@@ -61,9 +67,8 @@ namespace AbstractOcclusion.WebGpuWater
                     float strength = Mathf.Clamp01(speed / Mathf.Max(MinDivisorSpeed, maxImpactSpeed));
                     if (emitter != null)
                         emitter.EmitSplash(new Vector3(center.x, surfaceY, center.z), strength, halfX * 2f);
-                    if (body != null)
-                        body.AddRipple(center.x, center.z, Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
-                                       Mathf.Min(rippleStrength, speed * SpeedToRippleStrength));
+                    body.AddRipple(center.x, center.z, Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
+                                   Mathf.Min(rippleStrength, speed * SpeedToRippleStrength));
                 }
             }
             _wasUnder = under;

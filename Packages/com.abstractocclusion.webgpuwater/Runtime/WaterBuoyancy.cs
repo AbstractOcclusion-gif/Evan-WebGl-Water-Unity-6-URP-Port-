@@ -45,7 +45,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         Rigidbody _rb;
         Collider _col;
-        WaterVolume _ctrl;
+        WaterVolume _body;
 
         // Float points in the body's local space, plus the world-space sphere radius
         // used for the per-point submerged-volume (sphere-cap) calculation.
@@ -117,8 +117,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             // Re-resolve every step so an object that drifts between lakes floats on the one
             // it is currently in (cheap: a handful of bodies).
-            _ctrl = WaterVolume.BodyContaining(transform.position);
-            if (_ctrl == null || _localPoints == null || _localPoints.Length == 0) return;
+            _body = WaterVolume.BodyContaining(transform.position);
+            if (_body == null || _localPoints == null || _localPoints.Length == 0) return;
 
             float g = Physics.gravity.magnitude;
             float invCount = 1f / _localPoints.Length;
@@ -130,7 +130,7 @@ namespace AbstractOcclusion.WebGpuWater
                 Vector3 world = transform.TransformPoint(local);
                 // Evaluated in the volume's frame, so this is correct under rotation,
                 // tilt and a non-uniform (rectangular / custom-depth) volume.
-                if (!_ctrl.TrySampleSubmersion(world, out float depth, out Vector3 volumeUp, out Vector3 flow)) continue;
+                if (!_body.TrySampleSubmersion(world, out float depth, out Vector3 volumeUp, out Vector3 flow)) continue;
                 up = volumeUp;
 
                 float fraction = SphereSubmergedFraction(depth, _sphereRadius);

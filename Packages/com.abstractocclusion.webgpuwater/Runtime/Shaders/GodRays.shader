@@ -48,8 +48,10 @@ Shader "WebGLWater/GodRays"
             // variant is intentionally omitted: it is keyed to opaque-surface depth and
             // would be wrong for arbitrary volumetric samples. Without a shadowmap the
             // pass degrades gracefully to the original caustic-only shafts.
+            // _SHADOWS_SOFT is intentionally NOT compiled here: the march already averages
+            // many samples along the ray, so multi-tap soft shadows per step cost several
+            // extra shadowmap fetches per pixel for no visible gain in a volumetric.
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
-            #pragma multi_compile_fragment _ _SHADOWS_SOFT
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -61,6 +63,17 @@ Shader "WebGLWater/GodRays"
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             float3 _LightDir;       // global, normalized direction toward the light
             float3 _SunColor;       // global, sun colour * intensity
+
+            // Interleaved gradient noise (Jimenez, "Next Generation Post Processing in
+            // Call of Duty" 2014): a stable per-pixel value in [0,1) from the pixel coords.
+            // Used to jitter each pixel's march start by a fraction of one step, which
+            // converts step-count banding into high-frequency noise that the additive
+            // accumulation visually averages out - so a tier can run roughly half the
+            // steps at equal perceived quality.
+            float InterleavedGradientNoise(float2 pixel)
+            {
+                return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+            }
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _GodRayColor;
@@ -118,13 +131,42 @@ Shader "WebGLWater/GodRays"
                 float3 refractedLight = -refract(-_LightDir, float3(0, 1, 0), IOR_AIR / IOR_WATER);
                 float surfaceLevel = _VolumeCenter.y; // world Y of the water surface
 
-                // Per-channel so the view-path fog can tint the shafts as they recede, matching
-                // how everything else fogs (red dies first).
+                // Dithered march: per-pixel [0,1) start offset (see InterleavedGradientNoise).
+                // SV_POSITION.xy in the fragment stage is the pixel centre.
+                float jitter = InterleavedGradientNoise(IN.positionCS.xy);
+
+                // Hoisted exponentials: along a fixed ray, both the view-path fog and the
+                // depth fade are exp() of arguments LINEAR in t (every marched sample sits
+                // below the surface, so the max(0, depth) clamps never engage mid-march).
+                // Evaluate once at the first sample, then advance per step by a constant
+                // multiplicative factor - removes 4 exp() and a path-length solve from
+                // every marched sample (this pass can cover the whole screen).
+                float3 firstPool = roPool + rdPool * (tEnter + jitter * dt);
+                float3 firstWorld = PoolToWorld(firstPool);
+                float3 secondWorld = PoolToWorld(firstPool + rdPool * dt);
+                float stepRiseY = secondWorld.y - firstWorld.y; // world dY per step (sign matters)
+
+                // Depth fade of the shaft (light thinned on its way down), master-switch gated.
+                float depthFade = DepthFadeScalar(firstWorld.y, surfaceLevel, _GodRayDepthFade);
+                float depthFadeStep = (_DepthDarkenEnabled > 0.5) ? exp(_GodRayDepthFade * stepRiseY) : 1.0;
+
+                // View-path fog: per-channel so receding shafts tint like everything else
+                // (red dies first). Gated by the fog toggle alone, consistent with the scene.
+                float3 viewFog = float3(1.0, 1.0, 1.0);
+                float3 viewFogStep = float3(1.0, 1.0, 1.0);
+                if (_WaterFogEnabled > 0.5)
+                {
+                    float worldStep = length(secondWorld - firstWorld);
+                    viewFog = exp(-_WaterExtinction.rgb *
+                                  (_WaterFogDensity * WaterPathLength(firstWorld, _WorldSpaceCameraPos, surfaceLevel)));
+                    viewFogStep = exp(-_WaterExtinction.rgb * (_WaterFogDensity * worldStep));
+                }
+
                 float3 accum = float3(0.0, 0.0, 0.0);
                 [loop]
                 for (int s = 0; s < steps; s++)
                 {
-                    float tt = tEnter + (s + 0.5) * dt;
+                    float tt = tEnter + (s + jitter) * dt;
                     float3 pPool = roPool + rdPool * tt;
                     float3 pWorld = PoolToWorld(pPool);
                     float pe = -mul(UNITY_MATRIX_V, float4(pWorld, 1.0)).z; // eye depth of sample
@@ -139,16 +181,9 @@ Shader "WebGLWater/GodRays"
                     float4 shadowCoord = TransformWorldToShadowCoord(pWorld);
                     float shadow = MainLightRealtimeShadow(shadowCoord);
 
-                    // Fade the shaft with depth (the light feeding it is thinned on the way down),
-                    // gated by the depth master switch; and haze it out along the view path with
-                    // the SAME fog as the rest of the scene, gated by the fog toggle alone so foggy
-                    // water always thins the shafts consistently with the surface and geometry.
-                    float depthFade = DepthFadeScalar(pWorld.y, surfaceLevel, _GodRayDepthFade);
-                    float3 viewFog = float3(1.0, 1.0, 1.0);
-                    if (_WaterFogEnabled > 0.5)
-                        viewFog = exp(-_WaterExtinction.rgb * (_WaterFogDensity * WaterPathLength(pWorld, _WorldSpaceCameraPos, surfaceLevel)));
-
-                    accum += caustic * shadow * depthFade * viewFog;
+                    accum += caustic * shadow * (depthFade * viewFog);
+                    depthFade *= depthFadeStep;
+                    viewFog *= viewFogStep;
                 }
                 accum *= dt * _GodRayDensity;
 

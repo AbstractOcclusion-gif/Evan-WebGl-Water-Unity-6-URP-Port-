@@ -41,7 +41,24 @@ Shader "WebGLWater/WaterReceiver"
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
-            float3 _LightDir; // global "toward the light", driven from the Unity sun
+            float3 _LightDir;   // global "toward the light", driven from the Unity sun
+            float4 _WaterTexel; // (1/w, 1/h, w, h) of _WaterTex, pushed from C#
+
+            // Manual bilinear height sample: WebGPU cannot hardware-filter the float32 sim
+            // texture, so a filtered SAMPLE_TEXTURE2D silently point-samples there and the
+            // underwater/caustic cut on objects goes blocky in builds.
+            float SampleWaterHeightBilinear(float2 uv)
+            {
+                float2 texel = _WaterTexel.xy;
+                float2 st = uv * _WaterTexel.zw - 0.5;
+                float2 f = frac(st);
+                float2 baseUV = (floor(st) + 0.5) * texel;
+                float c00 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV, 0).r;
+                float c10 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV + float2(texel.x, 0.0), 0).r;
+                float c01 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV + float2(0.0, texel.y), 0).r;
+                float c11 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV + texel, 0).r;
+                return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+            }
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseColor;
@@ -84,7 +101,7 @@ Shader "WebGLWater/WaterReceiver"
                 // Sim height + caustics live in pool space, so convert the world point.
                 float3 poolPos = WorldToPool(IN.positionWS);
                 float2 wuv = poolPos.xz * 0.5 + 0.5;
-                float simH = SAMPLE_TEXTURE2D(_WaterTex, sampler_WaterTex, wuv).r;
+                float simH = SampleWaterHeightBilinear(wuv);
                 if (poolPos.y < simH)
                 {
                     float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);

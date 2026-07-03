@@ -45,6 +45,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamSrc = Shader.PropertyToID("FoamSrc");
         static readonly int ID_FoamDst = Shader.PropertyToID("FoamDst");
         static readonly int ID_HeightMip = Shader.PropertyToID("HeightMip");
+        static readonly int ID_MeanCorrectionMax = Shader.PropertyToID("_MeanCorrectionMax");
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
@@ -102,7 +103,8 @@ namespace AbstractOcclusion.WebGpuWater
                 wrapMode = TextureWrapMode.Clamp,
                 useMipMap = false,
                 autoGenerateMips = false,
-                name = name
+                name = name,
+                hideFlags = HideFlags.HideAndDontSave // never serialized by an edit-mode preview
             };
             rt.Create();
             return rt;
@@ -118,10 +120,20 @@ namespace AbstractOcclusion.WebGpuWater
 
         public void Dispose()
         {
-            if (_a != null) _a.Release();
-            if (_b != null) _b.Release();
-            if (_foamA != null) _foamA.Release();
-            if (_foamB != null) _foamB.Release();
+            ReleaseAndDestroy(ref _a);
+            ReleaseAndDestroy(ref _b);
+            ReleaseAndDestroy(ref _foamA);
+            ReleaseAndDestroy(ref _foamB);
+        }
+
+        // Release frees the GPU surface immediately; Destroy frees the wrapper object, which
+        // otherwise accumulates across enable/disable cycles until scene unload.
+        static void ReleaseAndDestroy(ref RenderTexture rt)
+        {
+            if (rt == null) return;
+            rt.Release();
+            if (Application.isPlaying) Object.Destroy(rt); else Object.DestroyImmediate(rt);
+            rt = null;
         }
 
         // Grid size + texel step, shared by every kernel dispatch.
@@ -191,10 +203,13 @@ namespace AbstractOcclusion.WebGpuWater
             (_foamA, _foamB) = (_foamB, _foamA);
         }
 
-        /// <summary>Subtracts the mean height (from heightMip's top mip) to conserve volume.</summary>
-        public void ConserveVolume(RenderTexture heightMip)
+        /// <summary>Subtracts the mean height (from heightMip's top mip) to conserve volume.
+        /// The subtracted mean is clamped to +/- <paramref name="maxCorrection"/> (pool units) so an
+        /// imprecise float-mip mean under over-simulation can't shift the whole surface at once.</summary>
+        public void ConserveVolume(RenderTexture heightMip, float maxCorrection)
         {
             _cs.SetTexture(_kConserve, ID_HeightMip, heightMip);
+            _cs.SetFloat(ID_MeanCorrectionMax, maxCorrection);
             Dispatch(_kConserve);
         }
 

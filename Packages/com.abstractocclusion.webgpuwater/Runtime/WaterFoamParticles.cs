@@ -28,6 +28,10 @@ namespace AbstractOcclusion.WebGpuWater
         const int VerticesPerParticle = 6;
         const int CounterCount = 2; // ring cursor + per-frame spawn count
 
+        // Knuth's multiplicative-hash constant (2^32 / golden ratio): decorrelates the
+        // per-frame GPU random seed from the plain frame counter.
+        const uint FrameSeedHashPrime = 2654435761u;
+
         // One particle = 12 floats. MUST match FoamParticle in the compute + shader.
         [StructLayout(LayoutKind.Sequential)]
         struct FoamParticle
@@ -68,9 +72,9 @@ namespace AbstractOcclusion.WebGpuWater
         public WaterVolume volume;
         [Tooltip("WaterFoamParticles.compute (spawn/update kernels). Required.")]
         public ComputeShader particleCompute;
-        [Tooltip("Material using the WebGLWater/FoamParticles shader. Required; the builders " +
-                 "and 'Tools > WebGL Water > Add Foam Particles To Selected Water' save a " +
-                 "tweakable material asset and assign it here.")]
+        [Tooltip("Material using the WebGLWater/FoamParticles shader. Required; the Water " +
+                 "Wizard (AbstractOcclusion > WebGpuWater > Water Wizard) saves a tweakable " +
+                 "material asset and assigns it here.")]
         public Material particleMaterial;
 
         [Header("Pool")]
@@ -129,10 +133,23 @@ namespace AbstractOcclusion.WebGpuWater
             if (particleMaterial == null)
             {
                 // No silent runtime material: it would be invisible in the project and
-                // impossible to tweak. The builders/menu item create the asset.
+                // impossible to tweak. The Water Wizard creates and wires the asset.
                 Debug.LogError("WaterFoamParticles: particleMaterial not assigned. Use " +
-                               "'Tools > WebGL Water > Add Foam Particles To Selected Water' " +
-                               "to generate and wire a material asset.", this);
+                               "'AbstractOcclusion > WebGpuWater > Water Wizard' to generate " +
+                               "and wire a material asset.", this);
+                enabled = false;
+                return;
+            }
+
+            // FoamParticles.shader pulls the particle buffer in the VERTEX stage. WebGPU
+            // compatibility mode (older Android GPUs / constrained browsers) allows zero
+            // vertex-stage storage buffers, so drawing there is a validation error. Degrade
+            // to "no foam particles" instead of a broken build; surface foam still renders.
+            if (SystemInfo.maxComputeBufferInputsVertex < 1)
+            {
+                Debug.LogWarning("WaterFoamParticles: this device does not support structured " +
+                                 "buffers in the vertex stage (WebGPU compatibility mode?); " +
+                                 "foam particles disabled on this body.", this);
                 enabled = false;
                 return;
             }
@@ -178,7 +195,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             cs.SetFloat(ID_Size, volume.SimResolution);
             cs.SetInt(ID_Capacity, _capacityPow2);
-            cs.SetInt(ID_FrameSeed, unchecked((int)(Time.frameCount * 2654435761u)));
+            cs.SetInt(ID_FrameSeed, unchecked((int)(Time.frameCount * FrameSeedHashPrime)));
             cs.SetFloat(ID_DeltaTime, dt);
 
             cs.SetFloat(ID_SpawnThreshold, spawnThreshold);

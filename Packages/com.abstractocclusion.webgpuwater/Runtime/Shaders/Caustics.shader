@@ -40,14 +40,20 @@ Shader "WebGLWater/Caustics"
             {
                 float2 tcube = IntersectCube(origin, ray, POOL_BOX_MIN, POOL_BOX_MAX);
                 origin += ray * tcube.y;
-                float tplane = (-origin.y - 1.0) / refractedLight.y;
+                // SafeRefractedLightY: a near-horizontal sun otherwise divides by ~0.
+                float tplane = (-origin.y - 1.0) / SafeRefractedLightY(refractedLight.y);
                 return origin + refractedLight * tplane;
             }
 
             v2f vert(appdata v)
             {
                 v2f o;
-                float4 info = tex2Dlod(_WaterTex, float4(v.vertex.xy * 0.5 + 0.5, 0, 0));
+                // Manual bilinear (not tex2Dlod): WebGPU point-samples float32 textures, so a
+                // plain sample makes the projected heights/normals - and therefore the whole
+                // caustic focusing - blocky in builds whenever mesh res != sim res.
+                float4 info = SampleWaterBilinear(v.vertex.xy * 0.5 + 0.5);
+                // Softens the normal (inherited from the original WebGL demo): full-strength
+                // slopes over-focus the caustics into hard sparkles.
                 info.ba *= 0.5;
                 float3 normal = float3(info.b, sqrt(max(0.0, 1.0 - dot(info.ba, info.ba))), info.a);
 
@@ -61,7 +67,7 @@ Shader "WebGLWater/Caustics"
                 // Y-flip ourselves: _ProjectionParams.x is -1 when Unity renders flipped (e.g. via an
                 // intermediate target under the Mobile URP asset / WebGPU), which otherwise mirrors the
                 // caustic RT vs the desktop editor and shifts everything that samples _CausticTex.
-                float2 cpos = CAUSTIC_PROJECTION_SCALE * (o.newPos.xz + refractedLight.xz / refractedLight.y);
+                float2 cpos = CAUSTIC_PROJECTION_SCALE * (o.newPos.xz + refractedLight.xz / SafeRefractedLightY(refractedLight.y));
                 o.pos = float4(cpos.x, cpos.y * _ProjectionParams.x, 0.0, 1.0);
                 return o;
             }

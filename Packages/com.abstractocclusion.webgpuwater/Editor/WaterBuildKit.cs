@@ -1,8 +1,8 @@
 // WebGL Water - shared build kit (Unity 6 / URP port)
-// Editor-only generators shared by the one-click scene builder and the demo builder:
-// meshes, procedural sky/tiles, materials, camera/sun/splash rigging, a fully-wired
-// water body, and the demo props (terrain bed, static obstacle, floating props). Kept
-// in one place so both builders compose the same primitives instead of duplicating them.
+// Editor-only generators shared by the Water Wizard and the scene builder:
+// meshes, procedural sky/tiles, materials, camera/sun/splash rigging, and a
+// fully-wired water body. Kept in one place so both builders compose the same
+// primitives instead of duplicating them.
 using System.IO;
 using UnityEditor;
 using UnityEngine;
@@ -46,9 +46,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Immutable package assets loaded by path (compute shaders). Lives inside the package, so it
         // must be addressed via the Packages/ mount, not Assets/.
         internal const string PackageShadersRoot = "Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders";
+        internal const string SimComputePath = PackageShadersRoot + "/WaterSim.compute";
 
         internal const int GridDetail = 200;
         internal const int SkyCubemapSize = 128;
+
+        // Scene-object names, shared with WaterSceneBuilder's body-cloning path so a rename
+        // here can never silently break the clone naming there.
+        internal const string FrameObjectName = "Frame (WaterVolume)";
+        internal const string RenderersObjectName = "Renderers";
+        internal const string SurfaceAboveName = "Water (above)";
+        internal const string SurfaceUnderName = "Water (under)";
+        internal const string AnalyticPoolName = "Analytic Pool";
+        internal const string GodRaysObjectName = "God Rays";
+        internal const string MainCameraTag = "MainCamera";
+
+        // Generated shared-asset paths (create-once; see LoadOrCreateMaterial et al).
+        internal const string GridMeshPath = Gen + "/WaterGrid.asset";
+        internal const string PoolMeshPath = Gen + "/Pool.asset";
+        internal const string GodRayBoxMeshPath = Gen + "/GodRayBox.asset";
+        internal const string SkyCubemapPath = Gen + "/SkyCubemap.cubemap";
+        internal const string TilesTexturePath = Gen + "/Tiles.png";
+        internal const string WaterQualityAssetPath = Gen + "/WaterQuality.asset";
 
         // Shader names (keep in sync with the Shader "..." declarations in Shaders/).
         internal const string ShaderWaterSurface = "WebGLWater/WaterSurface";
@@ -93,6 +112,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Cooler, more underwater-blue god rays than the shader's warm default (1.0, 0.97, 0.85).
         static readonly Color DefaultGodRayColor = new Color(0.70f, 0.85f, 1.0f, 1f);
 
+        // Demo camera framing. FOV/clip planes come from WaterVolume's internal constants (the
+        // single source of truth; the volume's activation distance is coupled to the far clip).
+        // The orbit pose matches OrbitCamera's own field defaults, applied explicitly so a
+        // REUSED scene camera is reframed to the demo view too.
+        static readonly Vector3 DemoOrbitPivot = new Vector3(0f, -0.5f, 0f);
+        const float DemoOrbitPitch = -25f;
+        const float DemoOrbitYaw = -200.5f;
+        const float DemoOrbitDistance = 4f;
+
+        // Demo sun: slightly over-bright for sparkle; direction matches WaterVolume's default
+        // lightDir so the analytic water and the real shadows agree before the sun is moved.
+        const float DefaultSunIntensity = 1.2f;
+        static readonly Vector3 DefaultSunTowardLight = new Vector3(2f, 2f, -1f);
+
+        // Crown splash flipbook grid; must match the SplashFlipbook_8x8 sheet layout.
+        const int CrownSheetCols = 8;
+        const int CrownSheetRows = 8;
+
+        // Generated meshes keep huge bounds so Unity's renderer culling can never wrongly cull
+        // a surface placed by the volume frame; real frustum culling is WaterVolume.CullBounds.
+        const float HugeMeshBoundsSize = 1000f;
+
         internal static void EnsureGenFolder() => EnsureFolder(Gen);
 
         // Create an asset folder (and any missing parents) if it doesn't exist yet.
@@ -118,11 +159,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EnsureFolder(assetFolder);
             if (!TryLoadShaders(out ShaderSet shaders)) return false;
 
-            var grid = SaveAsset(BuildGrid(GridDetail), Gen + "/WaterGrid.asset");
-            var poolMesh = SaveAsset(BuildPool(), Gen + "/Pool.asset");
-            var sky = SaveCubemap(BuildSky(SkyCubemapSize), Gen + "/SkyCubemap.cubemap");
-            var tiles = LoadOrBuildTiles(Gen + "/Tiles.png");
-            var quality = LoadOrCreateWaterQuality(Gen + "/WaterQuality.asset");
+            var grid = SaveAsset(BuildGrid(GridDetail), GridMeshPath);
+            var poolMesh = SaveAsset(BuildPool(), PoolMeshPath);
+            var sky = SaveCubemap(BuildSky(SkyCubemapSize), SkyCubemapPath);
+            var tiles = LoadOrBuildTiles(TilesTexturePath);
+            var quality = LoadOrCreateWaterQuality(WaterQualityAssetPath);
             var (matAbove, matUnder, matPool) = CreateWaterMaterials(shaders.Water, shaders.Pool, buildPoolMaterial, assetFolder);
 
             var cam = SetUpCamera(out OrbitCamera orbit);
@@ -160,7 +201,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var bodyRoot = new GameObject(name);
             bodyRoot.transform.SetParent(parent);
 
-            var frameGO = new GameObject("Frame (WaterVolume)");
+            var frameGO = new GameObject(FrameObjectName);
             frameGO.transform.SetParent(bodyRoot.transform);
             frameGO.transform.position = position;
 
@@ -180,17 +221,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.isPrimary = primary;
 
             // Renderers at world identity; the shader places the pool-space meshes via the frame.
-            var rendGO = new GameObject("Renderers");
+            var rendGO = new GameObject(RenderersObjectName);
             rendGO.transform.SetParent(bodyRoot.transform);
 
-            var above = CreateRenderer("Water (above)", ctx.Grid, ctx.MatAbove, rendGO.transform);
-            var under = CreateRenderer("Water (under)", ctx.Grid, ctx.MatUnder, rendGO.transform);
+            var above = CreateRenderer(SurfaceAboveName, ctx.Grid, ctx.MatAbove, rendGO.transform);
+            var under = CreateRenderer(SurfaceUnderName, ctx.Grid, ctx.MatUnder, rendGO.transform);
             volume.surfaceAbove = above.GetComponent<Renderer>();
             volume.surfaceUnder = under.GetComponent<Renderer>();
 
             if (withPool && ctx.MatPool != null)
             {
-                var poolGO = CreateRenderer("Analytic Pool", ctx.PoolMesh, ctx.MatPool, rendGO.transform);
+                var poolGO = CreateRenderer(AnalyticPoolName, ctx.PoolMesh, ctx.MatPool, rendGO.transform);
                 poolGO.GetComponent<MeshRenderer>().receiveShadows = true; // catch object shadows
                 volume.poolRenderer = poolGO.GetComponent<Renderer>();
             }
@@ -236,84 +277,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         // ---------------------------------------------------------------- demo props
-        // A procedural bowl terrain to act as a lake bed: deep in the middle, rising to a rim that
-        // pokes above the water so there is a real shoreline. Sized/positioned so the bowl bottom
-        // sits at the pool floor (surfaceY - extentY) and the rim rises just above the surface.
-        internal static Terrain CreateProceduralTerrain(BuildContext ctx, Transform parent, Vector3 waterCenter,
-            float horizontalExtent, float depth, string assetName = "DemoTerrain")
-        {
-            const int HeightmapResolution = 129;   // 2^n + 1
-            const float RimHeightFactor = 1.4f;    // terrain height as a multiple of the water depth
-            const float BowlRimFraction = 0.7f;    // normalised bowl height reached at the rim
-            const float NoiseFrequency = 6f;
-            const float NoiseAmplitude = 0.1f;
-
-            float worldSize = 2f * horizontalExtent;
-            float terrainHeight = depth * RimHeightFactor;
-
-            var data = new TerrainData { heightmapResolution = HeightmapResolution };
-            data.size = new Vector3(worldSize, terrainHeight, worldSize);
-
-            var heights = new float[HeightmapResolution, HeightmapResolution];
-            for (int z = 0; z < HeightmapResolution; z++)
-                for (int x = 0; x < HeightmapResolution; x++)
-                {
-                    float u = x / (float)(HeightmapResolution - 1);
-                    float v = z / (float)(HeightmapResolution - 1);
-                    float cx = u * 2f - 1f, cz = v * 2f - 1f;
-                    float radius = Mathf.Clamp01(Mathf.Sqrt(cx * cx + cz * cz));
-                    float bowl = Mathf.SmoothStep(0f, 1f, radius) * BowlRimFraction;
-                    float noise = Mathf.PerlinNoise(u * NoiseFrequency, v * NoiseFrequency) * NoiseAmplitude;
-                    heights[z, x] = Mathf.Clamp01(bowl + noise);
-                }
-            data.SetHeights(0, 0, heights);
-            data = SaveTerrainData(data, ctx.Folder + "/" + assetName + ".asset");
-
-            var go = Terrain.CreateTerrainGameObject(data);
-            go.name = "Lake Bed (terrain)";
-            go.transform.SetParent(parent);
-            // Centre the terrain under the water and drop its base a full depth below the surface.
-            go.transform.position = new Vector3(waterCenter.x - horizontalExtent,
-                                                waterCenter.y - depth,
-                                                waterCenter.z - horizontalExtent);
-            return go.GetComponent<Terrain>();
-        }
-
-        // A non-moving obstacle that still displaces the water (WaterInteractable, no Rigidbody) and
-        // is lit by the lake it sits in (receiver material + membership).
-        internal static GameObject CreateStaticObstacle(BuildContext ctx, Transform parent,
-            Vector3 position, Vector3 scale, string matName = "ObstacleStatic")
-        {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = "Static Obstacle";
-            go.transform.SetParent(parent);
-            go.transform.position = position;
-            go.transform.localScale = scale;
-            ApplyReceiverMaterial(go, ctx, new Color(0.55f, 0.55f, 0.60f), matName);
-            go.AddComponent<WaterInteractable>();  // displaces the surface; no Rigidbody -> stays put
-            go.AddComponent<WaterMembership>();
-            return go;
-        }
-
-        // A buoyant prop: floats, displaces, splashes, and is lit by its lake.
-        internal static GameObject CreateFloatingProp(BuildContext ctx, Transform parent,
-            PrimitiveType prim, Vector3 position, float scale, Color color, string matName, float mass = 0.4f)
-        {
-            var go = GameObject.CreatePrimitive(prim);
-            go.name = "Floating Prop";
-            go.transform.SetParent(parent);
-            go.transform.position = position;
-            go.transform.localScale = Vector3.one * scale;
-            ApplyReceiverMaterial(go, ctx, color, matName);
-            var rb = go.AddComponent<Rigidbody>();
-            rb.mass = mass;
-            go.AddComponent<WaterInteractable>();
-            go.AddComponent<WaterBuoyancy>();
-            go.AddComponent<WaterSplash>();
-            go.AddComponent<WaterMembership>();
-            return go;
-        }
-
         // A thin box collider under the water so sinking props have something to rest on.
         internal static GameObject CreateFloorCollider(Transform parent, Vector3 center, Vector3 size)
         {
@@ -322,16 +285,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             go.transform.position = center;
             go.AddComponent<BoxCollider>().size = size;
             return go;
-        }
-
-        static void ApplyReceiverMaterial(GameObject go, BuildContext ctx, Color baseColor, string matName)
-        {
-            if (ctx.Shaders.Receiver == null) return;
-            // Create-once into the scene's own folder so it persists (a transient new Material
-            // serializes to null -> magenta) and is never clobbered by another scene's build.
-            var mat = LoadOrCreateMaterial(ctx.Folder + "/" + matName + ".mat", ctx.Shaders.Receiver,
-                                           m => m.SetColor(PropBaseColor, baseColor));
-            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
         }
 
         // ---------------------------------------------------------------- materials
@@ -386,7 +339,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             var godRayMat = LoadOrCreateMaterial(folder + "/GodRays.mat", sfGodRays,
                                                  m => m.SetColor(PropGodRayColor, DefaultGodRayColor));
-            var go = CreateRenderer("God Rays", SaveAsset(BuildGodRayBox(), Gen + "/GodRayBox.asset"),
+            var go = CreateRenderer(GodRaysObjectName, SaveAsset(BuildGodRayBox(), GodRayBoxMeshPath),
                                     godRayMat, parent);
             var gmr = go.GetComponent<MeshRenderer>();
             gmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -404,20 +357,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 var camGO = new GameObject("Water Camera");
                 cam = camGO.AddComponent<Camera>();
-                camGO.tag = "MainCamera";
+                camGO.tag = MainCameraTag;
             }
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
-            cam.fieldOfView = 45f;
-            cam.nearClipPlane = 0.01f;
-            cam.farClipPlane = 100f;
+            // Same constants the runtime couples its activation distance to (see WaterVolume).
+            cam.fieldOfView = WaterVolume.CameraFieldOfView;
+            cam.nearClipPlane = WaterVolume.CameraNearClip;
+            cam.farClipPlane = WaterVolume.CameraFarClip;
 
             orbit = cam.GetComponent<OrbitCamera>();
             if (orbit == null) orbit = cam.gameObject.AddComponent<OrbitCamera>();
-            orbit.pivot = new Vector3(0f, -0.5f, 0f);
-            orbit.pitch = -25f;
-            orbit.yaw = -200.5f;
-            orbit.distance = 4f;
+            orbit.pivot = DemoOrbitPivot;
+            orbit.pitch = DemoOrbitPitch;
+            orbit.yaw = DemoOrbitYaw;
+            orbit.distance = DemoOrbitDistance;
 
             var planar = cam.GetComponent<PlanarReflection>();
             if (planar == null) planar = cam.gameObject.AddComponent<PlanarReflection>();
@@ -436,8 +390,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var sun = sunGO.AddComponent<Light>();
             sun.type = LightType.Directional;
             sun.shadows = LightShadows.Soft;
-            sun.intensity = 1.2f;
-            sun.transform.rotation = Quaternion.LookRotation(-new Vector3(2f, 2f, -1f).normalized);
+            sun.intensity = DefaultSunIntensity;
+            sun.transform.rotation = Quaternion.LookRotation(-DefaultSunTowardLight.normalized);
             return sun;
         }
 
@@ -460,7 +414,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var crownGO = new GameObject("Splash Crown");
             crownGO.transform.SetParent(parent);
             var crownPS = crownGO.AddComponent<ParticleSystem>();
-            WaterSplashEmitter.ConfigureCrown(crownPS, 8, 8);
+            WaterSplashEmitter.ConfigureCrown(crownPS, CrownSheetCols, CrownSheetRows);
             var crownPSR = crownGO.GetComponent<ParticleSystemRenderer>();
             crownPSR.renderMode = ParticleSystemRenderMode.VerticalBillboard;
             crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
@@ -543,7 +497,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var mesh = new Mesh { name = "WaterGrid", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             mesh.vertices = verts;
             mesh.triangles = tris;
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeMeshBoundsSize);
             return mesh;
         }
 
@@ -573,7 +527,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             mesh.SetVertices(v);
             mesh.SetTriangles(t, 0);
             mesh.RecalculateNormals();
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeMeshBoundsSize);
             return mesh;
         }
 
@@ -603,7 +557,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var mesh = new Mesh { name = "GodRayBox" };
             mesh.SetVertices(v);
             mesh.SetTriangles(t, 0);
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeMeshBoundsSize);
             return mesh;
         }
 
@@ -642,13 +596,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
         }
 
+        // Procedural sky palette + gradient curvature (pow eases the blend toward the horizon).
+        static readonly Color SkyHorizonColor = new Color(0.78f, 0.86f, 0.96f);
+        static readonly Color SkyZenithColor = new Color(0.26f, 0.47f, 0.86f);
+        static readonly Color SkyGroundColor = new Color(0.30f, 0.30f, 0.33f);
+        const float SkyZenithCurve = 0.6f;
+        const float SkyGroundCurve = 0.5f;
+
         static Color SkyColor(Vector3 dir)
         {
-            Color horizon = new Color(0.78f, 0.86f, 0.96f);
-            Color zenith = new Color(0.26f, 0.47f, 0.86f);
-            Color ground = new Color(0.30f, 0.30f, 0.33f);
-            if (dir.y >= 0f) return Color.Lerp(horizon, zenith, Mathf.Pow(dir.y, 0.6f));
-            return Color.Lerp(horizon, ground, Mathf.Pow(-dir.y, 0.5f));
+            if (dir.y >= 0f) return Color.Lerp(SkyHorizonColor, SkyZenithColor, Mathf.Pow(dir.y, SkyZenithCurve));
+            return Color.Lerp(SkyHorizonColor, SkyGroundColor, Mathf.Pow(-dir.y, SkyGroundCurve));
         }
 
         internal static Texture2D LoadOrBuildTiles(string path)
@@ -656,16 +614,22 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var existing = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
             if (existing != null) return existing;
 
-            const int s = 256;
-            var tex = new Texture2D(s, s, TextureFormat.RGB24, true);
-            for (int y = 0; y < s; y++)
-                for (int x = 0; x < s; x++)
+            const int TextureSize = 256;
+            const int TileCellSize = 32;         // pixels per tile
+            const int GroutWidthPixels = 2;
+            const float NoiseFloor = 0.85f;      // brightness variation: floor + amplitude * Perlin
+            const float NoiseAmplitude = 0.15f;
+            const float NoiseFrequency = 0.08f;
+            Color tileColor = new Color(0.55f, 0.75f, 0.85f);
+            Color groutColor = new Color(0.30f, 0.45f, 0.55f);
+
+            var tex = new Texture2D(TextureSize, TextureSize, TextureFormat.RGB24, true);
+            for (int y = 0; y < TextureSize; y++)
+                for (int x = 0; x < TextureSize; x++)
                 {
-                    int cell = 32;
-                    bool grout = (x % cell < 2) || (y % cell < 2);
-                    float n = 0.85f + 0.15f * Mathf.PerlinNoise(x * 0.08f, y * 0.08f);
-                    Color baseCol = new Color(0.55f, 0.75f, 0.85f) * n;
-                    tex.SetPixel(x, y, grout ? new Color(0.30f, 0.45f, 0.55f) : baseCol);
+                    bool grout = (x % TileCellSize < GroutWidthPixels) || (y % TileCellSize < GroutWidthPixels);
+                    float n = NoiseFloor + NoiseAmplitude * Mathf.PerlinNoise(x * NoiseFrequency, y * NoiseFrequency);
+                    tex.SetPixel(x, y, grout ? groutColor : tileColor * n);
                 }
             tex.Apply();
             File.WriteAllBytes(path, tex.EncodeToPNG());
@@ -733,7 +697,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 Caustics = Shader.Find(ShaderCaustics),
                 Obstacle = Shader.Find(ShaderObstacle),
                 Receiver = Shader.Find(ShaderReceiver),
-                Compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(PackageShadersRoot + "/WaterSim.compute")
+                Compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(SimComputePath)
             };
 
             if (shaders.Water == null || shaders.Caustics == null || shaders.Compute == null)
@@ -751,14 +715,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal static Mesh SaveAsset(Mesh m, string path)
         {
             var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
-            if (existing != null) { EditorUtility.CopySerialized(m, existing); return existing; }
-            AssetDatabase.CreateAsset(m, path);
-            return m;
-        }
-
-        internal static Material SaveMaterial(Material m, string path)
-        {
-            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (existing != null) { EditorUtility.CopySerialized(m, existing); return existing; }
             AssetDatabase.CreateAsset(m, path);
             return m;
@@ -783,14 +739,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (existing != null) { EditorUtility.CopySerialized(c, existing); return existing; }
             AssetDatabase.CreateAsset(c, path);
             return c;
-        }
-
-        static TerrainData SaveTerrainData(TerrainData data, string path)
-        {
-            var existing = AssetDatabase.LoadAssetAtPath<TerrainData>(path);
-            if (existing != null) { EditorUtility.CopySerialized(data, existing); return existing; }
-            AssetDatabase.CreateAsset(data, path);
-            return data;
         }
 
         internal static WaterQuality LoadOrCreateWaterQuality(string path)

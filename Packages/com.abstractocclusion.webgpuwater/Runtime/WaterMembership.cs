@@ -9,16 +9,19 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
+    [ExecuteAlways] // edit-mode preview: floating objects show live water uniforms without Play
     [RequireComponent(typeof(Renderer))]
     public class WaterMembership : MonoBehaviour
     {
         Renderer _renderer;
         MaterialPropertyBlock _mpb;
 
-        void Awake()
+        // Lazy init (not Awake): with ExecuteAlways the first edit-mode tick can arrive
+        // before Awake after a domain reload.
+        void EnsureInitialized()
         {
-            _renderer = GetComponent<Renderer>();
-            _mpb = new MaterialPropertyBlock();
+            if (_renderer == null) _renderer = GetComponent<Renderer>();
+            if (_mpb == null) _mpb = new MaterialPropertyBlock();
         }
 
         // LateUpdate so the containing body has finished this frame's sim/caustic pass
@@ -28,6 +31,7 @@ namespace AbstractOcclusion.WebGpuWater
             WaterVolume body = WaterVolume.BodyContaining(transform.position);
             if (body == null) return; // no water in the scene; keep the material's defaults
 
+            EnsureInitialized();
             body.WriteBodyProps(_mpb);
             _renderer.SetPropertyBlock(_mpb);
         }

@@ -25,6 +25,37 @@ namespace AbstractOcclusion.WebGpuWater
         const float CrownMaxSizeFactor = 1.4f;
         const float CrownRadiusContribution = 0.5f;
 
+        // ---- burst shaping (EmitSplash) ----
+        const int MinBurstCount = 3;                  // even the softest splash reads as a few droplets
+        const float OutwardJitterMin = 0.4f;          // per-droplet randomisation of the outward throw
+        const float OutwardJitterMax = 1f;
+        const float UpwardJitterMin = 0.5f;           // per-droplet randomisation of the upward pop
+        const float UpwardJitterMax = 1.2f;
+        const float UpwardStrengthFloor = 0.4f;       // soft splashes still pop a little...
+        const float UpwardStrengthGain = 0.6f;        // ...and strong ones scale the rest of the way
+        const float SpawnRingRadiusScale = 0.5f;      // droplets spawn inside half the impact radius
+        const float SpawnHeightAboveSurface = 0.01f;  // just above the waterline so they never spawn submerged
+        const float MinOutwardStrength = 0.4f;        // horizontal throw floor for soft splashes
+        const float SizeJitterMin = 0.6f;             // per-droplet size randomisation
+        const float SizeJitterMax = 1.3f;
+
+        // ---- drift particle-system defaults (ConfigureForDrift) ----
+        const float DriftGravityModifier = 0.4f;      // low gravity: droplets drift rather than dive
+        const float DriftStartLifetime = 0.5f;
+        const float DriftStartSize = 0.02f;
+        static readonly Color DriftStartColor = new Color(0.9f, 0.97f, 1.0f, 0.9f);
+        const int DriftMaxParticles = 2000;
+        const float DriftVelocityDampen = 0.2f;       // slows droplets so they settle onto the surface
+        const float DriftVelocityDrag = 1.5f;
+        const float DriftFadeStartFraction = 0.6f;    // alpha holds until this fraction of life, then fades
+
+        // ---- crown particle-system defaults (ConfigureCrown) ----
+        const float CrownStartLifetime = 0.5f;
+        const float CrownStartSize = 0.4f;
+        static readonly Color CrownStartColor = new Color(0.95f, 0.98f, 1.0f, 1.0f);
+        const int CrownMaxParticles = 64;
+        const float CrownFadeStartFraction = 0.7f;    // flipbook tail softening
+
         [Tooltip("The particle system to emit from. Auto-created if left empty.")]
         public ParticleSystem particles;
 
@@ -123,19 +154,24 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (particles == null) return;
             strength = Mathf.Clamp01(strength);
-            int count = Mathf.Clamp(Mathf.RoundToInt(strength * maxParticlesPerBurst), 3, maxParticlesPerBurst);
+            int count = Mathf.Clamp(Mathf.RoundToInt(strength * maxParticlesPerBurst),
+                                    MinBurstCount, maxParticlesPerBurst);
 
             var ep = new ParticleSystem.EmitParams();
             for (int i = 0; i < count; i++)
             {
                 Vector2 r = Random.insideUnitCircle;
-                Vector3 outward = new Vector3(r.x, 0f, r.y) * (radius * outwardSpread * Random.Range(0.4f, 1f));
-                float up = Random.Range(0.5f, 1.2f) * upwardBias * (0.4f + 0.6f * strength);
+                Vector3 outward = new Vector3(r.x, 0f, r.y)
+                                  * (radius * outwardSpread * Random.Range(OutwardJitterMin, OutwardJitterMax));
+                float up = Random.Range(UpwardJitterMin, UpwardJitterMax) * upwardBias
+                           * (UpwardStrengthFloor + UpwardStrengthGain * strength);
 
-                ep.position = surfacePos + new Vector3(r.x * radius * 0.5f, 0.01f, r.y * radius * 0.5f);
-                ep.velocity = outward * Mathf.Max(0.4f, strength) + new Vector3(0f, up, 0f);
+                ep.position = surfacePos + new Vector3(r.x * radius * SpawnRingRadiusScale,
+                                                       SpawnHeightAboveSurface,
+                                                       r.y * radius * SpawnRingRadiusScale);
+                ep.velocity = outward * Mathf.Max(MinOutwardStrength, strength) + new Vector3(0f, up, 0f);
                 ep.startLifetime = Random.Range(lifetime.x, lifetime.y);
-                ep.startSize = dropletSize * Random.Range(0.6f, 1.3f);
+                ep.startSize = dropletSize * Random.Range(SizeJitterMin, SizeJitterMax);
                 particles.Emit(ep, 1);
             }
 
@@ -162,42 +198,49 @@ namespace AbstractOcclusion.WebGpuWater
         /// scene builder and the auto-created fallback).</summary>
         public static void ConfigureForDrift(ParticleSystem ps)
         {
+            if (ps == null) throw new System.ArgumentNullException(nameof(ps));
             var main = ps.main;
             main.simulationSpace = ParticleSystemSimulationSpace.World; // droplets live in world space
-            main.gravityModifier = 0.4f;   // low -> they drift rather than dive
+            main.gravityModifier = DriftGravityModifier;
             main.startSpeed = 0f;          // velocity is set per-emit
-            main.startLifetime = 0.5f;
-            main.startSize = 0.02f;
-            main.startColor = new Color(0.9f, 0.97f, 1.0f, 0.9f);
-            main.maxParticles = 2000;
+            main.startLifetime = DriftStartLifetime;
+            main.startSize = DriftStartSize;
+            main.startColor = DriftStartColor;
+            main.maxParticles = DriftMaxParticles;
             main.playOnAwake = true;
 
             var emission = ps.emission; emission.enabled = false; // manual Emit only
             var shape = ps.shape; shape.enabled = false;
 
             // damping so droplets slow and settle onto the surface instead of plunging
-            var lim = ps.limitVelocityOverLifetime;
-            lim.enabled = true;
-            lim.dampen = 0.2f;
-            lim.drag = 1.5f;
-            lim.multiplyDragByParticleSize = false;
+            var velocityLimit = ps.limitVelocityOverLifetime;
+            velocityLimit.enabled = true;
+            velocityLimit.dampen = DriftVelocityDampen;
+            velocityLimit.drag = DriftVelocityDrag;
+            velocityLimit.multiplyDragByParticleSize = false;
 
             // fade out over the last part of life so settled droplets dissolve into the
             // surface instead of popping out of existence
-            var col = ps.colorOverLifetime;
-            col.enabled = true;
+            var colorOverLifetime = ps.colorOverLifetime;
+            colorOverLifetime.enabled = true;
+            colorOverLifetime.color = FadeTailGradient(DriftFadeStartFraction);
+
+            ps.Play();
+        }
+
+        // Opaque white until startFraction of the particle's life, then a linear fade to zero.
+        static Gradient FadeTailGradient(float startFraction)
+        {
             var fade = new Gradient();
             fade.SetKeys(
                 new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
                 new[]
                 {
                     new GradientAlphaKey(1f, 0f),
-                    new GradientAlphaKey(1f, 0.6f),
+                    new GradientAlphaKey(1f, startFraction),
                     new GradientAlphaKey(0f, 1f)
                 });
-            col.color = fade;
-
-            ps.Play();
+            return fade;
         }
 
         /// <summary>Configure a particle system to play a splash flipbook once over each
@@ -205,44 +248,36 @@ namespace AbstractOcclusion.WebGpuWater
         /// caller assigns the sprite-sheet material and matching tile counts.</summary>
         public static void ConfigureCrown(ParticleSystem ps, int tilesX, int tilesY)
         {
+            if (ps == null) throw new System.ArgumentNullException(nameof(ps));
             var main = ps.main;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
             main.gravityModifier = 0f;     // the crown stays put on the surface
             main.startSpeed = 0f;
-            main.startLifetime = 0.5f;
-            main.startSize = 0.4f;
-            main.startColor = new Color(0.95f, 0.98f, 1.0f, 1.0f);
-            main.maxParticles = 64;
+            main.startLifetime = CrownStartLifetime;
+            main.startSize = CrownStartSize;
+            main.startColor = CrownStartColor;
+            main.maxParticles = CrownMaxParticles;
             main.playOnAwake = true;
 
             var emission = ps.emission; emission.enabled = false; // manual Emit only
             var shape = ps.shape; shape.enabled = false;
 
             // play the whole sprite sheet exactly once across each particle's life
-            var tsa = ps.textureSheetAnimation;
-            tsa.enabled = true;
-            tsa.mode = ParticleSystemAnimationMode.Grid;
-            tsa.numTilesX = tilesX;
-            tsa.numTilesY = tilesY;
-            tsa.animation = ParticleSystemAnimationType.WholeSheet;
-            tsa.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
-            tsa.cycleCount = 1;
-            tsa.startFrame = 0f;
-            tsa.frameOverTime = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
+            var sheetAnimation = ps.textureSheetAnimation;
+            sheetAnimation.enabled = true;
+            sheetAnimation.mode = ParticleSystemAnimationMode.Grid;
+            sheetAnimation.numTilesX = tilesX;
+            sheetAnimation.numTilesY = tilesY;
+            sheetAnimation.animation = ParticleSystemAnimationType.WholeSheet;
+            sheetAnimation.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
+            sheetAnimation.cycleCount = 1;
+            sheetAnimation.startFrame = 0f;
+            sheetAnimation.frameOverTime = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
 
             // soften the tail so the splash dissolves instead of cutting off
-            var col = ps.colorOverLifetime;
-            col.enabled = true;
-            var fade = new Gradient();
-            fade.SetKeys(
-                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
-                new[]
-                {
-                    new GradientAlphaKey(1f, 0f),
-                    new GradientAlphaKey(1f, 0.7f),
-                    new GradientAlphaKey(0f, 1f)
-                });
-            col.color = fade;
+            var colorOverLifetime = ps.colorOverLifetime;
+            colorOverLifetime.enabled = true;
+            colorOverLifetime.color = FadeTailGradient(CrownFadeStartFraction);
 
             ps.Play();
         }

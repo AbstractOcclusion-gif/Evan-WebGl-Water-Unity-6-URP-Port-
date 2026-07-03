@@ -64,7 +64,8 @@ Shader "WebGLWater/PoolWall"
             half4 frag(v2f i) : SV_Target
             {
                 float3 color = GetWallColor(i.position);
-                float4 info = tex2D(_WaterTex, i.position.xz * 0.5 + 0.5);
+                // Manual bilinear: WebGPU point-samples float32 textures (blocky waterline cut).
+                float4 info = SampleWaterBilinear(i.position.xz * 0.5 + 0.5);
                 if (i.position.y < info.r) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
 
                 // receive real object shadows from the scene's directional light

@@ -25,15 +25,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EnsureGenFolder();
             if (!TryLoadShaders(out ShaderSet shaders)) return;
 
-            var grid = SaveAsset(BuildGrid(GridDetail), Gen + "/WaterGrid.asset");
-            var sky = SaveCubemap(BuildSky(SkyCubemapSize), Gen + "/SkyCubemap.cubemap");
-            var tiles = LoadOrBuildTiles(Gen + "/Tiles.png");
+            var grid = SaveAsset(BuildGrid(GridDetail), GridMeshPath);
+            var sky = SaveCubemap(BuildSky(SkyCubemapSize), SkyCubemapPath);
+            var tiles = LoadOrBuildTiles(TilesTexturePath);
             var (matAbove, matUnder, _) = CreateWaterMaterials(shaders.Water, shaders.Pool, buildAnalyticPool: false, Gen);
 
             var root = new GameObject(WaterVolumeObjectName);
             var volume = root.AddComponent<WaterVolume>();
-            var above = CreateRenderer("Water (above)", grid, matAbove, root.transform);
-            var under = CreateRenderer("Water (under)", grid, matUnder, root.transform);
+            var above = CreateRenderer(SurfaceAboveName, grid, matAbove, root.transform);
+            var under = CreateRenderer(SurfaceUnderName, grid, matUnder, root.transform);
 
             volume.simCompute = shaders.Compute;
             volume.causticsShader = shaders.Caustics;
@@ -41,7 +41,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.waterMesh = grid;
             volume.tiles = tiles;
             volume.sky = sky;
-            volume.quality = LoadOrCreateWaterQuality(Gen + "/WaterQuality.asset");
+            volume.quality = LoadOrCreateWaterQuality(WaterQualityAssetPath);
             volume.surfaceAbove = above.GetComponent<Renderer>();
             volume.surfaceUnder = under.GetComponent<Renderer>();
             volume.isPrimary = true;
@@ -150,36 +150,36 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             var bodyRoot = new GameObject("Water Body (secondary)");
 
-            var frameGO = new GameObject("Frame (WaterVolume)");
+            var frameGO = new GameObject(FrameObjectName);
             frameGO.transform.SetParent(bodyRoot.transform);
             float offsetX = 2f * primary.volumeExtent.x + 1f;
             frameGO.transform.position = primary.transform.position + new Vector3(offsetX, 0f, 0f);
 
-            var ctrl = frameGO.AddComponent<WaterVolume>();
-            ctrl.simCompute = primary.simCompute;
-            ctrl.causticsShader = primary.causticsShader;
-            ctrl.obstacleShader = primary.obstacleShader;
-            ctrl.waterMesh = primary.waterMesh;
-            ctrl.targetCamera = primary.targetCamera;
-            ctrl.sun = primary.sun;
-            ctrl.tiles = primary.tiles;
-            ctrl.sky = primary.sky;
-            ctrl.quality = primary.quality;
-            ctrl.volumeExtent = primary.volumeExtent;
-            ctrl.isPrimary = false; // only ONE body mirrors to globals
+            var body = frameGO.AddComponent<WaterVolume>();
+            body.simCompute = primary.simCompute;
+            body.causticsShader = primary.causticsShader;
+            body.obstacleShader = primary.obstacleShader;
+            body.waterMesh = primary.waterMesh;
+            body.targetCamera = primary.targetCamera;
+            body.sun = primary.sun;
+            body.tiles = primary.tiles;
+            body.sky = primary.sky;
+            body.quality = primary.quality;
+            body.volumeExtent = primary.volumeExtent;
+            body.isPrimary = false; // only ONE body mirrors to globals
 
-            var rendGO = new GameObject("Renderers");
+            var rendGO = new GameObject(RenderersObjectName);
             rendGO.transform.SetParent(bodyRoot.transform);
-            ctrl.surfaceAbove = CloneBodyRenderer(primary.surfaceAbove, rendGO.transform, "Water (above)");
-            ctrl.surfaceUnder = CloneBodyRenderer(primary.surfaceUnder, rendGO.transform, "Water (under)");
-            ctrl.poolRenderer = CloneBodyRenderer(primary.poolRenderer, rendGO.transform, "Analytic Pool");
-            ctrl.godRayRenderer = CloneBodyRenderer(primary.godRayRenderer, rendGO.transform, "God Rays");
+            body.surfaceAbove = CloneBodyRenderer(primary.surfaceAbove, rendGO.transform, SurfaceAboveName);
+            body.surfaceUnder = CloneBodyRenderer(primary.surfaceUnder, rendGO.transform, SurfaceUnderName);
+            body.poolRenderer = CloneBodyRenderer(primary.poolRenderer, rendGO.transform, AnalyticPoolName);
+            body.godRayRenderer = CloneBodyRenderer(primary.godRayRenderer, rendGO.transform, GodRaysObjectName);
 
             Selection.activeObject = bodyRoot;
-            EditorUtility.SetDirty(ctrl);
+            EditorUtility.SetDirty(body);
             UnityEditor.SceneManagement.EditorSceneManager.MarkAllScenesDirty();
             Debug.Log("[WebGL Water] Secondary water body added. Move its 'Frame' child to reposition; " +
-                      "edit that Water Controller's Volume Extent for a different size/shape.");
+                      "edit that WaterVolume's Volume Extent for a different size/shape.");
         }
 
         // Copy a body renderer (same mesh + material + world transform, so its object->world maps to
