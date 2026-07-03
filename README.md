@@ -90,8 +90,8 @@ arbitrary objects, real lights and real shadows.
 - **Depth-aware water colour** — per-channel downwelling darkening makes deeper water
   read darker and bluer, and caustics and god rays fade with depth; god rays also haze
   into the view-path fog. All opt-in, with independent per-effect controls.
-- **Real terrain lake beds** — bakes a Unity Terrain heightmap into a bed-depth map so
-  the surface shows a true shoreline gradient (clear in the shallows, dark over the
+- **Real terrain lake beds** *(experimental)* — bakes a Unity Terrain heightmap into a bed-depth
+  map so the surface shows a true shoreline gradient (clear in the shallows, dark over the
   drop-off) over uneven ground.
 - **Deep, rectangular & rotated bodies** — non-uniform volume extent places and sizes
   the water without touching object scales; wave/ripple height is correctly decoupled
@@ -228,12 +228,20 @@ WebGPU/mobile (where readback is unreliable, objects sink rather than float). Se
 
 ## Known limitations
 
-It's a **contained, heightfield** water — great for pools, ponds and lakes, not oceans. It
-simulates vertical displacement only (no breaking waves). The interactive ripple sim is a
-fixed-resolution grid over the body, so on a very **large** body the interactive ripples get
-coarse; the analytic wind waves stay fine everywhere, and a camera-following, world-anchored
-interactive-sim window for big water is planned (see
-[`docs/large-water-sim-window-plan.md`](docs/large-water-sim-window-plan.md)).
+**Scoped to small and mid-size water bodies.** It's a **contained, heightfield** water — built
+for pools, ponds and small-to-mid lakes. It simulates vertical displacement only (no breaking
+waves). The interactive ripple sim is a fixed-resolution grid over the body, so past roughly
+**~20 m** of extent the interactive ripples get coarse and the analytic wind waves stop reading
+realistically at that scale. **Large lakes and oceans are out of scope for this version and are
+planned as their own dedicated system** — a spectral/FFT ocean with its own wave foam, fog and
+Unity-terrain handling, likely on a separate branch (the camera-following sim window,
+[`docs/large-water-sim-window-plan.md`](docs/large-water-sim-window-plan.md), keeps mid-size water
+crisp but does not turn a pool solver into an ocean). Fully opaque, very large water also needs a
+different shading model than the transparent pool path.
+
+**Unity Terrain support is experimental.** The bed-depth bake approximates a shoreline depth
+gradient from a Terrain heightmap, but full terrain integration (splat/detail blending, robust
+handling of arbitrary terrains) is not there yet — treat it as a preview.
 
 **Reflections don't all scale.** Planar reflection is a second camera render *per body*, so it
 does not scale to many bodies — use SSR + a reflection probe for multi-body scenes and reserve

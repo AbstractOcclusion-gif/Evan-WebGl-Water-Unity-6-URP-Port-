@@ -61,7 +61,7 @@ multi-lake, underwater, open water, and more.
 ### Scale & performance
 - Multiple independent water bodies (lakes, pools, rivers) with automatic culling
   and a simulation budget
-- Camera-following sim window keeps big water crisp without giant grids
+- Camera-following sim window keeps mid-size water crisp without giant grids
 - Quality tiers (High/Medium/Low) with automatic hardware probe — one asset,
   every device
 - Frame-rate-independent simulation: identical wave speed at 30 and 144 fps
@@ -81,6 +81,11 @@ multi-lake, underwater, open water, and more.
   Shadows (god-ray shafts)
 - WebGL builds require WebGPU-capable browsers
 - Full C# + shader source included
+
+*Scope: built for pools, ponds and small-to-mid lakes. Large lakes and oceans are not the
+target of this version — a dedicated spectral/FFT ocean system (with its own waves, wave foam,
+fog and Unity-terrain handling) is planned separately. Unity Terrain integration (the shoreline
+bed-depth bake) is experimental — a preview, not full terrain support.*
 
 *From the maker of **Luminex** volumetric fog — integration between the two is on the
 roadmap.*

@@ -8,6 +8,18 @@ URP port and expansion of Evan Wallace's
 
 **Version 1.0.0** | Unity 2022.2+ | URP 12+ | Desktop · WebGPU/WebGL · Mobile
 
+## Scope
+
+Built for **small and mid-size** water bodies — pools, ponds, small-to-mid lakes. Past roughly
+**~20 m** of extent the interactive ripple grid gets coarse and the analytic wind waves stop
+looking realistic at that scale. **Large lakes and oceans are out of scope for this version** and
+are planned as a separate, dedicated system (spectral/FFT waves with their own wave foam, fog and
+Unity-terrain handling). Very large, fully opaque water also needs a different shading model than
+the transparent pool path.
+
+**Unity Terrain support is experimental** — the bed-depth bake approximates a shoreline gradient
+from a Terrain heightmap; full terrain integration is not there yet. Treat it as a preview.
+
 ## Requirements
 
 - **Unity 2022.2 or newer** (Unity 6 fully supported).

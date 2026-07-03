@@ -328,7 +328,7 @@ namespace AbstractOcclusion.WebGpuWater
                  "drives fog + depth darkening. Off = the depth colour is fully independent.")]
         [SerializeField] internal bool linkDepthToFog = false;
 
-        [Header("Bed depth (real terrain depth)")]
+        [Header("Bed depth (real terrain depth - EXPERIMENTAL)")]
         [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
                  "gradient). Off = flat-floor behaviour.")]
         [SerializeField] internal bool useBedDepth = false;
@@ -637,6 +637,10 @@ namespace AbstractOcclusion.WebGpuWater
             _foamTimeDebt = 0f;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
             ApplySimAnisotropy();       // round ripples on a rectangular pool (no-op for square/windowed)
+#if UNITY_EDITOR
+            WarnIfLargeBody();           // editor-only heads-up: large bodies are experimental in this POC
+            WarnIfExperimentalTerrain(); // editor-only heads-up: terrain bed-depth is experimental
+#endif
 
             if (obstacleShader != null)
                 _obstacle = new WaterObstacle(obstacleShader, _simRes,
@@ -1384,6 +1388,44 @@ namespace AbstractOcclusion.WebGpuWater
             var dropScale = new Vector2(ex / avg, ez / avg);
             _water.SetAnisotropy(waveWeight, dropScale);
         }
+
+#if UNITY_EDITOR
+        // One-time editor notice: large bodies (big lakes / oceans) are experimental in this
+        // proof-of-concept. The interactive ripple sim is a POOL solver on a fixed grid, so past
+        // ~20 m of extent the ripples go coarse and the analytic wind waves aren't ocean-scale.
+        // Editor-only so a shipped build never logs it. See the README "Scope" notes.
+        const float LargeBodyWarnExtent = 20f; // world half-extent (metres) where the pool solver frays
+        bool _largeBodyWarned;
+
+        void WarnIfLargeBody()
+        {
+            if (_largeBodyWarned) return;
+            Vector3 e = VolumeExtentSafe;
+            float maxExtent = Mathf.Max(e.x, e.z);
+            if (maxExtent <= LargeBodyWarnExtent) return;
+
+            _largeBodyWarned = true;
+            Debug.LogWarning(
+                $"[WebGpuWater] '{name}' is a large water body (extent ~{maxExtent:0} m). Large bodies " +
+                "(big lakes / oceans) are experimental in this version: the interactive ripple sim is a " +
+                "pool solver, so its ripples get coarse and the wind waves aren't ocean-scale. This asset " +
+                "targets small-to-mid bodies - see the README \"Scope\" notes.", this);
+        }
+
+        // One-time editor notice: Unity Terrain integration (the bed-depth bake) is experimental in
+        // this proof-of-concept - it approximates a shoreline depth gradient, not full terrain support.
+        bool _terrainWarned;
+
+        void WarnIfExperimentalTerrain()
+        {
+            if (_terrainWarned || !useBedDepth) return;
+            _terrainWarned = true;
+            Debug.LogWarning(
+                $"[WebGpuWater] '{name}' uses terrain bed-depth (Use Bed Depth). Unity Terrain integration " +
+                "is experimental in this version - the baked shoreline depth is a basic approximation, not " +
+                "full terrain support. See the README \"Scope\" notes.", this);
+        }
+#endif
 
         internal Vector3 PoolToWorld(Vector3 pool) => VolumeCenter + VolumeRotation * Vector3.Scale(pool, VolumeExtentSafe);
 
