@@ -86,6 +86,11 @@ namespace AbstractOcclusion.WebGpuWater
                  "for objects that don't carry a WaterMembership (which otherwise resolves each " +
                  "object's own containing body). Exactly one body should be primary.")]
         [SerializeField] private bool isPrimary = true;
+        [Tooltip("On Play, automatically add a WaterMembership to any scene renderer that uses a " +
+                 "water material (receiver / pool wall) and doesn't already have one, so a crate " +
+                 "or custom pool is lit and fogged by the body it actually sits in - no manual " +
+                 "wiring. Only the primary body runs the one-time scan.")]
+        [SerializeField] private bool autoLinkReceivers = true;
 
         /// <summary>Whether this body is the primary one (mirrors its data to global shader
         /// state and acts as the fallback for objects without a WaterMembership).</summary>
@@ -184,6 +189,60 @@ namespace AbstractOcclusion.WebGpuWater
         /// <see cref="BodyContaining"/>.</summary>
         internal static readonly List<WaterVolume> Bodies = new List<WaterVolume>();
 
+        // Set true after the primary body's one-time autolink scan (reset per play session).
+        static bool _receiversAutoLinked;
+
+        // Water shaders whose user renderers should be per-body. Named here so the autolink
+        // scan can spot a loose crate/pool that uses one and give it a WaterMembership.
+        static readonly string[] WaterMaterialShaderNames =
+        {
+            "WebGLWater/WaterReceiver",
+            "WebGLWater/PoolWall",
+        };
+
+        /// <summary>One-time play-mode scan (primary body only): give every scene renderer that
+        /// uses a water material - and isn't already driven by a body - a WaterMembership, so it
+        /// is lit and fogged by the body it sits in without manual wiring. Idempotent: skips
+        /// renderers that already carry the component or belong to a body's own surface/pool.</summary>
+        static void AutoLinkReceivers()
+        {
+            Renderer[] renderers = FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer r = renderers[i];
+                if (r.GetComponent<WaterMembership>() != null) continue;
+                if (IsBodyOwnedRenderer(r)) continue;   // driven by ApplyBodyBlock already
+                if (!UsesWaterMaterial(r)) continue;
+                r.gameObject.AddComponent<WaterMembership>();
+            }
+        }
+
+        // True when a renderer is one this-or-another body drives directly (surface/pool/god
+        // rays), so the autolink scan must not also attach a membership and double-write its MPB.
+        static bool IsBodyOwnedRenderer(Renderer r)
+        {
+            for (int i = 0; i < Bodies.Count; i++)
+            {
+                WaterVolume b = Bodies[i];
+                if (r == b.surfaceAbove || r == b.surfaceUnder || r == b.poolRenderer || r == b.godRayRenderer)
+                    return true;
+            }
+            return false;
+        }
+
+        static bool UsesWaterMaterial(Renderer r)
+        {
+            Material[] mats = r.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                Material m = mats[i];
+                if (m == null || m.shader == null) continue;
+                for (int s = 0; s < WaterMaterialShaderNames.Length; s++)
+                    if (m.shader.name == WaterMaterialShaderNames[s]) return true;
+            }
+            return false;
+        }
+
         // Fast Enter Play Mode (the Unity 6.6 default) skips the domain reload, so statics
         // survive between play sessions. Reset every piece of scene-lifetime static state
         // before each session; OnEnable/OnDisable rebuild it for the new one.
@@ -194,6 +253,7 @@ namespace AbstractOcclusion.WebGpuWater
             Bodies.Clear();
             _fallbackBody = null;
             _fallbackBodyFrame = -1;
+            _receiversAutoLinked = false;
 #if WEBGPUWATER_URP
             _pipelineOwner = null;
             _savedRenderScale = 0f;
@@ -216,9 +276,16 @@ namespace AbstractOcclusion.WebGpuWater
                  "(shaped wakes for large hulls; costlier and noisier).")]
         [SerializeField] internal ObjectInteraction objectInteraction = ObjectInteraction.MouseLikeDrops;
         [Tooltip("FootprintDelta mode: MASTER strength for how strongly submerged objects " +
-                 "displace the water (height units, comparable to Ripple Strength). " +
+                 "displace the water. Multiplies the per-frame submerged-thickness DELTA " +
+                 "(a much smaller quantity than a mouse drop's unit push), so it reads " +
+                 "higher than Ripple Strength for a comparable wake. " +
                  "Per-object weighting is WaterInteractable.displaceScale.")]
-        [Range(0f, 0.5f)] [SerializeField] internal float obstacleStrength = 0.08f;
+        [Range(0f, 1f)] [SerializeField] internal float obstacleStrength = 0.25f;
+        [Tooltip("FootprintDelta mode: soft dead-band (in submerged-thickness world units) " +
+                 "that swallows tiny footprint deltas from drift/rotation rasterization " +
+                 "noise. Raise to kill jitter; LOWER if a slowly moving float's wake is " +
+                 "invisible (its genuine per-frame delta is sub-millimetre).")]
+        [Range(0f, 0.005f)] [SerializeField] internal float obstacleDeadband = 0.0006f;
         [Tooltip("Temporal smoothing of the object footprint (0 = off). Low-pass filters " +
                  "the displacement a floater injects, so continuous bobbing/rotation emits " +
                  "a few long clean waves instead of a dense packet of tight rings. The " +
@@ -309,10 +376,12 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] private bool foam = false;
         [Tooltip("How fast turbulence creates foam.")]
         [Range(0f, 2f)] [SerializeField] internal float foamGenRate = 0.6f;
-        [Tooltip("Survival per step of thick, fresh foam. Lower = bursts collapse faster.")]
+        [Tooltip("SURVIVAL factor per step of thick, fresh foam (not a decay rate: HIGHER = foam lasts longer). Lower = bursts collapse faster.")]
         [Range(0.80f, 1f)] [SerializeField] internal float foamDecay = 0.96f;
-        [Tooltip("Survival per step of thin residual lace (should sit above the fresh decay, near 1). Higher = lace lingers longer after the burst.")]
+        [Tooltip("SURVIVAL factor per step of thin residual lace. Must sit above the fresh value (clamped at runtime if not). Higher = lace lingers longer after the burst.")]
         [Range(0.90f, 1f)] [SerializeField] internal float foamDecayResidual = 0.993f;
+        [Tooltip("Time scale of foam decay, frame-rate independent: 1 = authored speed, 2 = fades twice as fast, 0.5 = half. Tune fade SPEED here; the survival sliders above compound ~60x per second, so tiny changes there swing the look violently.")]
+        [Range(0.05f, 4f)] [SerializeField] internal float foamDecayRate = 1f;
         [Tooltip("Diffusion of foam toward neighbours.")]
         [Range(0f, 1f)] [SerializeField] internal float foamSpread = 0.2f;
         [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
@@ -322,6 +391,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Space]
         [SerializeField] internal Color foamColor = Color.white;
         [Range(0f, 2f)] [SerializeField] internal float foamStrength = 1f;
+        [Tooltip("Softness of the foam edges: mask level over which foam fades in from nothing. 0 = hard edges (no feathering).")]
+        [Range(0f, 0.5f)] [SerializeField] internal float foamFeather = 0.15f;
+        [Tooltip("How much the foam pattern erodes the dense core: 0 = solid white core, 1 = core breaks into pattern detail like the residual lace.")]
+        [Range(0f, 1f)] [SerializeField] internal float foamCoreCut = 0.5f;
         [Tooltip("Width of the foam band along the pool walls (pool units).")]
         [Range(0f, 0.5f)] [SerializeField] internal float foamBorderWidth = 0.08f;
         [Tooltip("Depth band for contact foam where objects meet the waterline.")]
@@ -444,7 +517,8 @@ namespace AbstractOcclusion.WebGpuWater
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
 
         bool _paused;
-        float _stepDebt; // fractional solver steps owed (frame-rate-independent stepping)
+        float _stepDebt;     // fractional solver steps owed (frame-rate-independent stepping)
+        float _foamTimeDebt; // reference steps elapsed since the last foam pass (foam runs once per frame, not per solver step)
 
         bool _windowed; // this body runs the camera-following windowed sim (decided at OnEnable)
 
@@ -486,6 +560,9 @@ namespace AbstractOcclusion.WebGpuWater
         // it the debt is dropped, so waves degrade to "slightly slower" instead of bursting.
         const float ReferenceFrameRate = 60f;
         const int MaxSolverStepsPerFrame = 8;
+        // Cap on the foam time debt (reference steps), mirroring MaxSolverStepsPerFrame:
+        // after a long pause foam catches up at most this much instead of vanishing in one pass.
+        const float MaxFoamTimeDebtSteps = 8f;
 
         // Numeric guards.
         const float MinVolumeExtent = 1e-5f;        // a zero extent would collapse the pool-space transforms
@@ -543,6 +620,7 @@ namespace AbstractOcclusion.WebGpuWater
             _simWindow = new WaterSimWindow(this);
             _lastEditorTick = 0d;
             _stepDebt = 0f;
+            _foamTimeDebt = 0f;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
 
             if (obstacleShader != null)
@@ -882,6 +960,15 @@ namespace AbstractOcclusion.WebGpuWater
             // (avoids two controllers fighting over one camera).
             if (Application.isPlaying && isPrimary) InputRouter.Update();
 
+            // One-time autolink, deferred to Update (not OnEnable) so every body has registered
+            // first - a body's own pool also uses a water material, and IsBodyOwnedRenderer can
+            // only skip it once that body is in the registry.
+            if (Application.isPlaying && isPrimary && autoLinkReceivers && !_receiversAutoLinked)
+            {
+                _receiversAutoLinked = true;
+                AutoLinkReceivers();
+            }
+
             // Decide (once per frame, for every body) which bodies draw and which run the
             // heavy GPU sim, then stop drawing this one if it is off-screen.
             WaterSimScheduler.EnsureSchedule();
@@ -1119,6 +1206,12 @@ namespace AbstractOcclusion.WebGpuWater
             if (seconds > MaxStepSeconds) return; // hitch/breakpoint guard, see the const
             if (seconds <= 0f) return;            // first edit-mode tick: no elapsed time yet
 
+            // Foam runs once per frame (not per solver step), so it tracks its own elapsed
+            // time in reference steps. Accumulated BEFORE the whole-step early-return below,
+            // or high-fps frames that owe no solver step would be lost and foam would decay
+            // slower the higher the frame rate.
+            _foamTimeDebt = Mathf.Min(_foamTimeDebt + seconds * ReferenceFrameRate, MaxFoamTimeDebtSteps);
+
             // Frame-rate-independent stepping: the explicit solver advances a fixed amount
             // per STEP, so stepping per rendered frame made wave speed scale with fps (a
             // 120 fps editor ran ripples 4x faster than a 30 fps build). Accumulate real
@@ -1151,7 +1244,8 @@ namespace AbstractOcclusion.WebGpuWater
                 // Compensate for extent.y so an object's displacement is a fixed world height
                 // regardless of pool depth (PoolToWorld scales surface height by extent.y).
                 _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr,
-                                     obstacleStrength / VolumeExtentSafe.y, obstacleFlipY);
+                                     obstacleStrength / VolumeExtentSafe.y, obstacleFlipY,
+                                     obstacleDeadband);
             }
 
             for (int i = 0; i < steps; i++)
@@ -1164,8 +1258,17 @@ namespace AbstractOcclusion.WebGpuWater
             _water.UpdateNormals();
 
             if (foam)
-                _water.StepFoam(foamGenRate, foamDecay, foamDecayResidual,
-                                foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect);
+            {
+                // Bi-exponential contract: thin residual lace must SURVIVE LONGER than
+                // thick fresh foam (residual >= fresh), or the blend inverts and foam
+                // pops off as hard-edged blobs. Scene data can't be trusted to keep the
+                // ordering (the sliders' ranges overlap), so enforce it here.
+                float residualSurvival = Mathf.Max(foamDecayResidual, foamDecay);
+                _water.StepFoam(foamGenRate, foamDecay, residualSurvival,
+                                foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect,
+                                _foamTimeDebt, foamDecayRate);
+                _foamTimeDebt = 0f;
+            }
         }
 
         // Render this body's own sim into its own caustic RT. The RT reaches the renderers

@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: SplashCrown
-  m_Shader: {fileID: 4800000, guid: 98c3583345bde02409df794d507ecc39, type: 3}
+  m_Name: FoamParticles
+  m_Shader: {fileID: 4800000, guid: 229762eed32c7224ca542d836fc9fc59, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -23,24 +23,16 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
-    - _AlphaTex:
+    - _ParticleTex:
         m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    - _MainTex:
-        m_Texture: {fileID: 2800000, guid: f2813fb10d7f34d48ac634ca6b02aa7d, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - PixelSnap: 0
-    - _EnableExternalAlpha: 0
-    - _ParticleOpacity: 0.26
-    - _SoftFadeDistance: 0.001
+    - _ParticleOpacity: 0.85
+    - _SoftFadeDistance: 0.05
+    - _VelocityStretch: 3
     m_Colors:
-    - _Color: {r: 0.95, g: 0.98, b: 1, a: 1}
-    - _Flip: {r: 1, g: 1, b: 1, a: 1}
-    - _RendererColor: {r: 1, g: 1, b: 1, a: 1}
     - _Tint: {r: 0.95, g: 0.97999996, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

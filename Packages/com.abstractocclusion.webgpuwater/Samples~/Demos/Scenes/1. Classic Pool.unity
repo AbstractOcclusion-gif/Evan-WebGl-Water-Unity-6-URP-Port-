@@ -751,7 +751,7 @@ GameObject:
   - component: {fileID: 1272759481}
   m_Layer: 0
   m_Name: Floating Prop
-  m_TagString: Untagged
+  m_TagString: WaterInteractable
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -798,7 +798,7 @@ MonoBehaviour:
   emitter: {fileID: 0}
   minImpactSpeed: 0.4
   maxImpactSpeed: 3
-  rippleStrength: 0.1
+  rippleStrength: 0.5
 --- !u!114 &1272759483
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -812,12 +812,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterBuoyancy
   buoyancy: 1.4
-  waterLinearDamping: 2
-  waterAngularDamping: 1
-  samplesPerAxis: 3
+  waterLinearDamping: 1
+  waterAngularDamping: 0.2
+  samplesPerAxis: 2
   floatRadiusScale: 0.5
   waveDriftStrength: 0.15
-  verticalSettleDamping: 1.5
+  verticalSettleDamping: 1
 --- !u!114 &1272759484
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -830,9 +830,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
-  displaceScale: 0.1
+  displaceScale: 0.2
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 2
 --- !u!54 &1272759485
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -841,8 +842,8 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1272759479}
   serializedVersion: 5
-  m_Mass: 0.4
-  m_LinearDamping: 0
+  m_Mass: 4
+  m_LinearDamping: 1
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
@@ -956,7 +957,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &1342015187
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1236,9 +1237,9 @@ ParticleSystem:
         m_NumAlphaKeys: 2
     startSize:
       serializedVersion: 2
-      minMaxState: 0
+      minMaxState: 3
       scalar: 0.02
-      minScalar: 1
+      minScalar: 0.1
       maxCurve:
         serializedVersion: 2
         m_Curve:
@@ -1289,7 +1290,7 @@ ParticleSystem:
         m_RotationOrder: 4
     startSizeY:
       serializedVersion: 2
-      minMaxState: 0
+      minMaxState: 3
       scalar: 1
       minScalar: 1
       maxCurve:
@@ -1342,7 +1343,7 @@ ParticleSystem:
         m_RotationOrder: 4
     startSizeZ:
       serializedVersion: 2
-      minMaxState: 0
+      minMaxState: 3
       scalar: 1
       minScalar: 1
       maxCurve:
@@ -5811,6 +5812,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1543604708}
   - component: {fileID: 1543604709}
+  - component: {fileID: 1543604710}
   m_Layer: 0
   m_Name: Frame (WaterVolume)
   m_TagString: Untagged
@@ -5864,21 +5866,22 @@ MonoBehaviour:
   poolRenderer: {fileID: 1005765276}
   godRayRenderer: {fileID: 321993030}
   isPrimary: 1
-  quality: {fileID: 11400000, guid: 9ac62b790871b16449e0b1f34b6796e8, type: 2}
+  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
   enableCulling: 0
   activationDistance: 100
   reflectionMode: 1
   environmentSource: 0
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
-  causticResolution: 256
+  causticResolution: 1024
   objectInteraction: 0
   obstacleStrength: 0.08
-  obstacleSmoothing: 0.65
+  obstacleDeadband: 0.0006
+  obstacleSmoothing: 0.6
   obstacleFlipY: 1
   waterFog: 1
   fogColor: {r: 0.037329994, g: 0.13441925, b: 0.18490559, a: 1}
   fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  fogDensity: 26.2
+  fogDensity: 7.2
   waterOpacity: 0
   depthDarken: 0
   depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -5901,26 +5904,58 @@ MonoBehaviour:
   waveDirectionSpread: 2
   waveNormalStrength: 1
   foam: 1
-  foamGenRate: 0.3
-  foamDecay: 0.978
-  foamDecayResidual: 0.993
-  foamSpread: 0.095
+  foamGenRate: 0.6
+  foamDecay: 0.953
+  foamDecayResidual: 0.9609
+  foamDecayRate: 0.34
+  foamSpread: 0.196
   foamAdvect: 3
-  foamFromSpeed: 6
+  foamFromSpeed: 20
   foamFromCurvature: 30
   foamColor: {r: 1, g: 1, b: 1, a: 1}
-  foamStrength: 0.82
+  foamStrength: 1.53
+  foamFeather: 0.083
+  foamCoreCut: 0.759
   foamBorderWidth: 0
   foamContactDepth: 0
-  waveSpeed: 0.5
+  waveSpeed: 1.5
   damping: 0.99
-  stepsPerFrame: 1
+  stepsPerFrame: 3
   rippleStrength: 0.025
   rippleRadius: 0.05
   seedRipplesOnStart: 1
   conserveVolume: 1
+  conserveMaxCorrection: 0.05
   orbit: {fileID: 961739754}
+  configureCamera: 0
   splashEmitter: {fileID: 1342015187}
+--- !u!114 &1543604710
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1543604707}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
+  volume: {fileID: 0}
+  particleCompute: {fileID: 0}
+  particleMaterial: {fileID: 0}
+  capacity: 4096
+  spawnThreshold: 0.25
+  spawnRate: 30
+  maxSpawnPerFrame: 256
+  sprayChance: 0.15
+  sprayLaunchSpeed: 0.6
+  lifeRange: {x: 1.5, y: 4}
+  sizeRange: {x: 0.02, y: 0.06}
+  gravity: 4
+  flowDrift: 0.25
+  windDriftSpeed: 0.02
+  drag: 2
 --- !u!1 &1806408810
 GameObject:
   m_ObjectHideFlags: 0

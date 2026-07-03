@@ -43,6 +43,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Horizontal travel (world units) that emits one wake drop - the same " +
                  "spacing rule the mouse drag uses.")]
         [Range(0.005f, 0.2f)] [SerializeField] internal float horizontalEmitSpacing = 0.02f;
+        [Tooltip("Multiplier on the mouse's Ripple Radius for THIS object's drops. 1 = " +
+                 "identical to a mouse drop; raise it so a bigger object throws a wider " +
+                 "ripple. Scales radius only - amplitude is displaceScale.")]
+        [Range(1f, 20f)] [SerializeField] internal float rippleRadiusScale = 1f;
 
         Vector3 _lastDropPosition;
         float _prevRelDepth;
@@ -95,9 +99,12 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
 
-            // Drop look: the object's own size sets the radius (never below the mouse's),
-            // the volume's mouse strength sets the amplitude, weighted per object.
-            float radius = Mathf.Max(body.RippleRadius, Mathf.Max(bounds.extents.x, bounds.extents.z));
+            // Drop look CLONED from the mouse: the mouse's amplitude and radius, so at
+            // rippleRadiusScale 1 a moving float ripples identically to a mouse drag. Size
+            // is an EXPLICIT per-object multiplier on the radius, never the object's raw
+            // bounds - inflating radius by bounds spread the fixed strength over a wide
+            // dome that read as a soft swell, nothing like the mouse's crisp ring.
+            float radius = body.RippleRadius * rippleRadiusScale;
             float strength = body.RippleStrength * displaceScale;
             int budget = MaxDropsPerFrame;
 

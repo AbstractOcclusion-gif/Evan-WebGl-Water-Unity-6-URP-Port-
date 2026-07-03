@@ -1,96 +1,56 @@
-# WebGL Water — Unity 6 / URP port
+# AbstractOcclusion.WebGpuWater
 
-A faithful port of Evan Wallace's [WebGL Water](https://madebyevan.com/webgl-water/)
-(MIT licensed) to Unity 6 + URP, using a compute-shader heightfield simulation and
-the original in-shader ray-tracing for reflection, refraction, caustics and shadows.
+GPU water for Unity URP: interactive ripple simulation, two-way buoyancy, surface +
+edge foam, GPU foam particles, caustics, god rays, and hybrid planar/SSR/sky
+reflections. Everything is authored from one window — the **Water Wizard**. A modern
+URP port and expansion of Evan Wallace's
+[WebGL Water](https://madebyevan.com/webgl-water/) (MIT).
 
-## What's here
+**Version 1.0.0** | Unity 2022.2+ | URP 12+ | Desktop · WebGPU/WebGL · Mobile
 
-```
-Assets/WebGLWater/
-  Shaders/
-    WaterSim.compute     GPU heightfield: Drop / Update / Normal / Sphere kernels
-    WaterCommon.hlsl     shared ray-trace helpers (intersect cube/sphere, wall & sphere shading)
-    Caustics.shader      projects the water grid onto the floor -> caustic + shadow texture
-    WaterSurface.shader   the water surface (reflection/refraction; above & under variants)
-    PoolWall.shader      analytic pool walls/floor with caustics (optional)
-    WaterSphere.shader   the draggable ball
-  Scripts/
-    WaterSimulation.cs   ping-pong RenderTextures + compute dispatch
-    WaterController.cs   sim loop, caustics, sphere physics, mouse input, orbit camera
-  Editor/
-    WaterSceneBuilder.cs one-click scene assembly
-```
+## Requirements
 
-## Build it
+- **Unity 2022.2 or newer** (Unity 6 fully supported).
+- **URP 12+** for rendering. The base runtime assembly compiles without URP installed;
+  URP-only code activates automatically via the `WEBGPUWATER_URP` define.
+- On your **active URP asset**, enable **Depth Texture**, **Opaque Texture** (SSR and
+  refraction), and **Transparent Receive Shadows** (god-ray shafts).
 
-1. Let Unity import the folder (no console errors expected).
-2. Menu **AbstractOcclusion ▸ WebGpuWater ▸ Water Wizard** opens the authoring window:
-   - Set **Size (extent)** and toggle **Analytic pool** — leave the pool off if you
-     already built your own, turn it on for a procedural pool that receives caustics.
-   - Toggle **God rays**, **Foam particles**, **Surface foam** (and the conditional
-     **Edge foam**), then drag any scene objects into the list to make them
-     **Floatable** or **Interactable**.
-   - Press **Create Water Surface**.
-3. Press **Play**.
+## Install
 
-The wizard creates the meshes, a procedural sky cubemap (and a fallback tile
-texture) under `Assets/WebGLWater/Generated/`, wires up the materials, the camera
-and a `Water Controller` object. Retrofit one-offs (prefab, foam particles, splash
-upgrade, secondary body) live under the window's **Utilities** section.
+Add the package via **Package Manager > Install from disk/tarball** (or your registry),
+then open **Package Manager > AbstractOcclusion.WebGpuWater > Samples** and import
+**Demo Scenes** to try it immediately.
 
-### Using your own pool & tiles
-The water surface ray-traces an **analytic** pool defined in normalized space:
-floor at `y = -1`, walls up to `y = 2/12`, spanning `x,z ∈ [-1, 1]`. For the
-reflections/refractions to match the pool you built, keep your pool at those
-dimensions and assign your pool **tile texture** to the `Water Controller ▸ Tiles`
-field. Everything is in plain Unity units (1 unit = the demo's unit).
+## Quick start
 
-## Tuning (Water Controller inspector)
-- **Wave Speed** (0.1–2.0) — propagation stiffness. Higher = faster, livelier
-  waves. The scheme is only stable up to ~2.0; past that it explodes.
-- **Damping** (0.90–1.0) — how fast ripples die out. 0.995 ≈ original; lower it
-  for choppier, shorter-lived waves, raise toward 1.0 for a glassy pool.
-- **Steps Per Frame** (1–8) — simulation sub-steps. More steps = faster effective
-  propagation and a more stable surface (at more GPU cost).
-- **Ripple Strength** — height a click/drag adds (deformation intensity).
-- **Ripple Radius** — size of a click/drag ripple.
+**Window > AbstractOcclusion > WebGpuWater > Water Wizard** builds a complete water
+body — sim volume, surface renderers, splash emitter, quality asset, and a tweakable
+material saved into your project. Configure size and features, press **Create Water
+Surface**, then **Play**. Drag on the surface for ripples; drop a Rigidbody with
+`WaterBuoyancy` in and it floats, rocks, and rides the wind waves.
 
-> Tip: "calm pond" = waveSpeed ~1.0, damping ~0.99, steps 2.  "energetic" =
-> waveSpeed 2.0, damping 0.997, steps 3–4, higher ripple strength.
+## Quality tiers & mobile preview
 
-## Controls (same as the original)
-- **Drag on the water** — make ripples.
-- **Drag the ball** — moves it and displaces water.
-- **Drag the background** — orbit the camera.
-- **Space** — pause/resume the simulation.
-- **G** — toggle sphere gravity/physics.
-- **L** (hold) — point the light along the camera view.
+The **WaterQuality** asset ships **High / Medium / Low** cost tiers (auto hardware
+probe) that scale sim and caustic resolution, render scale, god-ray steps, wave count,
+refraction, mesh detail, update intervals, and foam-particle caps.
 
-## Likely in-editor tweaks
-I couldn't run Unity while writing this, so a couple of things may need a quick
-adjustment once you see it:
+Because those resolutions and scales differ per tier, **the High and Low tiers usually
+need different visual-tuning values to look correct** — a look dialed in at High
+(ripple radius/strength, foam thresholds/feather, wave amplitude) can read too strong,
+too weak, or too coarse at Low. Tune per tier.
 
-- **Water invisible or inside-out:** flip the `_Cull` field on the
-  `WaterAbove`/`WaterUnder` materials (Front ↔ Back). The two are intentionally
-  opposite. Same for the `Pool`/`Sphere` materials if a surface looks inverted.
-- **Caustics mirrored:** Direct3D flips render-target Y vs OpenGL. If the caustic
-  pattern looks flipped in Z, negate the `z` term where `Caustics.shader` outputs
-  `o.pos` (use `-0.75 * (...)` on the second component), or flip the read in
-  `WaterCommon.hlsl`.
-- **Colors look washed out / too dark:** the original is tuned for gamma space.
-  If your project is in Linear color space it'll differ slightly; tweak
-  `ABOVEWATER_COLOR` / `UNDERWATER_COLOR` in `WaterCommon.hlsl` or switch
-  Player ▸ Color Space to taste.
-- **Input does nothing:** set Player ▸ **Active Input Handling** to *Both* (the
-  scripts support new Input System and the legacy manager).
-- **Light direction:** default is `normalize(2, 2, -1)`; change `lightDir` on the
-  controller.
+**To preview what will actually render on mobile, set the Quality asset to Force Low.**
+Mobile runs the Low tier, so forcing Low in the editor is the only way to see the
+resolution, render scale, and particle caps your device build will use.
 
-## How the simulation maps to the original
-- `water.js` → `WaterSim.compute` + `WaterSimulation.cs` (RGBAFloat texture holds
-  `height, velocity, normal.x, normal.z`; two textures ping-pong each step).
-- `renderer.js` helper functions → `WaterCommon.hlsl`; the water/sphere/cube
-  shaders → `WaterSurface`/`WaterSphere`/`PoolWall`; `updateCaustics` →
-  `Caustics.shader` drawn with `CommandBuffer.DrawMesh` into a 1024² RT.
-- `main.js` interaction/camera/physics → `WaterController.cs`.
+## Documentation
+
+Full docs — Getting Started, core components, scripting API, WebGPU/mobile notes, and
+troubleshooting — open from **Package Manager > this package > View documentation**
+(`Documentation~/index.md`).
+
+## Support & license
+
+abstractocclusion@outlook.com · SEE LICENSE IN [LICENSE.md](LICENSE.md)

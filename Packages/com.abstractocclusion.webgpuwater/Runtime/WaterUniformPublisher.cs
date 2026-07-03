@@ -40,6 +40,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
         static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
         static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
+        static readonly int ID_FoamFeather = Shader.PropertyToID("_FoamFeather");
+        static readonly int ID_FoamCoreCut = Shader.PropertyToID("_FoamCoreCut");
         static readonly int ID_WaveA = Shader.PropertyToID("_WaveA");
         static readonly int ID_WaveB = Shader.PropertyToID("_WaveB");
         static readonly int ID_WaveCount = Shader.PropertyToID("_WaveCount");
@@ -157,6 +159,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_FoamStrength, _body.foamStrength);
             sink.SetFloat(ID_FoamBorder, _body.foamBorderWidth);
             sink.SetFloat(ID_FoamContact, _body.foamContactDepth);
+            sink.SetFloat(ID_FoamFeather, _body.foamFeather);
+            sink.SetFloat(ID_FoamCoreCut, _body.foamCoreCut);
         }
 
         // A write target for the per-body uniforms: either a MaterialPropertyBlock or the

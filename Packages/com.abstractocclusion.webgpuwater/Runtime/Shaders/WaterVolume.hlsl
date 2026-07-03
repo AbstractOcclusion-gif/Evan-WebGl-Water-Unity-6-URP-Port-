@@ -50,6 +50,19 @@ float3 WorldToPool(float3 worldPos)
     return mul(transpose(VolumeRot()), worldPos - _VolumeCenter) / VolumeExtentSafe();
 }
 
+// Keeps the boundary walls (pool edge at |pool.xz| = 1) counted as inside so a pool's
+// own rim/wall fragments don't fall just outside the footprint and lose their shading.
+#define FOOTPRINT_EDGE_EPSILON 1e-3
+
+// 1 when a POOL-space point lies within the footprint box (|x|,|z| <= 1), else 0.
+// Underwater tint, caustics, downwelling and fog gate on this so water shading never bleeds
+// onto geometry beside the body (e.g. objects that merely sit below the water plane's Y but
+// outside its footprint). Y is intentionally ignored here; submersion is a separate test.
+float FootprintMaskPool(float3 poolPos)
+{
+    return (max(abs(poolPos.x), abs(poolPos.z)) <= 1.0 + FOOTPRINT_EDGE_EPSILON) ? 1.0 : 0.0;
+}
+
 // World direction -> pool direction (NOT normalised; valid for box intersection).
 float3 WorldDirToPool(float3 worldDir)
 {

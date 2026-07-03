@@ -50,11 +50,13 @@ static const float FOAM_FRESH_THRESHOLD = 0.5;
 static const float OBSTACLE_BLUR_W[5] = { 1.0, 4.0, 6.0, 4.0, 1.0 };
 static const float OBSTACLE_BLUR_SUM = 256.0;
 
-// Soft dead-band on the blurred footprint delta (pool units, pre-strength). Residual
+// Soft dead-band on the blurred footprint delta, in submerged-thickness WORLD units
+// (matches the obstacle map's R channel), set from C# (_ObstacleDeadband). Residual
 // sub-threshold flicker - rasterization noise as an object drifts or slowly rotates -
 // is swallowed instead of stamped into the pool as micro-ripples (which then shimmer
-// through the caustics and god rays). Genuine plunges lose only this same tiny bias.
-static const float OBSTACLE_DELTA_DEADBAND = 0.0015;
+// through the caustics and god rays). Set too high it also swallows a slow float's
+// genuine (sub-millimetre per-frame) footprint delta, making the wake invisible - hence
+// it is a tunable, not a buried constant.
 
 // Dst is a write-only storage texture; Src is sampled (read). Keeping the read
 // path as a sampled Texture2D instead of a read-write RWTexture2D is required by
@@ -98,14 +100,17 @@ Texture2D<float4> ObstaclePrev;
 Texture2D<float4> ObstacleCurr;
 float _ObstacleStrength;
 float _ObstacleFlipY;   // 1 = flip V to match the sim's coordinate convention
+float _ObstacleDeadband; // soft dead-band on the blurred delta (submerged-thickness world units)
 
 // Foam buffer (R = foam amount per column). Advected/diffused, generated from
 // surface turbulence, and decayed over time. Separate ping-pong from the height.
 Texture2D<float>    FoamSrc;   // RFloat (r32) - WebGPU-safe single channel
 RWTexture2D<float>  FoamDst;
 float _FoamGenRate;       // how fast turbulence creates foam
-float _FoamDecayFresh;    // per-step survival of thick, fresh foam (e.g. 0.95)
-float _FoamDecayResidual; // per-step survival of thin residual lace (e.g. 0.995)
+float _FoamDecayFresh;    // survival PER REFERENCE STEP (1/60 s) of thick, fresh foam (e.g. 0.95)
+float _FoamDecayResidual; // survival per reference step of thin residual lace (e.g. 0.995)
+float _FoamDtSteps;       // elapsed time in reference steps; gen and decay scale by this so foam is frame-rate independent
+float _FoamDecayRate;     // user time-scale on decay only (1 = authored speed, 2 = twice as fast)
 float _FoamSpread;        // 0..1 diffusion toward neighbour average
 float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
@@ -208,7 +213,7 @@ void Obstacle(uint3 id : SV_DispatchThreadID)
     // Soft knee: shift the delta toward zero by the dead-band instead of hard-gating,
     // so the response stays continuous (no pop when a real motion crosses the threshold).
     float blurred = delta / OBSTACLE_BLUR_SUM;
-    blurred = sign(blurred) * max(0.0, abs(blurred) - OBSTACLE_DELTA_DEADBAND);
+    blurred = sign(blurred) * max(0.0, abs(blurred) - _ObstacleDeadband);
     info.r += blurred * _ObstacleStrength;
 
     Dst[p] = info;
@@ -247,17 +252,25 @@ void Foam(uint3 id : SV_DispatchThreadID)
     float fU = FoamSrc.Load(int3(ClampC(p + int2( 0, 1)), 0));
     float foam = lerp(advected, (fL + fR + fD + fU) * 0.25, _FoamSpread);
 
-    // generation from turbulence: speed + negative curvature (crests / chop)
+    // generation from turbulence: speed + negative curvature (crests / chop).
+    // Kept LINEAR on purpose: a hermite knee here amplifies every response above
+    // 0.5 and floods the pool with foam. Edge softening is a render-side concern
+    // (_FoamFeather in WaterSurface.shader), not a sim-side one.
     float speed = abs(info.g);
     float lap = (Read(p + int2(-1,0)).r + Read(p + int2(1,0)).r +
                  Read(p + int2(0,-1)).r + Read(p + int2(0,1)).r) * 0.25 - info.r;
     float gen = saturate(speed * _FoamFromSpeed + max(0.0, -lap) * _FoamFromCurv);
-    foam += gen * _FoamGenRate;
+    foam += gen * (_FoamGenRate * _FoamDtSteps);
 
     // Bi-exponential decay: thick foam dies at the fresh rate, thin foam at the
     // (slower) residual rate, so bursts collapse fast but leave lingering lace.
+    // pow() rebases the per-reference-step survival onto the real elapsed time
+    // (frame-rate independence) and _FoamDecayRate rescales fade speed linearly -
+    // a far gentler tuning handle than the survival factors, which compound ~60x
+    // per second and swing the look violently within a few hundredths.
     float freshness = saturate(foam / FOAM_FRESH_THRESHOLD);
-    foam *= lerp(_FoamDecayResidual, _FoamDecayFresh, freshness);
+    float survival = lerp(_FoamDecayResidual, _FoamDecayFresh, freshness);
+    foam *= pow(survival, _FoamDtSteps * _FoamDecayRate);
     FoamDst[p] = saturate(foam);
 }
 

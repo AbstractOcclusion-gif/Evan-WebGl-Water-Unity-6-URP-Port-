@@ -35,11 +35,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ObstacleCurr = Shader.PropertyToID("ObstacleCurr");
         static readonly int ID_ObstacleStrength = Shader.PropertyToID("_ObstacleStrength");
         static readonly int ID_ObstacleFlipY = Shader.PropertyToID("_ObstacleFlipY");
+        static readonly int ID_ObstacleDeadband = Shader.PropertyToID("_ObstacleDeadband");
         static readonly int ID_WaveSpeed = Shader.PropertyToID("_WaveSpeed");
         static readonly int ID_Damping = Shader.PropertyToID("_Damping");
         static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
         static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
         static readonly int ID_FoamDecayResidual = Shader.PropertyToID("_FoamDecayResidual");
+        static readonly int ID_FoamDtSteps = Shader.PropertyToID("_FoamDtSteps");
+        static readonly int ID_FoamDecayRate = Shader.PropertyToID("_FoamDecayRate");
         static readonly int ID_FoamSpread = Shader.PropertyToID("_FoamSpread");
         static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
         static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
@@ -178,12 +181,13 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>Forces the surface by the change in submerged footprint
         /// (prev - curr), generalising the old sphere displacement to any meshes.</summary>
-        public void ApplyObstacle(Texture prev, Texture curr, float strength, bool flipY)
+        public void ApplyObstacle(Texture prev, Texture curr, float strength, bool flipY, float deadband)
         {
             _cs.SetTexture(_kObstacle, ID_ObstaclePrev, prev);
             _cs.SetTexture(_kObstacle, ID_ObstacleCurr, curr);
             _cs.SetFloat(ID_ObstacleStrength, strength);
             _cs.SetFloat(ID_ObstacleFlipY, flipY ? 1f : 0f);
+            _cs.SetFloat(ID_ObstacleDeadband, deadband);
             Dispatch(_kObstacle);
         }
 
@@ -198,16 +202,22 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>Advance the foam buffer: advect along the surface flow, diffuse,
         /// generate from turbulence, decay. Decay is bi-exponential: thick fresh foam
-        /// survives at <paramref name="decayFresh"/> per step, thin residual lace at the
-        /// (slower, closer to 1) <paramref name="decayResidual"/>. Reads the current
-        /// height/normal state; ping-pongs the foam textures.</summary>
+        /// survives at <paramref name="decayFresh"/> per reference step, thin residual
+        /// lace at the (slower, closer to 1) <paramref name="decayResidual"/>. Generation
+        /// and decay scale by <paramref name="dtSteps"/> (elapsed time in reference steps,
+        /// 1 = 1/60 s) so foam evolves frame-rate independently; <paramref name="decayRate"/>
+        /// is a user time-scale on decay only (1 = authored speed, 2 = twice as fast).
+        /// Reads the current height/normal state; ping-pongs the foam textures.</summary>
         public void StepFoam(float genRate, float decayFresh, float decayResidual,
-                             float spread, float fromSpeed, float fromCurv, float advect)
+                             float spread, float fromSpeed, float fromCurv, float advect,
+                             float dtSteps, float decayRate)
         {
             SetGridUniforms();
             _cs.SetFloat(ID_FoamGenRate, genRate);
             _cs.SetFloat(ID_FoamDecayFresh, decayFresh);
             _cs.SetFloat(ID_FoamDecayResidual, decayResidual);
+            _cs.SetFloat(ID_FoamDtSteps, dtSteps);
+            _cs.SetFloat(ID_FoamDecayRate, decayRate);
             _cs.SetFloat(ID_FoamSpread, spread);
             _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
             _cs.SetFloat(ID_FoamFromCurv, fromCurv);

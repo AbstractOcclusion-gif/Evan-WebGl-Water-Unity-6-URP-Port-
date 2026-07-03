@@ -27,12 +27,12 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _FoamNormalTex:
-        m_Texture: {fileID: 2800000, guid: e9776ac65ceeae940b6d06fb82795011, type: 3}
-        m_Scale: {x: 5, y: 5}
+        m_Texture: {fileID: 2800000, guid: ee1dd7813fc69804d90e757cc06be319, type: 3}
+        m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _FoamTex:
-        m_Texture: {fileID: 2800000, guid: 8e6527f16b679694f8633083c61ad127, type: 3}
-        m_Scale: {x: 5, y: 5}
+        m_Texture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
+        m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
@@ -52,6 +52,6 @@ Material:
     - _UseSSR: 1
     - _UseUrpProbe: 0
     m_Colors:
-    - _FoamTexFrames: {r: 1, g: 1, b: 0, a: 0}
+    - _FoamTexFrames: {r: 4, g: 4, b: 0, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

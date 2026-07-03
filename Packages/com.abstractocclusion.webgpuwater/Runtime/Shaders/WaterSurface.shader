@@ -97,6 +97,9 @@ Shader "WebGLWater/WaterSurface"
             #define FOAM_CORE_FULL      0.95
             #define FOAM_LACE_SOFTNESS  0.25
             #define FOAM_CORE_WHITEN    0.7
+            // Pattern-erosion band for the core cut: wider than the lace band so the
+            // core rim breaks into chunkier pieces than the thin filaments.
+            #define FOAM_CORE_CUT_SOFTNESS 0.35
             // Foam lighting: wrapped diffuse keeps the unlit side from going black
             // (foam scatters light), plus a flat ambient floor from the sky.
             #define FOAM_LIGHT_WRAP     0.4
@@ -136,6 +139,12 @@ Shader "WebGLWater/WaterSurface"
             float  _FoamNormalStrength;
             float4 _FoamColor;
             float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
+            // Mask level over which the foam layer fades in from nothing (edge
+            // feathering). 0 disables: foam clips hard at the mask epsilon.
+            float _FoamFeather;
+            // How much the pattern erodes the dense core's alpha (0 = solid core,
+            // 1 = fully pattern-cut like the lace).
+            float _FoamCoreCut;
 
             // Manual bilinear sample of the float foam mask - same fix as SampleWaterBilinear:
             // WebGPU cannot hardware-filter float32, so a plain tex2D point-samples there and
@@ -277,7 +286,21 @@ Shader "WebGLWater/WaterSurface"
 
                 core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
                 lace = saturate((pattern.r - (1.0 - mask)) / FOAM_LACE_SOFTNESS);
-                alpha = max(core, lace * mask);
+
+                // Core cut (user-tunable): erode the dense core's alpha by the pattern -
+                // same trick as the lace, wider band - so the core rim breaks into
+                // texture detail instead of ending in a smooth mask blob. 0 = solid core
+                // (original look). Even at full cut the lace term below keeps the
+                // saturated centre near-solid; only the darkest pattern texels open up.
+                float coreCut = saturate((pattern.r - (1.0 - mask)) / FOAM_CORE_CUT_SOFTNESS);
+                float coreAlpha = core * lerp(1.0, coreCut, _FoamCoreCut);
+
+                // Edge feathering (user-tunable): fade the layer out smoothly as the
+                // mask thins instead of clipping at the mask epsilon. 0 = off (hard
+                // edge, the original look). Core is untouched by construction: it only
+                // exists above FOAM_CORE_START, well over any sensible feather band.
+                float feather = (_FoamFeather > 0.0) ? smoothstep(0.0, _FoamFeather, mask) : 1.0;
+                alpha = max(coreAlpha, lace * mask) * feather;
 
                 tilt = lerp(SampleFoamNormalTilt(fuv - flowDir * phaseA),
                             SampleFoamNormalTilt(fuv - flowDir * phaseB), seesaw)

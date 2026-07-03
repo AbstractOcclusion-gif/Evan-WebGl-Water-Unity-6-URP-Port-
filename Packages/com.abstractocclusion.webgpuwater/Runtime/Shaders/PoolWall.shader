@@ -64,9 +64,20 @@ Shader "WebGLWater/PoolWall"
             half4 frag(v2f i) : SV_Target
             {
                 float3 color = GetWallColor(i.position);
+                // Water shading gates on the footprint so geometry beyond the pool box (a wall
+                // that overhangs, or an oversized user mesh) doesn't pick up the underwater
+                // look. i.position is already pool space, so test it directly.
+                float inside = FootprintMaskPool(i.position);
+
                 // Manual bilinear: WebGPU point-samples float32 textures (blocky waterline cut).
                 float4 info = SampleWaterBilinear(i.position.xz * 0.5 + 0.5);
-                if (i.position.y < info.r) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
+                if (inside > 0.5 && i.position.y < info.r) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
+
+                // One surface height: the sampled sim surface converted to world Y, the same
+                // height the waterline cut above uses. Downwelling and fog measure depth
+                // against it rather than the flat _VolumeCenter.y plane (so a pool at any Y
+                // is handled by its own volume frame, and cut/fog never disagree).
+                float surfaceY = PoolToWorld(float3(i.position.x, info.r, i.position.z)).y;
 
                 // receive real object shadows from the scene's directional light
                 float4 shadowCoord = TransformWorldToShadowCoord(i.worldPos);
@@ -75,10 +86,11 @@ Shader "WebGLWater/PoolWall"
 
                 // Downwelling darkening: deeper walls/floor read darker and hue-shifted.
                 // This also fades the floor caustics baked into the wall colour with depth.
-                color *= DownwellingAttenuation(i.worldPos.y, _VolumeCenter.y);
+                if (inside > 0.5) color *= DownwellingAttenuation(i.worldPos.y, surfaceY);
 
-                // depth absorption (shared fog; pool surface sits at the volume centre's Y)
-                color = ApplyWaterFog(color, WaterPathLength(i.worldPos, _WorldSpaceCameraPos, _VolumeCenter.y));
+                // depth absorption (shared fog; measured against the sampled surface Y)
+                if (inside > 0.5)
+                    color = ApplyWaterFog(color, WaterPathLength(i.worldPos, _WorldSpaceCameraPos, surfaceY));
 
                 return half4(color, 1);
             }

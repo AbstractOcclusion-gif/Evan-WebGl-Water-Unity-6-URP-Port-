@@ -9,10 +9,14 @@ Shader "WebGLWater/WaterReceiver"
     {
         _BaseColor ("Base Color", Color) = (0.82, 0.52, 0.30, 1)
         _BaseMap ("Base Map", 2D) = "white" {}
+        [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
+        _BumpScale ("Normal Scale", Float) = 1
+        _Smoothness ("Smoothness", Range(0,1)) = 0.5
+        _SpecColor ("Specular Color", Color) = (0.2, 0.2, 0.2, 1)
         _CausticStrength ("Caustic Strength", Range(0,8)) = 4
         _CausticTint ("Caustic Tint", Color) = (1,1,1,1)
         _UnderwaterTint ("Underwater Tint", Color) = (0.4, 0.9, 1.0, 1)
-        _WaterLevel ("Water Level Y", Float) = 0
+        [Toggle] _ShadeInnerFacesOnly ("Shade Inner Faces Only (solid pool)", Float) = 0
     }
     SubShader
     {
@@ -39,6 +43,7 @@ Shader "WebGLWater/WaterReceiver"
             #include "WaterShared.hlsl" // IOR_*, ProjectCausticUV
 
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
+            TEXTURE2D(_BumpMap);    SAMPLER(sampler_BumpMap);
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
             float3 _LightDir;   // global "toward the light", driven from the Unity sun
@@ -63,21 +68,27 @@ Shader "WebGLWater/WaterReceiver"
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseColor;
                 float4 _BaseMap_ST;
+                float4 _SpecColor;
                 float4 _CausticTint;
                 float4 _UnderwaterTint;
+                float _BumpScale;
+                float _Smoothness;
                 float _CausticStrength;
-                float _WaterLevel;
+                float _ShadeInnerFacesOnly;
             CBUFFER_END
 
-            struct Attributes { float4 positionOS:POSITION; float3 normalOS:NORMAL; float2 uv:TEXCOORD0; };
-            struct Varyings   { float4 positionCS:SV_POSITION; float3 positionWS:TEXCOORD0; float3 normalWS:TEXCOORD1; float2 uv:TEXCOORD2; };
+            struct Attributes { float4 positionOS:POSITION; float3 normalOS:NORMAL; float4 tangentOS:TANGENT; float2 uv:TEXCOORD0; };
+            // tangentWS.w carries the bitangent sign (handedness) so the frag can rebuild B.
+            struct Varyings   { float4 positionCS:SV_POSITION; float3 positionWS:TEXCOORD0; float3 normalWS:TEXCOORD1; float2 uv:TEXCOORD2; float4 tangentWS:TEXCOORD3; };
 
             Varyings vert(Attributes IN)
             {
                 Varyings o;
                 o.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 o.positionCS = TransformWorldToHClip(o.positionWS);
-                o.normalWS   = TransformObjectToWorldNormal(IN.normalOS);
+                VertexNormalInputs normalInput = GetVertexNormalInputs(IN.normalOS, IN.tangentOS);
+                o.normalWS   = normalInput.normalWS;
+                o.tangentWS  = float4(normalInput.tangentWS, IN.tangentOS.w * GetOddNegativeScale());
                 o.uv         = TRANSFORM_TEX(IN.uv, _BaseMap);
                 return o;
             }
@@ -85,7 +96,16 @@ Shader "WebGLWater/WaterReceiver"
             half4 frag(Varyings IN) : SV_Target
             {
                 float3 albedo = _BaseColor.rgb * SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv).rgb;
-                float3 N = normalize(IN.normalWS);
+
+                // Tangent-space normal map -> world normal. Rebuild the bitangent from the
+                // interpolated normal/tangent and the stored handedness sign so mirrored UVs
+                // light correctly. Default "bump" map is flat, so untouched materials are
+                // identical to before.
+                float3 vertexNormalWS = normalize(IN.normalWS);
+                float3 tangentWS = normalize(IN.tangentWS.xyz);
+                float3 bitangentWS = normalize(cross(vertexNormalWS, tangentWS) * IN.tangentWS.w);
+                float3 normalTS = UnpackNormalScale(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv), _BumpScale);
+                float3 N = normalize(normalTS.x * tangentWS + normalTS.y * bitangentWS + normalTS.z * vertexNormalWS);
 
                 float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
@@ -93,30 +113,67 @@ Shader "WebGLWater/WaterReceiver"
                 float3 ambient = SampleSH(N);
                 float3 color = albedo * (ambient + mainLight.color * (ndl * mainLight.shadowAttenuation));
 
-                // Less light reaches the object the deeper it sits (downwelling), applied to
-                // the ambient + direct term. No-op above the surface / when the feature is off.
-                color *= DownwellingAttenuation(IN.positionWS.y, _VolumeCenter.y);
+                // Smoothness-driven specular from the main light (Blinn-Phong with URP's
+                // smoothness -> exponent remap). Gated by ndl so a back-lit face never
+                // speculates; folded in before downwelling so depth dims it too.
+                float3 viewDirWS = normalize(GetWorldSpaceViewDir(IN.positionWS));
+                float3 halfDirWS = normalize(mainLight.direction + viewDirWS);
+                float specExponent = exp2(_Smoothness * 10.0 + 1.0);
+                float specTerm = pow(saturate(dot(N, halfDirWS)), specExponent) * ndl * mainLight.shadowAttenuation;
+                color += mainLight.color * _SpecColor.rgb * specTerm;
 
-                // projected caustics where this point is below the (rippled) surface.
-                // Sim height + caustics live in pool space, so convert the world point.
+                // Everything below is water-column shading. Gate it on the body's footprint
+                // so an object that merely sits below the water plane's Y but OUTSIDE the body
+                // (e.g. beside the pool) receives no darkening, caustics, tint or fog. The
+                // surface cut itself still uses the real sampled sim (ripple) height.
                 float3 poolPos = WorldToPool(IN.positionWS);
+                float inside = FootprintMaskPool(poolPos);
+
+                // Wet-face gate for a SOLID / arbitrary mesh used as a pool (Shade Inner Faces
+                // Only): a face is in contact with water only if its GEOMETRIC normal points
+                // inward (toward the pool's vertical axis, so inner walls) or up (the floor);
+                // an outer wall or underside of a tank stays dry. Uses the vertex normal, not
+                // the normal-mapped N. Off (default) = every submerged face shades, which is
+                // what the wizard's open-top single-sided pool and ordinary props want.
+                float wetFace = 1.0;
+                if (_ShadeInnerFacesOnly > 0.5)
+                {
+                    float towardAxis = dot(vertexNormalWS.xz, _VolumeCenter.xz - IN.positionWS.xz);
+                    wetFace = (towardAxis > 0.0 || vertexNormalWS.y > 0.0) ? 1.0 : 0.0;
+                }
+                float waterMask = inside * wetFace;
+
+                // One surface height for this fragment: the sampled sim (ripple) surface - the
+                // same one the underwater cut uses - converted to world Y. Downwelling, caustic
+                // fade and fog all measure depth against THIS, instead of the old flat
+                // _VolumeCenter.y plane, so the shader never disagrees with itself about where
+                // the surface sits (and a body at any Y is handled by its own volume frame).
                 float2 wuv = poolPos.xz * 0.5 + 0.5;
                 float simH = SampleWaterHeightBilinear(wuv);
-                if (poolPos.y < simH)
+                float surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
+
+                // Less light reaches the object the deeper it sits (downwelling), applied to
+                // the ambient + direct term. No-op above the surface / when the feature is off.
+                if (waterMask > 0.5) color *= DownwellingAttenuation(IN.positionWS.y, surfaceY);
+
+                // projected caustics where this point is below the surface AND inside footprint.
+                if (waterMask > 0.5 && poolPos.y < simH)
                 {
                     float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
                     float2 cuv = ProjectCausticUV(poolPos, refractedLight);
                     float caustic = SAMPLE_TEXTURE2D(_CausticTex, sampler_CausticTex, cuv).r;
                     // Caustics soften with depth at their own independent rate (world depth,
                     // consistent with the downwelling term above).
-                    float causticFade = DepthFadeScalar(IN.positionWS.y, _VolumeCenter.y, _CausticDepthFade);
+                    float causticFade = DepthFadeScalar(IN.positionWS.y, surfaceY, _CausticDepthFade);
                     color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * mainLight.shadowAttenuation);
                     color *= _UnderwaterTint.rgb;
                 }
 
-                // depth absorption (shared with the surface so fog is consistent); the
-                // surface sits at the volume centre's world Y.
-                color = ApplyWaterFog(color, WaterPathLength(IN.positionWS, _WorldSpaceCameraPos, _VolumeCenter.y));
+                // depth absorption (shared with the surface so fog is consistent); measured
+                // against the sampled surface Y above. Gated on the footprint so fog never
+                // tints geometry outside the body.
+                if (waterMask > 0.5)
+                    color = ApplyWaterFog(color, WaterPathLength(IN.positionWS, _WorldSpaceCameraPos, surfaceY));
                 return half4(color, 1);
             }
             ENDHLSL

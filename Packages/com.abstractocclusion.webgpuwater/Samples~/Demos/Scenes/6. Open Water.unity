@@ -10709,8 +10709,8 @@ MonoBehaviour:
   waveNormalStrength: 1
   foam: 1
   foamGenRate: 0.65
-  foamDecay: 0.99
-  foamDecayResidual: 0.9451
+  foamDecay: 0.9451
+  foamDecayResidual: 0.99
   foamSpread: 0.086
   foamAdvect: 3
   foamFromSpeed: 6
