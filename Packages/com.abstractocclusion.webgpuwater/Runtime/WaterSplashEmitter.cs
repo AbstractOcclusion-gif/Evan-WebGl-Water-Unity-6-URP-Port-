@@ -57,36 +57,36 @@ namespace AbstractOcclusion.WebGpuWater
         const float CrownFadeStartFraction = 0.7f;    // flipbook tail softening
 
         [Tooltip("The particle system to emit from. Auto-created if left empty.")]
-        public ParticleSystem particles;
+        [SerializeField] internal ParticleSystem particles;
 
         [Header("Burst shaping")]
-        [Range(1, 128)] public int maxParticlesPerBurst = 48;
+        [Range(1, 128)] [SerializeField] internal int maxParticlesPerBurst = 48;
         [Tooltip("Upward launch bias. Higher = droplets jump more before settling.")]
-        [Range(0f, 3f)] public float upwardBias = 1.0f;
+        [Range(0f, 3f)] [SerializeField] internal float upwardBias = 1.0f;
         [Tooltip("Outward (horizontal) spread, so droplets drift across the surface.")]
-        [Range(0f, 3f)] public float outwardSpread = 1.3f;
-        public float dropletSize = 0.02f;
-        public Vector2 lifetime = new Vector2(0.6f, 1.3f);
+        [Range(0f, 3f)] [SerializeField] internal float outwardSpread = 1.3f;
+        [SerializeField] internal float dropletSize = 0.02f;
+        [SerializeField] internal Vector2 lifetime = new Vector2(0.6f, 1.3f);
 
         [Header("Surface drift")]
         [Tooltip("Seconds a droplet stays ballistic (the 'pop') before it can stick.")]
-        [Range(0f, 0.5f)] public float popDuration = 0.12f;
+        [Range(0f, 0.5f)] [SerializeField] internal float popDuration = 0.12f;
         [Tooltip("How strongly settled droplets are carried by the local wave flow.")]
-        [Range(0f, 6f)] public float driftStrength = 2.0f;
+        [Range(0f, 6f)] [SerializeField] internal float driftStrength = 2.0f;
         [Tooltip("Horizontal damping on drifting droplets (higher = settles sooner).")]
-        [Range(0f, 8f)] public float driftDamping = 2.5f;
+        [Range(0f, 8f)] [SerializeField] internal float driftDamping = 2.5f;
         [Tooltip("How high above the surface a settled droplet rides (world units).")]
-        public float surfaceRideHeight = 0.004f;
+        [SerializeField] internal float surfaceRideHeight = 0.004f;
 
         [Header("Crown splash (flipbook)")]
         [Tooltip("Optional flipbook splash emitted at the impact point. Leave empty to disable.")]
-        public ParticleSystem crownParticles;
+        [SerializeField] internal ParticleSystem crownParticles;
         [Tooltip("Minimum impact strength (0..1) that spawns a crown splash.")]
-        [Range(0f, 1f)] public float crownMinStrength = 0.25f;
+        [Range(0f, 1f)] [SerializeField] internal float crownMinStrength = 0.25f;
         [Tooltip("Base world size of the crown splash, scaled up by impact strength.")]
-        public float crownBaseSize = 0.4f;
+        [SerializeField] internal float crownBaseSize = 0.4f;
         [Tooltip("Crown lifetime; the flipbook plays through once over this time.")]
-        public float crownLifetime = 0.5f;
+        [SerializeField] internal float crownLifetime = 0.5f;
 
         ParticleSystem.Particle[] _buffer;
 

@@ -16,7 +16,7 @@ Shader "WebGLWater/ObstacleDepth"
     }
     SubShader
     {
-        Tags { "RenderType" = "Opaque" }
+        Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" }
         Pass
         {
             Cull Off

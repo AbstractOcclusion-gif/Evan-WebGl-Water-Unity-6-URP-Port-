@@ -69,45 +69,45 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Header("Wiring")]
         [Tooltip("The water body this system spawns from. Defaults to the WaterVolume on this GameObject.")]
-        public WaterVolume volume;
+        [SerializeField] internal WaterVolume volume;
         [Tooltip("WaterFoamParticles.compute (spawn/update kernels). Required.")]
-        public ComputeShader particleCompute;
+        [SerializeField] internal ComputeShader particleCompute;
         [Tooltip("Material using the WebGLWater/FoamParticles shader. Required; the Water " +
-                 "Wizard (AbstractOcclusion > WebGpuWater > Water Wizard) saves a tweakable " +
+                 "Wizard (Window > AbstractOcclusion > WebGpuWater > Water Wizard) saves a tweakable " +
                  "material asset and assigns it here.")]
-        public Material particleMaterial;
+        [SerializeField] internal Material particleMaterial;
 
         [Header("Pool")]
         [Tooltip("Particle pool size; rounded up to a power of two. Oldest particles are recycled when full.")]
-        [Range(256, 65536)] public int capacity = 4096;
+        [Range(256, 65536)] [SerializeField] internal int capacity = 4096;
 
         [Header("Spawning")]
         [Tooltip("Foam level (0..1) below which no particles spawn.")]
-        [Range(0f, 1f)] public float spawnThreshold = 0.25f;
+        [Range(0f, 1f)] [SerializeField] internal float spawnThreshold = 0.25f;
         [Tooltip("Expected spawns per second per square world-unit of fully-foamed water.")]
-        [Range(0f, 200f)] public float spawnRate = 30f;
+        [Range(0f, 200f)] [SerializeField] internal float spawnRate = 30f;
         [Tooltip("Hard cap on spawns per frame (spreads bursts over a few frames).")]
-        [Range(16, 4096)] public int maxSpawnPerFrame = 256;
+        [Range(16, 4096)] [SerializeField] internal int maxSpawnPerFrame = 256;
         [Tooltip("Fraction of spawns thrown as ballistic spray instead of floating foam.")]
-        [Range(0f, 1f)] public float sprayChance = 0.15f;
+        [Range(0f, 1f)] [SerializeField] internal float sprayChance = 0.15f;
         [Tooltip("Initial upward speed of spray droplets (world units/sec).")]
-        [Range(0f, 5f)] public float sprayLaunchSpeed = 0.6f;
+        [Range(0f, 5f)] [SerializeField] internal float sprayLaunchSpeed = 0.6f;
 
         [Header("Look & life")]
         [Tooltip("Particle lifetime range (seconds).")]
-        public Vector2 lifeRange = new Vector2(1.5f, 4f);
+        [SerializeField] internal Vector2 lifeRange = new Vector2(1.5f, 4f);
         [Tooltip("Particle world half-size range.")]
-        public Vector2 sizeRange = new Vector2(0.02f, 0.06f);
+        [SerializeField] internal Vector2 sizeRange = new Vector2(0.02f, 0.06f);
 
         [Header("Motion")]
         [Tooltip("Gravity on spray droplets (world units/sec^2).")]
-        [Range(0f, 20f)] public float gravity = 4f;
+        [Range(0f, 20f)] [SerializeField] internal float gravity = 4f;
         [Tooltip("Drift speed along the surface flow, per unit of surface slope (world units/sec).")]
-        [Range(0f, 2f)] public float flowDrift = 0.25f;
+        [Range(0f, 2f)] [SerializeField] internal float flowDrift = 0.25f;
         [Tooltip("Constant downwind drift of floating foam (world units/sec).")]
-        [Range(0f, 0.5f)] public float windDriftSpeed = 0.02f;
+        [Range(0f, 0.5f)] [SerializeField] internal float windDriftSpeed = 0.02f;
         [Tooltip("How quickly foam velocity relaxes to the driven flow (1/sec).")]
-        [Range(0f, 10f)] public float drag = 2f;
+        [Range(0f, 10f)] [SerializeField] internal float drag = 2f;
 
         GraphicsBuffer _particles;
         GraphicsBuffer _counters;
@@ -135,7 +135,7 @@ namespace AbstractOcclusion.WebGpuWater
                 // No silent runtime material: it would be invisible in the project and
                 // impossible to tweak. The Water Wizard creates and wires the asset.
                 Debug.LogError("WaterFoamParticles: particleMaterial not assigned. Use " +
-                               "'AbstractOcclusion > WebGpuWater > Water Wizard' to generate " +
+                               "'Window > AbstractOcclusion > WebGpuWater > Water Wizard' to generate " +
                                "and wire a material asset.", this);
                 enabled = false;
                 return;
@@ -183,7 +183,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (volume == null || !volume.isActiveAndEnabled) return;
             if (volume.SimStateTexture == null || volume.FoamMaskTexture == null) return;
-            if (!volume.foam) return; // foam sim off -> nothing to spawn from
+            if (!volume.Foam) return; // foam sim off -> nothing to spawn from
 
             if (volume.IsSimulating && Time.deltaTime > 0f)
                 DispatchSimulation(Time.deltaTime);

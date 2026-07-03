@@ -42,7 +42,7 @@ Shader "WebGLWater/WaterSurface"
         // scene WITHOUT the water (required for SSR and screen-space refraction).
         // Still ZWrite On + Blend Off: we compute the final opaque-looking colour
         // ourselves (incl. refraction), we just need to draw after the opaque copy.
-        Tags { "RenderType" = "Transparent" "Queue" = "Transparent" }
+        Tags { "RenderType" = "Transparent" "Queue" = "Transparent" "RenderPipeline" = "UniversalPipeline" }
         Pass
         {
             Cull [_Cull]

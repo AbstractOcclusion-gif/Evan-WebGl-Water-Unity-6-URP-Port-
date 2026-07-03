@@ -125,14 +125,14 @@ namespace AbstractOcclusion.WebGpuWater
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
-            sink.SetFloat(ID_WaveCount, _body.windWaves ? _body.WaveBank.Count : 0f);
+            sink.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             sink.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
             sink.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
 
             sink.SetColor(ID_FogColor, _body.fogColor);
             sink.SetColor(ID_FogExt, _body.fogExtinction);
             sink.SetFloat(ID_FogDensity, _body.fogDensity);
-            sink.SetFloat(ID_FogEnabled, _body.waterFog ? 1f : 0f);
+            sink.SetFloat(ID_FogEnabled, _body.WaterFog ? 1f : 0f);
             sink.SetFloat(ID_WaterOpacity, _body.waterOpacity);
 
             sink.SetColor(ID_DepthExt, _body.EffectiveDepthExtinction);
@@ -153,7 +153,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_ShorelineStrength, _body.shorelineStrength);
 
             sink.SetColor(ID_FoamColor, _body.foamColor);
-            sink.SetFloat(ID_FoamEnabled, _body.foam ? 1f : 0f);
+            sink.SetFloat(ID_FoamEnabled, _body.Foam ? 1f : 0f);
             sink.SetFloat(ID_FoamStrength, _body.foamStrength);
             sink.SetFloat(ID_FoamBorder, _body.foamBorderWidth);
             sink.SetFloat(ID_FoamContact, _body.foamContactDepth);

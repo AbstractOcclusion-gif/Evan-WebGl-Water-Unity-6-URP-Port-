@@ -12,23 +12,23 @@ namespace AbstractOcclusion.WebGpuWater
     public class OrbitCamera : MonoBehaviour
     {
         [Tooltip("World-space point the camera orbits around.")]
-        public Vector3 pivot = new Vector3(0f, -0.5f, 0f);
-        public Transform pivotTarget;          // optional; overrides 'pivot' if set
+        [SerializeField] internal Vector3 pivot = new Vector3(0f, -0.5f, 0f);
+        [SerializeField] internal Transform pivotTarget; // optional; overrides 'pivot' if set
 
         [Header("Orbit")]
-        public float yaw = -200.5f;            // degrees around Y
-        public float pitch = -25f;             // degrees around X
-        public float minPitch = -89.99f;
-        public float maxPitch = 89.99f;
-        public float rotateSpeed = 0.5f;
+        [SerializeField] internal float yaw = -200.5f;   // degrees around Y
+        [SerializeField] internal float pitch = -25f;    // degrees around X
+        [SerializeField] internal float minPitch = -89.99f;
+        [SerializeField] internal float maxPitch = 89.99f;
+        [SerializeField] internal float rotateSpeed = 0.5f;
 
         [Header("Zoom")]
-        public float distance = 4f;
-        public float minDistance = 1.5f;
-        public float maxDistance = 12f;
-        public float zoomSpeed = 0.5f;
+        [SerializeField] internal float distance = 4f;
+        [SerializeField] internal float minDistance = 1.5f;
+        [SerializeField] internal float maxDistance = 12f;
+        [SerializeField] internal float zoomSpeed = 0.5f;
         [Tooltip("Two-finger pinch zoom sensitivity (per pixel of finger spread).")]
-        public float pinchZoomSpeed = 0.02f;
+        [SerializeField] internal float pinchZoomSpeed = 0.02f;
 
         // OS mouse-wheel delta per notch; dividing by it normalizes a notch to ~1 zoom step.
         const float MouseWheelNotchDelta = 120f;

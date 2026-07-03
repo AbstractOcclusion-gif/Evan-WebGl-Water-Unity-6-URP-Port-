@@ -35,3 +35,8 @@ sysinfo.txt
 *.aab
 *.unitypackage
 crashlytics-build.properties
+
+# Asset Store publishing tools (local dev tool, embedded package - not for the repo)
+/[Pp]ackages/com.unity.asset-store-tools/
+/[Aa]ssets/AssetStoreTools/
+/[Aa]ssets/AssetStoreTools.meta

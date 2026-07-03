@@ -41,10 +41,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.waterMesh = grid;
             volume.tiles = tiles;
             volume.sky = sky;
-            volume.quality = LoadOrCreateWaterQuality(WaterQualityAssetPath);
+            volume.Quality = LoadOrCreateWaterQuality(WaterQualityAssetPath);
             volume.surfaceAbove = above.GetComponent<Renderer>();
             volume.surfaceUnder = under.GetComponent<Renderer>();
-            volume.isPrimary = true;
+            volume.IsPrimary = true;
 
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, WaterVolumePrefabPath);
             Object.DestroyImmediate(root); // remove the temp build object; only the prefab persists
@@ -146,7 +146,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 Debug.LogError("[WebGL Water] Build the scene first (no WaterVolume found).");
                 return;
             }
-            WaterVolume primary = System.Array.Find(all, c => c.isPrimary) ?? all[0];
+            WaterVolume primary = System.Array.Find(all, c => c.IsPrimary) ?? all[0];
 
             var bodyRoot = new GameObject("Water Body (secondary)");
 
@@ -164,9 +164,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             body.sun = primary.sun;
             body.tiles = primary.tiles;
             body.sky = primary.sky;
-            body.quality = primary.quality;
+            body.Quality = primary.Quality;
             body.volumeExtent = primary.volumeExtent;
-            body.isPrimary = false; // only ONE body mirrors to globals
+            body.IsPrimary = false; // only ONE body mirrors to globals
 
             var rendGO = new GameObject(RenderersObjectName);
             rendGO.transform.SetParent(bodyRoot.transform);

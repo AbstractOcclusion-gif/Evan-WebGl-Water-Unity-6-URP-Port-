@@ -1,6 +1,6 @@
 // WebGL Water - the single authoring entry point.
 //
-// Menu: AbstractOcclusion > WebGpuWater > Water Wizard
+// Menu: Window > AbstractOcclusion > WebGpuWater > Water Wizard
 //
 // One window that builds a configured water surface (size, analytic pool, god rays, foam
 // particles, surface foam + conditional edge foam) and optionally turns scene objects into
@@ -17,7 +17,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal sealed class WaterWizardWindow : EditorWindow
     {
-        const string MenuPath = "AbstractOcclusion/WebGpuWater/Water Wizard";
+        const string MenuPath = "Window/AbstractOcclusion/WebGpuWater/Water Wizard";
         const string WindowTitle = "Water Wizard";
 
         const string RootObjectName = "WebGL Water";
@@ -173,7 +173,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         void ApplyFoamSettings(WaterVolume body)
         {
-            body.foam = _surfaceFoam;
+            body.Foam = _surfaceFoam;
             body.foamBorderWidth = (_surfaceFoam && _edgeFoam) ? EdgeFoamBorderWidth : 0f;
             EditorUtility.SetDirty(body);
         }

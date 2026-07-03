@@ -101,88 +101,88 @@ namespace AbstractOcclusion.WebGpuWater
         public Selection selection = Selection.Auto;
 
         [Header("Tier: High (desktop)")]
-        [Min(ThreadGroupSize)] public int highSimResolution = DefaultSimResolution;
-        [Min(MinCausticResolution)] public int highCausticResolution = DefaultCausticResolution;
-        [Range(8, 64)] public int highGodRaySteps = DefaultGodRaySteps;
-        public bool highGodRays = true;
+        [Min(ThreadGroupSize)] [SerializeField] int highSimResolution = DefaultSimResolution;
+        [Min(MinCausticResolution)] [SerializeField] int highCausticResolution = DefaultCausticResolution;
+        [Range(8, 64)] [SerializeField] int highGodRaySteps = DefaultGodRaySteps;
+        [SerializeField] bool highGodRays = true;
         [Tooltip("Allow SSR/Planar reflections. When off, every body caps to SkyOnly.")]
-        public bool highRichReflections = true;
+        [SerializeField] bool highRichReflections = true;
         [Tooltip("Cap on the wind-wave sinusoid count (vertex + pixel + buoyancy cost each).")]
-        [Range(1, WaterWaveBank.MaxWaves)] public int highMaxWaveCount = DefaultMaxWaveCount;
+        [Range(1, WaterWaveBank.MaxWaves)] [SerializeField] int highMaxWaveCount = DefaultMaxWaveCount;
         [Tooltip("Surface peaked-refine loop steps; each is a dependent texture fetch per pixel.")]
-        [Range(0, MaxRefineSteps)] public int highRefineSteps = DefaultRefineSteps;
+        [Range(0, MaxRefineSteps)] [SerializeField] int highRefineSteps = DefaultRefineSteps;
         [Tooltip("URP render scale applied by the primary body (restored on exit). <1 renders " +
                  "fewer pixels and upscales - the single biggest lever on fillrate-bound devices.")]
-        [Range(MinRenderScale, 1f)] public float highRenderScale = DefaultRenderScale;
+        [Range(MinRenderScale, 1f)] [SerializeField] float highRenderScale = DefaultRenderScale;
         [Tooltip("Allow screen-space (real) refraction. Off also releases the URP opaque-texture " +
                  "copy, a large bandwidth cost on mobile tile GPUs; water falls back to the analytic pool look.")]
-        public bool highRealRefraction = true;
+        [SerializeField] bool highRealRefraction = true;
         [Tooltip("Rebuild the surface grid at this vertex detail per side (0 = keep the authored " +
                  "mesh). The vertex shader runs 4 fetches + the wave sines per vertex.")]
-        [Range(0, MaxMeshDetail)] public int highMeshDetail = DefaultMeshDetail;
+        [Range(0, MaxMeshDetail)] [SerializeField] int highMeshDetail = DefaultMeshDetail;
         [Tooltip("Render caustics every Nth simulated frame (2 = half rate, rarely visible).")]
-        [Range(1, MaxUpdateInterval)] public int highCausticInterval = DefaultCausticInterval;
+        [Range(1, MaxUpdateInterval)] [SerializeField] int highCausticInterval = DefaultCausticInterval;
         [Tooltip("Request the buoyancy height readback every Nth frame (readback bandwidth).")]
-        [Range(1, MaxUpdateInterval)] public int highReadbackInterval = DefaultReadbackInterval;
+        [Range(1, MaxUpdateInterval)] [SerializeField] int highReadbackInterval = DefaultReadbackInterval;
         [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
-        public int highMaxFoamParticles = DefaultMaxFoamParticles;
+        [SerializeField] int highMaxFoamParticles = DefaultMaxFoamParticles;
 
         [Header("Tier: Medium")]
-        [Min(ThreadGroupSize)] public int mediumSimResolution = 128;
-        [Min(MinCausticResolution)] public int mediumCausticResolution = 512;
-        [Range(8, 64)] public int mediumGodRaySteps = 16;
-        public bool mediumGodRays = true;
+        [Min(ThreadGroupSize)] [SerializeField] int mediumSimResolution = 128;
+        [Min(MinCausticResolution)] [SerializeField] int mediumCausticResolution = 512;
+        [Range(8, 64)] [SerializeField] int mediumGodRaySteps = 16;
+        [SerializeField] bool mediumGodRays = true;
         [Tooltip("Allow SSR/Planar reflections. When off, every body caps to SkyOnly.")]
-        public bool mediumRichReflections = true;
+        [SerializeField] bool mediumRichReflections = true;
         [Tooltip("Cap on the wind-wave sinusoid count (vertex + pixel + buoyancy cost each).")]
-        [Range(1, WaterWaveBank.MaxWaves)] public int mediumMaxWaveCount = 12;
+        [Range(1, WaterWaveBank.MaxWaves)] [SerializeField] int mediumMaxWaveCount = 12;
         [Tooltip("Surface peaked-refine loop steps; each is a dependent texture fetch per pixel.")]
-        [Range(0, MaxRefineSteps)] public int mediumRefineSteps = 3;
+        [Range(0, MaxRefineSteps)] [SerializeField] int mediumRefineSteps = 3;
         [Tooltip("URP render scale applied by the primary body (restored on exit).")]
-        [Range(MinRenderScale, 1f)] public float mediumRenderScale = DefaultRenderScale;
+        [Range(MinRenderScale, 1f)] [SerializeField] float mediumRenderScale = DefaultRenderScale;
         [Tooltip("Allow screen-space (real) refraction (needs the URP opaque-texture copy).")]
-        public bool mediumRealRefraction = true;
+        [SerializeField] bool mediumRealRefraction = true;
         [Tooltip("Rebuild the surface grid at this vertex detail per side (0 = authored mesh).")]
-        [Range(0, MaxMeshDetail)] public int mediumMeshDetail = DefaultMeshDetail;
+        [Range(0, MaxMeshDetail)] [SerializeField] int mediumMeshDetail = DefaultMeshDetail;
         [Tooltip("Render caustics every Nth simulated frame.")]
-        [Range(1, MaxUpdateInterval)] public int mediumCausticInterval = DefaultCausticInterval;
+        [Range(1, MaxUpdateInterval)] [SerializeField] int mediumCausticInterval = DefaultCausticInterval;
         [Tooltip("Request the buoyancy height readback every Nth frame.")]
-        [Range(1, MaxUpdateInterval)] public int mediumReadbackInterval = DefaultReadbackInterval;
+        [Range(1, MaxUpdateInterval)] [SerializeField] int mediumReadbackInterval = DefaultReadbackInterval;
         [Tooltip("Cap on the GPU foam-particle pool.")]
-        public int mediumMaxFoamParticles = DefaultMaxFoamParticles;
+        [SerializeField] int mediumMaxFoamParticles = DefaultMaxFoamParticles;
 
         [Header("Tier: Low (WebGPU / mobile)")]
-        [Min(ThreadGroupSize)] public int lowSimResolution = 128;
-        [Min(MinCausticResolution)] public int lowCausticResolution = 256;
+        [Min(ThreadGroupSize)] [SerializeField] int lowSimResolution = 128;
+        [Min(MinCausticResolution)] [SerializeField] int lowCausticResolution = 256;
         // God rays kept ON at reduced steps: cheap enough for the WebGPU/mobile budget, and the
         // scene reads wrong without them (they were the main thing lost on the constrained build).
-        [Range(0, 64)] public int lowGodRaySteps = 12;
-        public bool lowGodRays = true;
+        [Range(0, 64)] [SerializeField] int lowGodRaySteps = 12;
+        [SerializeField] bool lowGodRays = true;
         // SSR (needs Depth+Opaque) and Planar (a full extra scene render) are the priciest paths;
         // off by default on the constrained budget so Low falls back to the cheap procedural sky.
         [Tooltip("Allow SSR/Planar reflections. When off, every body caps to SkyOnly.")]
-        public bool lowRichReflections = false;
+        [SerializeField] bool lowRichReflections = false;
         [Tooltip("Cap on the wind-wave sinusoid count (vertex + pixel + buoyancy cost each).")]
-        [Range(1, WaterWaveBank.MaxWaves)] public int lowMaxWaveCount = 8;
+        [Range(1, WaterWaveBank.MaxWaves)] [SerializeField] int lowMaxWaveCount = 8;
         [Tooltip("Surface peaked-refine loop steps; each is a dependent texture fetch per pixel.")]
-        [Range(0, MaxRefineSteps)] public int lowRefineSteps = 2;
+        [Range(0, MaxRefineSteps)] [SerializeField] int lowRefineSteps = 2;
         [Tooltip("URP render scale applied by the primary body (restored on exit). The single " +
                  "biggest lever on fillrate-bound tablets; the water's soft look upscales well.")]
-        [Range(MinRenderScale, 1f)] public float lowRenderScale = 0.7f;
+        [Range(MinRenderScale, 1f)] [SerializeField] float lowRenderScale = 0.7f;
         // Real refraction needs URP's opaque-texture copy - a large bandwidth cost on mobile
         // tile GPUs. Off: the copy is released and the surface uses the analytic pool look.
         [Tooltip("Allow screen-space (real) refraction (needs the URP opaque-texture copy).")]
-        public bool lowRealRefraction = false;
+        [SerializeField] bool lowRealRefraction = false;
         [Tooltip("Rebuild the surface grid at this vertex detail per side (0 = authored mesh). " +
                  "100 = quarter the vertex cost of the authored 200 grid; a 128 sim doesn't need more.")]
-        [Range(0, MaxMeshDetail)] public int lowMeshDetail = 100;
+        [Range(0, MaxMeshDetail)] [SerializeField] int lowMeshDetail = 100;
         [Tooltip("Render caustics every Nth simulated frame (2 = half rate, rarely visible).")]
-        [Range(1, MaxUpdateInterval)] public int lowCausticInterval = 2;
+        [Range(1, MaxUpdateInterval)] [SerializeField] int lowCausticInterval = 2;
         [Tooltip("Request the buoyancy height readback every Nth frame (readback bandwidth; " +
                  "buoyancy already tolerates async latency).")]
-        [Range(1, MaxUpdateInterval)] public int lowReadbackInterval = 3;
+        [Range(1, MaxUpdateInterval)] [SerializeField] int lowReadbackInterval = 3;
         [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
-        public int lowMaxFoamParticles = 1024;
+        [SerializeField] int lowMaxFoamParticles = 1024;
 
         /// <summary>The active tier: the forced one, or the capability-probed one under Auto.</summary>
         public Tier Resolve()

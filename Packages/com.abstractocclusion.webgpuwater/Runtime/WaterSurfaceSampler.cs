@@ -91,7 +91,7 @@ namespace AbstractOcclusion.WebGpuWater
             }
             // else: analytic fallback -> rest surface (0) + wind waves added below
 
-            if (_body.windWaves)
+            if (_body.WindWaves)
             {
                 surfaceH += _body.WaveBank.SampleHeight(poolX, poolZ, _body.WaveTime, _body.WaveMetersPerUnit);
                 poolFlow -= _body.WaveBank.SampleSlope(poolX, poolZ, _body.WaveTime, _body.WaveMetersPerUnit)

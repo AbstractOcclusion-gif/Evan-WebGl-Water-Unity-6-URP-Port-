@@ -6,7 +6,7 @@
 // live in the scene/game view without entering Play - and a freshly opened scene shows its
 // OWN water instead of stale shader globals from the previous one.
 //
-// Toggleable (AbstractOcclusion > WebGpuWater > Live Water Preview) and persisted in
+// Toggleable (Window > AbstractOcclusion > WebGpuWater > Live Water Preview) and persisted in
 // EditorPrefs: continuous player-loop pumping costs GPU while the editor idles, and the
 // experimental WebGPU editor device has a history of hangs - the kill switch is one click.
 using UnityEditor;
@@ -17,7 +17,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     [InitializeOnLoad]
     internal static class WaterEditorPreviewDriver
     {
-        const string MenuPath = "AbstractOcclusion/WebGpuWater/Live Water Preview";
+        const string MenuPath = "Window/AbstractOcclusion/WebGpuWater/Live Water Preview";
         const string EditorPrefsKey = "AbstractOcclusion.WebGpuWater.LivePreview";
 
         // The ripple sim advances a fixed amount per player-loop tick (stepsPerFrame), so the

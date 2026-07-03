@@ -216,9 +216,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.splashEmitter = ctx.Splash;
             volume.tiles = ctx.Tiles;
             volume.sky = ctx.Sky;
-            volume.quality = ctx.Quality;
+            volume.Quality = ctx.Quality;
             volume.volumeExtent = extent;
-            volume.isPrimary = primary;
+            volume.IsPrimary = primary;
 
             // Renderers at world identity; the shader places the pool-space meshes via the frame.
             var rendGO = new GameObject(RenderersObjectName);

@@ -20,7 +20,7 @@ Shader "WebGLWater/FoamParticles"
     }
     SubShader
     {
-        Tags { "RenderType" = "Transparent" "Queue" = "Transparent+10" }
+        Tags { "RenderType" = "Transparent" "Queue" = "Transparent+10" "RenderPipeline" = "UniversalPipeline" }
         Pass
         {
             Blend SrcAlpha OneMinusSrcAlpha

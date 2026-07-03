@@ -36,16 +36,16 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         [Header("Assigned by the scene builder")]
-        public ComputeShader simCompute;
-        public Shader causticsShader;
-        public Shader obstacleShader;     // WebGLWater/ObstacleDepth - footprint of interactable objects
-        public Mesh waterMesh;            // XY grid plane, [-1,1], shared with the water surface renderers
-        public Camera targetCamera;
-        public Light sun;                 // directional light: drives water, caustics AND real shadows
+        [SerializeField] internal ComputeShader simCompute;
+        [SerializeField] internal Shader causticsShader;
+        [SerializeField] internal Shader obstacleShader; // WebGLWater/ObstacleDepth - footprint of interactable objects
+        [SerializeField] internal Mesh waterMesh;        // XY grid plane, [-1,1], shared with the water surface renderers
+        [SerializeField] internal Camera targetCamera;
+        [SerializeField] internal Light sun;             // directional light: drives water, caustics AND real shadows
 
         [Header("Look / surfaces")]
-        public Texture tiles;             // pool tile albedo sampled by the water reflection (assign your own)
-        public Cubemap sky;               // sky cubemap for above-water reflections
+        [SerializeField] internal Texture tiles;         // pool tile albedo sampled by the water reflection (assign your own)
+        [SerializeField] internal Cubemap sky;           // sky cubemap for above-water reflections
 
         [Header("Water volume (placement)")]
         [Tooltip("World half-size per pool unit, per axis: X = half width, Y = depth to the " +
@@ -53,52 +53,64 @@ namespace AbstractOcclusion.WebGpuWater
                  "rectangular footprint; Y alone makes it shallow/deep. The volume's POSITION " +
                  "and ROTATION come from THIS GameObject's Transform - move/rotate it to place " +
                  "the water. Set extent/transform before Play; the obstacle map reads them at startup.")]
-        public Vector3 volumeExtent = Vector3.one;
+        [SerializeField] internal Vector3 volumeExtent = Vector3.one;
 
         [Header("Large-water sim window")]
         [Tooltip("For bodies larger than the threshold, run the interactive ripple sim in a " +
                  "camera-following window instead of stretching the fixed grid over the whole " +
                  "surface (which goes blocky on big water). Analytic wind waves still cover " +
                  "everywhere. Small/medium bodies are unaffected.")]
-        public bool enableLargeBodyWindow = true;
+        [SerializeField] internal bool enableLargeBodyWindow = true;
         [Tooltip("World half-extent (max of X,Z) above which windowing turns on. At/below this " +
                  "the whole-body sim is used exactly as before.")]
-        [Min(1f)] public float largeBodyThreshold = DefaultLargeBodyThreshold;
+        [Min(1f)] [SerializeField] internal float largeBodyThreshold = DefaultLargeBodyThreshold;
         [Tooltip("Half-size (world metres) of the camera-following sim window. Ripple detail is " +
                  "2 * this / sim resolution per texel.")]
-        [Min(1f)] public float simWindowMeters = DefaultSimWindowMeters;
+        [Min(1f)] [SerializeField] internal float simWindowMeters = DefaultSimWindowMeters;
         [Tooltip("On: keep the window fully inside the body footprint (enclosed bodies). Off: the " +
                  "window may overhang the edge and water beyond the footprint is analytic-only " +
                  "(natural for open water).")]
-        public bool clampWindowToShore = false;
+        [SerializeField] internal bool clampWindowToShore = false;
         [Tooltip("Width, in sim texels, over which the window's ripple fades to analytic-only at " +
                  "its border so there is no seam.")]
-        [Range(0f, 32f)] public float simWindowEdgeFadeTexels = 8f;
+        [Range(0f, 32f)] [SerializeField] internal float simWindowEdgeFadeTexels = 8f;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
                  "pool, god rays). Assigned by the scene builder.")]
-        public Renderer surfaceAbove;
-        public Renderer surfaceUnder;
-        public Renderer poolRenderer;
-        public Renderer godRayRenderer;
+        [SerializeField] internal Renderer surfaceAbove;
+        [SerializeField] internal Renderer surfaceUnder;
+        [SerializeField] internal Renderer poolRenderer;
+        [SerializeField] internal Renderer godRayRenderer;
         [Tooltip("The primary body also mirrors its data to global shader state, the fallback " +
                  "for objects that don't carry a WaterMembership (which otherwise resolves each " +
                  "object's own containing body). Exactly one body should be primary.")]
-        public bool isPrimary = true;
+        [SerializeField] private bool isPrimary = true;
+
+        /// <summary>Whether this body is the primary one (mirrors its data to global shader
+        /// state and acts as the fallback for objects without a WaterMembership).</summary>
+        public bool IsPrimary { get => isPrimary; set => isPrimary = value; }
 
         [Header("Performance (Phase 3)")]
         [Tooltip("Quality tier asset scaling sim/caustic resolution and god-ray steps. Leave " +
                  "empty for the default (256/1024/24) look. Assigned by the scene builder.")]
-        public WaterQuality quality;
+        [SerializeField] private WaterQuality quality;
         [Tooltip("Pause a body's simulation, caustics and height readback - and stop drawing it - " +
                  "when it is off-screen OR beyond Activation Distance, and let only the nearest few " +
                  "bodies simulate at once. A single visible body is unaffected. Turn off to force " +
                  "this body to always simulate and render.")]
-        public bool enableCulling = true;
+        [SerializeField] private bool enableCulling = true;
         [Tooltip("Bodies whose centre is farther than this from the camera pause their simulation " +
                  "(they hold their last state). Matches the camera far clip by default.")]
-        public float activationDistance = CameraFarClip;
+        [SerializeField] internal float activationDistance = CameraFarClip;
+
+        /// <summary>Quality tier asset scaling sim/caustic resolution and god-ray steps.
+        /// Read at startup; assign before the body enables.</summary>
+        public WaterQuality Quality { get => quality; set => quality = value; }
+
+        /// <summary>Pause this body's simulation and rendering when off-screen or beyond the
+        /// activation distance.</summary>
+        public bool EnableCulling { get => enableCulling; set => enableCulling = value; }
 
         public enum ReflectionMode { SkyOnly, SSR, Planar }
 
@@ -111,12 +123,16 @@ namespace AbstractOcclusion.WebGpuWater
                  "bodies. Planar is a full extra scene render across this body's plane - use it for at " +
                  "most ONE 'hero' body. SkyOnly is cheapest (procedural sky only). SSR needs Depth + " +
                  "Opaque Texture enabled on the active URP asset.")]
-        public ReflectionMode reflectionMode = ReflectionMode.SSR;
+        [SerializeField] private ReflectionMode reflectionMode = ReflectionMode.SSR;
+
+        /// <summary>How this body reflects (SkyOnly, SSR or Planar). Named 'Reflections'
+        /// because the nested <see cref="ReflectionMode"/> enum owns that identifier.</summary>
+        public ReflectionMode Reflections { get => reflectionMode; set => reflectionMode = value; }
 
         [Tooltip("Reflection base environment. ProceduralSky uses the generated sky cubemap (the demo " +
                  "look). UrpProbe reflects the scene's active reflection probe / skybox so the water " +
                  "matches your lit environment. Orthogonal to the mode above and unaffected by the tier.")]
-        public EnvironmentSource environmentSource = EnvironmentSource.ProceduralSky;
+        [SerializeField] internal EnvironmentSource environmentSource = EnvironmentSource.ProceduralSky;
 
         /// <summary>The primary water body: the global fallback for objects without a
         /// <see cref="WaterMembership"/>. Per-object association goes through
@@ -168,10 +184,29 @@ namespace AbstractOcclusion.WebGpuWater
         /// <see cref="BodyContaining"/>.</summary>
         internal static readonly List<WaterVolume> Bodies = new List<WaterVolume>();
 
+        // Fast Enter Play Mode (the Unity 6.6 default) skips the domain reload, so statics
+        // survive between play sessions. Reset every piece of scene-lifetime static state
+        // before each session; OnEnable/OnDisable rebuild it for the new one.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStaticState()
+        {
+            Primary = null;
+            Bodies.Clear();
+            _fallbackBody = null;
+            _fallbackBodyFrame = -1;
+#if WEBGPUWATER_URP
+            _pipelineOwner = null;
+            _savedRenderScale = 0f;
+            _savedOpaqueTexture = false;
+#endif
+            WaterSimScheduler.ResetStaticState();
+            WaterInteractable.ResetStaticState();
+        }
+
         [Header("Simulation")]
         [Tooltip("Direction TOWARD the light. Auto-driven from 'sun' when one is assigned.")]
-        public Vector3 lightDir = new Vector3(2f, 2f, -1f);
-        public int causticResolution = 1024;
+        [SerializeField] internal Vector3 lightDir = new Vector3(2f, 2f, -1f);
+        [SerializeField] internal int causticResolution = 1024;
 
         [Header("Object interaction")]
         [Tooltip("How floating objects disturb the water. MouseLikeDrops clones the mouse " +
@@ -179,144 +214,160 @@ namespace AbstractOcclusion.WebGpuWater
                  "Radius/Strength below; smooth, zero rasterization noise, slow rotation is " +
                  "silent). FootprintDelta displaces by the rasterized submerged footprint " +
                  "(shaped wakes for large hulls; costlier and noisier).")]
-        public ObjectInteraction objectInteraction = ObjectInteraction.MouseLikeDrops;
+        [SerializeField] internal ObjectInteraction objectInteraction = ObjectInteraction.MouseLikeDrops;
         [Tooltip("FootprintDelta mode: MASTER strength for how strongly submerged objects " +
                  "displace the water (height units, comparable to Ripple Strength). " +
                  "Per-object weighting is WaterInteractable.displaceScale.")]
-        [Range(0f, 0.5f)] public float obstacleStrength = 0.08f;
+        [Range(0f, 0.5f)] [SerializeField] internal float obstacleStrength = 0.08f;
         [Tooltip("Temporal smoothing of the object footprint (0 = off). Low-pass filters " +
                  "the displacement a floater injects, so continuous bobbing/rotation emits " +
                  "a few long clean waves instead of a dense packet of tight rings. The " +
                  "total displaced volume is unchanged; higher = calmer but lazier response.")]
-        [Range(0f, 0.95f)] public float obstacleSmoothing = 0.65f;
+        [Range(0f, 0.95f)] [SerializeField] internal float obstacleSmoothing = 0.65f;
         [Tooltip("Flip the obstacle map in Z if object ripples appear mirrored.")]
-        public bool obstacleFlipY = true;
+        [SerializeField] internal bool obstacleFlipY = true;
 
         [Header("Water fog (Beer-Lambert)")]
         [Tooltip("Global depth absorption, shared by the surface, objects and pool.")]
-        public bool waterFog = false;
-        public Color fogColor = new Color(0.10f, 0.30f, 0.40f);
+        [SerializeField] private bool waterFog = false;
+        [SerializeField] internal Color fogColor = new Color(0.10f, 0.30f, 0.40f);
         [Tooltip("Per-channel extinction; red highest so it absorbs first. HDR: push a channel " +
                  "above 1 for very heavy absorption (fully opaque water on short paths).")]
-        [ColorUsage(false, true)] public Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
+        [ColorUsage(false, true)] [SerializeField] internal Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
         [Tooltip("Overall fog multiplier. Higher = thicker; crank it (with extinction) for pea-soup water.")]
-        [Range(0f, MaxFogDensity)] public float fogDensity = 2f;
+        [Range(0f, MaxFogDensity)] [SerializeField] internal float fogDensity = 2f;
+
+        /// <summary>Beer-Lambert depth fog, shared by the surface, objects and pool.</summary>
+        public bool WaterFog { get => waterFog; set => waterFog = value; }
         [Tooltip("Art-directed turbidity independent of depth: lerp the view THROUGH the surface " +
                  "toward the fog colour. 0 = clear, 1 = fully non-transparent water. Reflections " +
                  "still show on top (tune with the material's Reflection Strength).")]
-        [Range(0f, 1f)] public float waterOpacity = 0f;
+        [Range(0f, 1f)] [SerializeField] internal float waterOpacity = 0f;
 
         [Header("Depth attenuation (downwelling)")]
         [Tooltip("Darken submerged surfaces, caustics and god rays the DEEPER they sit, " +
                  "independent of view distance. Separate from the view-path fog above.")]
-        public bool depthDarken = false;
+        [SerializeField] internal bool depthDarken = false;
         [Tooltip("Per-channel downwelling extinction (red highest so deep water shifts blue). " +
                  "Applied as exp(-extinction * strength * depth).")]
-        public Color depthExtinction = new Color(0.45f, 0.15f, 0.08f);
+        [SerializeField] internal Color depthExtinction = new Color(0.45f, 0.15f, 0.08f);
         [Tooltip("Master multiplier on the depth term (acts like the fog density).")]
-        [Range(0f, 8f)] public float depthDarkenStrength = 1f;
+        [Range(0f, 8f)] [SerializeField] internal float depthDarkenStrength = 1f;
         [Tooltip("Extra softening of projected caustics on objects, per world unit of depth.")]
-        [Range(0f, 8f)] public float causticDepthFade = 0.5f;
+        [Range(0f, 8f)] [SerializeField] internal float causticDepthFade = 0.5f;
         [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
-        [Range(0f, 8f)] public float godRayDepthFade = 0.5f;
+        [Range(0f, 8f)] [SerializeField] internal float godRayDepthFade = 0.5f;
         [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
                  "drives fog + depth darkening. Off = the depth colour is fully independent.")]
-        public bool linkDepthToFog = false;
+        [SerializeField] internal bool linkDepthToFog = false;
 
         [Header("Bed depth (real terrain depth)")]
         [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
                  "gradient). Off = flat-floor behaviour.")]
-        public bool useBedDepth = false;
+        [SerializeField] internal bool useBedDepth = false;
         [Tooltip("Terrain whose heightmap defines the lake bed. Auto-resolves to the active " +
                  "Terrain if empty. Baked once at startup; call RebakeBed() (or the context-menu " +
                  "item) if the terrain changes.")]
-        public Terrain bedTerrain;
+        [SerializeField] internal Terrain bedTerrain;
         [Tooltip("Resolution of the baked pool-space bed-height map.")]
-        [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] public int bedResolution = 256;
+        [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] [SerializeField] internal int bedResolution = 256;
         [Tooltip("Colour the surface tints toward over deep water.")]
-        public Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
+        [SerializeField] internal Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
         [Tooltip("World-unit depth at which the shoreline gradient reaches ~63% toward the deep " +
                  "colour. Smaller = the water darkens in shallower depth.")]
-        [Range(0.1f, 50f)] public float shorelineFadeDepth = 6f;
+        [Range(0.1f, 50f)] [SerializeField] internal float shorelineFadeDepth = 6f;
         [Tooltip("Maximum tint toward the deep-water colour.")]
-        [Range(0f, 1f)] public float shorelineStrength = 0.8f;
+        [Range(0f, 1f)] [SerializeField] internal float shorelineStrength = 0.8f;
 
         [Header("Wind waves (spectral)")]
         [Tooltip("Ambient wind-driven wave layer composited on top of the interactive ripples. " +
                  "Floating objects ride these waves too.")]
-        public bool windWaves = true;
+        [SerializeField] private bool windWaves = true;
         [Tooltip("Wind speed (m/s). ~3 = light breeze.")]
-        [Range(0f, 15f)] public float windSpeed = 3f;
+        [Range(0f, 15f)] [SerializeField] internal float windSpeed = 3f;
         [Tooltip("Wind heading in degrees: 0 = blowing toward +X (i.e. coming from the west).")]
-        [Range(0f, 360f)] public float windFromDegrees = 0f;
+        [Range(0f, 360f)] [SerializeField] internal float windFromDegrees = 0f;
+
+        /// <summary>Ambient wind-driven wave layer composited on top of the interactive
+        /// ripples. Floating objects ride these waves too.</summary>
+        public bool WindWaves { get => windWaves; set => windWaves = value; }
         [Tooltip("Physical size the pool half-extent ([-1,1] -> +/-this) represents, in metres. " +
                  "Sets wave scale; fetch is twice this.")]
-        [Range(1f, 50f)] public float poolHalfExtentMeters = 10f;
+        [Range(1f, 50f)] [SerializeField] internal float poolHalfExtentMeters = 10f;
         [Tooltip("Number of sinusoidal components summed for the wave layer.")]
-        [Range(1, WaterWaveBank.MaxWaves)] public int waveCount = 12;
+        [Range(1, WaterWaveBank.MaxWaves)] [SerializeField] internal int waveCount = 12;
         [Tooltip("Artistic multiplier on the physically-derived wave height (a light breeze " +
                  "on a small lake is physically sub-cm, so some exaggeration reads better).")]
-        [Range(0f, 12f)] public float waveAmplitudeScale = 4f;
+        [Range(0f, 12f)] [SerializeField] internal float waveAmplitudeScale = 4f;
         [Tooltip("Higher = waves cling more tightly to the wind direction (parallel, river-like). " +
                  "Lower = broader, choppier crossing crests.")]
-        [Range(1f, 12f)] public float waveDirectionSpread = 2f;
+        [Range(1f, 12f)] [SerializeField] internal float waveDirectionSpread = 2f;
         [Tooltip("Scales how strongly the wind waves tilt the surface normal.")]
-        [Range(0f, 3f)] public float waveNormalStrength = 1f;
+        [Range(0f, 3f)] [SerializeField] internal float waveNormalStrength = 1f;
 
         [Header("Foam")]
-        public bool foam = false;
+        [SerializeField] private bool foam = false;
         [Tooltip("How fast turbulence creates foam.")]
-        [Range(0f, 2f)] public float foamGenRate = 0.6f;
+        [Range(0f, 2f)] [SerializeField] internal float foamGenRate = 0.6f;
         [Tooltip("Survival per step of thick, fresh foam. Lower = bursts collapse faster.")]
-        [Range(0.80f, 1f)] public float foamDecay = 0.96f;
+        [Range(0.80f, 1f)] [SerializeField] internal float foamDecay = 0.96f;
         [Tooltip("Survival per step of thin residual lace (should sit above the fresh decay, near 1). Higher = lace lingers longer after the burst.")]
-        [Range(0.90f, 1f)] public float foamDecayResidual = 0.993f;
+        [Range(0.90f, 1f)] [SerializeField] internal float foamDecayResidual = 0.993f;
         [Tooltip("Diffusion of foam toward neighbours.")]
-        [Range(0f, 1f)] public float foamSpread = 0.2f;
+        [Range(0f, 1f)] [SerializeField] internal float foamSpread = 0.2f;
         [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
-        [Range(0f, 8f)] public float foamAdvect = 3f;
-        public float foamFromSpeed = 6f;
-        public float foamFromCurvature = 30f;
+        [Range(0f, 8f)] [SerializeField] internal float foamAdvect = 3f;
+        [SerializeField] internal float foamFromSpeed = 6f;
+        [SerializeField] internal float foamFromCurvature = 30f;
         [Space]
-        public Color foamColor = Color.white;
-        [Range(0f, 2f)] public float foamStrength = 1f;
+        [SerializeField] internal Color foamColor = Color.white;
+        [Range(0f, 2f)] [SerializeField] internal float foamStrength = 1f;
         [Tooltip("Width of the foam band along the pool walls (pool units).")]
-        [Range(0f, 0.5f)] public float foamBorderWidth = 0.08f;
+        [Range(0f, 0.5f)] [SerializeField] internal float foamBorderWidth = 0.08f;
         [Tooltip("Depth band for contact foam where objects meet the waterline.")]
-        [Range(0f, 0.5f)] public float foamContactDepth = 0.06f;
+        [Range(0f, 0.5f)] [SerializeField] internal float foamContactDepth = 0.06f;
+
+        /// <summary>Turbulence-driven surface foam simulation and shading.</summary>
+        public bool Foam { get => foam; set => foam = value; }
 
         [Header("Ripple tuning")]
         [Tooltip("Propagation stiffness. Higher = faster waves. Stable up to ~2.0.")]
-        [Range(0.1f, 2.0f)] public float waveSpeed = 0.6f;
+        [Range(0.1f, 2.0f)] [SerializeField] internal float waveSpeed = 0.6f;
         [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
-        [Range(0.90f, 1.0f)] public float damping = 0.99f;
+        [Range(0.90f, 1.0f)] [SerializeField] internal float damping = 0.99f;
         [Tooltip("Solver steps per frame AT THE 60 FPS REFERENCE - the sim accumulates real " +
                  "time and runs this rate regardless of frame rate, so wave speed is identical " +
                  "in a 30 fps build and a 144 fps editor. More = faster, smoother propagation.")]
-        [Range(1, 8)] public int stepsPerFrame = 2;
+        [Range(1, 8)] [SerializeField] internal int stepsPerFrame = 2;
         [Tooltip("Height added by a click/drag ripple (world units; volume-scale independent).")]
-        [Range(0.001f, 0.08f)] public float rippleStrength = 0.025f;
+        [Range(0.001f, 0.08f)] [SerializeField] private float rippleStrength = 0.025f;
         [Tooltip("Radius of a click/drag ripple (world units; volume-scale independent).")]
-        [Range(0.005f, 0.2f)] public float rippleRadius = 0.05f;
+        [Range(0.005f, 0.2f)] [SerializeField] private float rippleRadius = 0.05f;
         [Tooltip("Seed the pool with random ripples on start.")]
-        public bool seedRipplesOnStart = true;
+        [SerializeField] internal bool seedRipplesOnStart = true;
         [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
-        public bool conserveVolume = true;
+        [SerializeField] internal bool conserveVolume = true;
+
+        /// <summary>Height added by a click/drag ripple (world units).</summary>
+        public float RippleStrength { get => rippleStrength; set => rippleStrength = value; }
+
+        /// <summary>Radius of a click/drag ripple (world units).</summary>
+        public float RippleRadius { get => rippleRadius; set => rippleRadius = value; }
         [Tooltip("Safety cap on how far Conserve Volume can shift the whole surface per step " +
                  "(pool units). The mean is computed exactly, so this only guards against a " +
                  "diverged transient moving the plane in one step.")]
-        [Range(0.005f, 0.5f)] public float conserveMaxCorrection = 0.05f;
+        [Range(0.005f, 0.5f)] [SerializeField] internal float conserveMaxCorrection = 0.05f;
 
         [Header("Camera")]
-        public OrbitCamera orbit;
+        [SerializeField] internal OrbitCamera orbit;
         [Tooltip("Apply the package's default framing (FOV, near/far clip) to the target camera " +
                  "at enable. Off by default: a drop-in water body must not silently overwrite a " +
                  "game's camera setup. The demo scene builder frames its camera at build time.")]
-        public bool configureCamera = false;
+        [SerializeField] internal bool configureCamera = false;
 
         [Header("Splash")]
         [Tooltip("Shared splash emitter used for mouse interaction (and objects).")]
-        public WaterSplashEmitter splashEmitter;
+        [SerializeField] internal WaterSplashEmitter splashEmitter;
 
         // runtime collaborators (see the header comment for the responsibility map)
         WaterSimulation _water;

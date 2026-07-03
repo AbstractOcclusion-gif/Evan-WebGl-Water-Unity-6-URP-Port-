@@ -21,27 +21,27 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Tooltip("Float strength. Net buoyancy cancels gravity when " +
                  "buoyancy * submergedFraction = 1, so ~2.5 floats with the top out.")]
-        public float buoyancy = 2.5f;
+        [SerializeField] internal float buoyancy = 2.5f;
 
         [Tooltip("Linear damping applied per submerged point (kills bobbing; also damps rotation).")]
-        public float waterLinearDamping = 2.0f;
+        [SerializeField] internal float waterLinearDamping = 2.0f;
 
         [Tooltip("Extra angular damping while submerged, for rotational stability.")]
-        public float waterAngularDamping = 1.0f;
+        [SerializeField] internal float waterAngularDamping = 1.0f;
 
         [Tooltip("Float sample points per axis. 2 = 8 corner points (good torque); 3 = 27 (smoother, costlier).")]
-        [Range(MinSamplesPerAxis, MaxSamplesPerAxis)] public int samplesPerAxis = 2;
+        [Range(MinSamplesPerAxis, MaxSamplesPerAxis)] [SerializeField] internal int samplesPerAxis = 2;
 
         [Tooltip("Sphere radius per point as a fraction of the vertical point spacing. " +
                  "Only softens the submersion curve; the float level is unaffected.")]
-        [Range(0.5f, 3f)] public float floatRadiusScale = 1.5f;
+        [Range(0.5f, 3f)] [SerializeField] internal float floatRadiusScale = 1.5f;
 
         [Tooltip("How hard the local surface flow pushes submerged points (waves carry the object).")]
-        [Range(0f, 4f)] public float waveDriftStrength = 1.0f;
+        [Range(0f, 4f)] [SerializeField] internal float waveDriftStrength = 1.0f;
 
         [Tooltip("Extra damping on vertical velocity only, to quiet the residual bob " +
                  "(which otherwise feeds displacement jitter). Doesn't slow drift/tilt.")]
-        [Range(0f, 4f)] public float verticalSettleDamping = 1.0f;
+        [Range(0f, 4f)] [SerializeField] internal float verticalSettleDamping = 1.0f;
 
         Rigidbody _rb;
         Collider _col;

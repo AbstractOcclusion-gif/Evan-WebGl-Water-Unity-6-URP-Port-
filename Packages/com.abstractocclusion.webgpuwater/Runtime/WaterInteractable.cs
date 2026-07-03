@@ -23,6 +23,9 @@ namespace AbstractOcclusion.WebGpuWater
         /// callers; membership is managed by OnEnable/OnDisable.</summary>
         public static IReadOnlyList<WaterInteractable> Active => _active;
 
+        // Cleared by WaterVolume.ResetStaticState for Fast Enter Play Mode (no domain reload).
+        internal static void ResetStaticState() => _active.Clear();
+
         // Safety cap on drops emitted in one frame (a teleporting object would otherwise
         // burst-fire its whole accumulated travel as a stack of drops).
         const int MaxDropsPerFrame = 4;
@@ -36,10 +39,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Header("Mouse-like drop emission")]
         [Tooltip("Vertical plunge/rise (world units) that emits one drop. Smaller = more " +
                  "frequent bobbing ripples.")]
-        [Range(0.002f, 0.1f)] public float verticalEmitSpacing = 0.012f;
+        [Range(0.002f, 0.1f)] [SerializeField] internal float verticalEmitSpacing = 0.012f;
         [Tooltip("Horizontal travel (world units) that emits one wake drop - the same " +
                  "spacing rule the mouse drag uses.")]
-        [Range(0.005f, 0.2f)] public float horizontalEmitSpacing = 0.02f;
+        [Range(0.005f, 0.2f)] [SerializeField] internal float horizontalEmitSpacing = 0.02f;
 
         Vector3 _lastDropPosition;
         float _prevRelDepth;
@@ -94,8 +97,8 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Drop look: the object's own size sets the radius (never below the mouse's),
             // the volume's mouse strength sets the amplitude, weighted per object.
-            float radius = Mathf.Max(body.rippleRadius, Mathf.Max(bounds.extents.x, bounds.extents.z));
-            float strength = body.rippleStrength * displaceScale;
+            float radius = Mathf.Max(body.RippleRadius, Mathf.Max(bounds.extents.x, bounds.extents.z));
+            float strength = body.RippleStrength * displaceScale;
             int budget = MaxDropsPerFrame;
 
             // Vertical bobbing: one drop per spacing step of plunge/rise. Signed like the

@@ -22,23 +22,23 @@ namespace AbstractOcclusion.WebGpuWater
     public class PlanarReflection : MonoBehaviour
     {
         [Tooltip("Camera the reflection is rendered for. Defaults to Camera.main.")]
-        public Camera sourceCamera;
+        [SerializeField] internal Camera sourceCamera;
 
         [Tooltip("World-space height of the water surface (the demo's pool surface is y = 0).")]
-        public float waterHeight = 0f;
+        [SerializeField] internal float waterHeight = 0f;
 
         [Tooltip("Layers included in the reflection. Exclude the water layer itself.")]
-        public LayerMask reflectLayers = ~0;
+        [SerializeField] internal LayerMask reflectLayers = ~0;
 
         [Range(0.25f, 1f)]
         [Tooltip("Reflection RT size as a fraction of the screen. Lower = faster, blurrier.")]
-        public float resolutionScale = 0.5f;
+        [SerializeField] internal float resolutionScale = 0.5f;
 
         [Tooltip("Push the clip plane slightly below the surface to avoid seam artifacts.")]
-        public float clipPlaneOffset = 0.02f;
+        [SerializeField] internal float clipPlaneOffset = 0.02f;
 
         [Tooltip("Render the reflection at all. Turn off to disable planar reflections cheaply.")]
-        public bool enableReflection = true;
+        [SerializeField] internal bool enableReflection = true;
 
 #if WEBGPUWATER_URP
         const int MinReflectionSize = 8;     // don't allocate a sub-8px reflection target

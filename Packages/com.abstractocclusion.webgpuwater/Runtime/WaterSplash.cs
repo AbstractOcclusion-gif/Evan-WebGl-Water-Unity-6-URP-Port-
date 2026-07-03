@@ -11,14 +11,14 @@ namespace AbstractOcclusion.WebGpuWater
     public class WaterSplash : MonoBehaviour
     {
         [Tooltip("Shared splash emitter. Auto-found in the scene if left empty.")]
-        public WaterSplashEmitter emitter;
+        [SerializeField] internal WaterSplashEmitter emitter;
 
         [Tooltip("Minimum downward speed at the surface to trigger a splash.")]
-        public float minImpactSpeed = 0.4f;
+        [SerializeField] internal float minImpactSpeed = 0.4f;
         [Tooltip("Speed that produces the biggest splash.")]
-        public float maxImpactSpeed = 3f;
+        [SerializeField] internal float maxImpactSpeed = 3f;
         [Tooltip("Strength of the ripple injected into the sim on impact.")]
-        public float rippleStrength = 0.04f;
+        [SerializeField] internal float rippleStrength = 0.04f;
 
         const float FallbackHalfExtent = 0.15f;    // used when there is no collider to size from
         const float MinRippleRadius = 0.02f;

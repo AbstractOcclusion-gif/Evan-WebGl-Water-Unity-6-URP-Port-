@@ -14,6 +14,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly Plane[] _frustumPlanes = new Plane[6];
         static int _scheduleFrame = -1;
 
+        // Cleared by WaterVolume.ResetStaticState for Fast Enter Play Mode (no domain reload).
+        internal static void ResetStaticState() => _scheduleFrame = -1;
+
         // Decide (once per frame, for every body) which bodies draw and which run the
         // heavy GPU sim.
         internal static void EnsureSchedule()
@@ -43,7 +46,7 @@ namespace AbstractOcclusion.WebGpuWater
             for (int i = 0; i < bodies.Count; i++)
             {
                 WaterVolume body = bodies[i];
-                if (!body.enableCulling || cam == null)
+                if (!body.EnableCulling || cam == null)
                 {
                     body._visible = true;
                     body._simulate = true; // culling off -> always draw + simulate
@@ -62,7 +65,7 @@ namespace AbstractOcclusion.WebGpuWater
         // writes skewing the counts.
         static bool IsSimEligible(WaterVolume body, Vector3 camPos)
         {
-            if (!body.enableCulling || !body._visible) return false;
+            if (!body.EnableCulling || !body._visible) return false;
             float distSqr = (body.VolumeCenter - camPos).sqrMagnitude;
             return distSqr <= body.activationDistance * body.activationDistance;
         }
