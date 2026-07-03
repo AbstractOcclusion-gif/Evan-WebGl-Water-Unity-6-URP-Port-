@@ -93,8 +93,8 @@ LightmapSettings:
     m_ExportTrainingData: 0
     m_TrainingDataDestination: TrainingData
     m_LightProbeSampleCountMultiplier: 4
-  m_LightingDataAsset: {fileID: 20201, guid: 0000000000000000f000000000000000, type: 0}
-  m_LightingSettings: {fileID: 0}
+  m_LightingDataAsset: {fileID: 112000000, guid: d0acdb4fd8777ae418a5aa63668dce53, type: 2}
+  m_LightingSettings: {fileID: 4890085278179872738, guid: 5510d48441931964ab583e8d0abbb427, type: 2}
 --- !u!196 &4
 NavMeshSettings:
   serializedVersion: 2
@@ -10068,6 +10068,71 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 508595162}
   m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
+--- !u!1 &864854736
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 864854738}
+  - component: {fileID: 864854737}
+  m_Layer: 0
+  m_Name: Reflection Probe
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!215 &864854737
+ReflectionProbe:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 864854736}
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Type: 0
+  m_Mode: 0
+  m_RefreshMode: 0
+  m_TimeSlicingMode: 0
+  m_Resolution: 512
+  m_UpdateFrequency: 0
+  m_BoxSize: {x: 500, y: 500, z: 500}
+  m_BoxOffset: {x: 0, y: 0, z: 0}
+  m_NearClip: 0.3
+  m_FarClip: 1000
+  m_ShadowDistance: 100
+  m_ClearFlags: 1
+  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_CullingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_IntensityMultiplier: 1
+  m_BlendDistance: 1
+  m_HDR: 1
+  m_BoxProjection: 0
+  m_RenderDynamicObjects: 0
+  m_UseOcclusionCulling: 1
+  m_Importance: 1
+  m_CustomBakedTexture: {fileID: 0}
+--- !u!4 &864854738
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 864854736}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 100, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &887396524
 GameObject:
   m_ObjectHideFlags: 0
@@ -10152,8 +10217,8 @@ MonoBehaviour:
   waterAngularDamping: 1
   samplesPerAxis: 2
   floatRadiusScale: 1.5
-  waveDriftStrength: 1
-  verticalSettleDamping: 1
+  waveDriftStrength: 0.1
+  verticalSettleDamping: 1.7
 --- !u!114 &887396529
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10166,7 +10231,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
-  displaceScale: 1
+  displaceScale: 0.5
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
 --- !u!54 &887396530
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -10354,7 +10422,7 @@ Camera:
   m_GameObject: {fileID: 961739749}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 2
+  m_ClearFlags: 1
   m_BackGroundColor: {r: 0, g: 0, b: 0, a: 1}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
@@ -10405,7 +10473,7 @@ Transform:
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0, y: 1, z: -3}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -10660,12 +10728,12 @@ MonoBehaviour:
   waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 1209048383}
-  tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
-  sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
-  volumeExtent: {x: 6, y: 2, z: 6}
+  tiles: {fileID: 0}
+  sky: {fileID: 8900000, guid: afc52f60475c07846ac62666948b3f42, type: 2}
+  volumeExtent: {x: 200, y: 5, z: 200}
   enableLargeBodyWindow: 1
-  largeBodyThreshold: 48
-  simWindowMeters: 32
+  largeBodyThreshold: 32
+  simWindowMeters: 20
   clampWindowToShore: 0
   simWindowEdgeFadeTexels: 8
   surfaceAbove: {fileID: 508595164}
@@ -10673,16 +10741,20 @@ MonoBehaviour:
   poolRenderer: {fileID: 0}
   godRayRenderer: {fileID: 0}
   isPrimary: 1
+  autoLinkReceivers: 1
   quality: {fileID: 11400000, guid: 9ac62b790871b16449e0b1f34b6796e8, type: 2}
   enableCulling: 1
   activationDistance: 100
   reflectionMode: 1
-  environmentSource: 0
+  environmentSource: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
+  objectInteraction: 0
   obstacleStrength: 0.08
+  obstacleDeadband: 0.0006
+  obstacleSmoothing: 0.65
   obstacleFlipY: 1
-  waterFog: 1
+  waterFog: 0
   fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   fogDensity: 2
@@ -10700,33 +10772,38 @@ MonoBehaviour:
   shorelineFadeDepth: 6
   shorelineStrength: 0.8
   windWaves: 1
-  windSpeed: 9
+  windSpeed: 6.7
   windFromDegrees: 0
-  poolHalfExtentMeters: 10
-  waveCount: 12
-  waveAmplitudeScale: 5
-  waveDirectionSpread: 2
-  waveNormalStrength: 1
-  foam: 1
+  poolHalfExtentMeters: 50
+  waveCount: 16
+  waveAmplitudeScale: 4
+  waveDirectionSpread: 1.04
+  waveNormalStrength: 3
+  foam: 0
   foamGenRate: 0.65
   foamDecay: 0.9451
   foamDecayResidual: 0.99
+  foamDecayRate: 1
   foamSpread: 0.086
   foamAdvect: 3
   foamFromSpeed: 6
   foamFromCurvature: 30
   foamColor: {r: 1, g: 1, b: 1, a: 1}
   foamStrength: 0.62
+  foamFeather: 0.15
+  foamCoreCut: 0.5
   foamBorderWidth: 0.08
   foamContactDepth: 0.06
   waveSpeed: 0.6
   damping: 0.99
   stepsPerFrame: 1
-  rippleStrength: 0.025
-  rippleRadius: 0.05
+  rippleStrength: 0.05
+  rippleRadius: 0.1
   seedRipplesOnStart: 1
   conserveVolume: 1
+  conserveMaxCorrection: 0.05
   orbit: {fileID: 961739754}
+  configureCamera: 0
   splashEmitter: {fileID: 348456196}
 --- !u!1 &1472335538
 GameObject:
@@ -10894,3 +10971,4 @@ SceneRoots:
   - {fileID: 961739753}
   - {fileID: 203844589}
   - {fileID: 2028469275}
+  - {fileID: 864854738}

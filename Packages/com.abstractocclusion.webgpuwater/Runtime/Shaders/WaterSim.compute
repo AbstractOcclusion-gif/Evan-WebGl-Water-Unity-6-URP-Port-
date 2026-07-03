@@ -88,10 +88,18 @@ int2 _ScrollOffset;
 float2 _Center;   // in [-1, 1]
 float  _Radius;
 float  _Strength;
+// Per-axis squash of the drop stamp so a drop reads ROUND in WORLD on a rectangular pool. The
+// sim grid is square over pool space, so without this a circular pool-space stamp is stretched
+// to the extent ratio in world. Default (1,1) = square (unchanged). Set from C# per body.
+float2 _DropAxisScale;
 
 // Update (wave equation tuning)
 float  _WaveSpeed; // stiffness ~ propagation speed (stable for 0 < x <= 2.0)
 float  _Damping;   // velocity attenuation per step (e.g. 0.995)
+// Per-axis Laplacian weight so waves propagate at equal WORLD speed on a rectangular pool
+// (weight ~ 1/extent^2 per axis, normalised so the max stays 0.25 = the stable square value).
+// Default (0.25, 0.25) = the isotropic square case (unchanged). Set from C# per body.
+float2 _WaveAxisWeight;
 
 // Obstacle displacement: submerged-footprint maps from the previous and current
 // frame (R channel = submerged amount per column), rendered top-down by C#.
@@ -139,7 +147,10 @@ void Drop(uint3 id : SV_DispatchThreadID)
     float2 coord = (p + 0.5) * _Delta;
     float4 info = Read(p);
 
-    float drop = max(0.0, 1.0 - length(_Center * 0.5 + 0.5 - coord) / _Radius);
+    // Squash the pool-space delta per axis so the falloff is a circle in WORLD, not in the
+    // (square) sim grid - otherwise a drop on a rectangular pool stamps an ellipse.
+    float2 d = (_Center * 0.5 + 0.5 - coord) * _DropAxisScale;
+    float drop = max(0.0, 1.0 - length(d) / _Radius);
     drop = 0.5 - cos(drop * PI) * 0.5;
     info.r += drop * _Strength;
 
@@ -152,15 +163,18 @@ void Update(uint3 id : SV_DispatchThreadID)
     int2 p = int2(id.xy);
     float4 info = Read(p);
 
-    float average = (
-        Read(p + int2(-1, 0)).r +
-        Read(p + int2( 0,-1)).r +
-        Read(p + int2( 1, 0)).r +
-        Read(p + int2( 0, 1)).r
-    ) * 0.25;
+    // Per-axis weighted Laplacian: the x- and z-neighbour curvatures are weighted separately
+    // (_WaveAxisWeight) so waves travel at equal WORLD speed on a rectangular pool. With the
+    // default (0.25, 0.25) this is exactly the old isotropic form: 0.25*(hL+hR+hD+hU) - h.
+    float hL = Read(p + int2(-1, 0)).r;
+    float hR = Read(p + int2( 1, 0)).r;
+    float hD = Read(p + int2( 0,-1)).r;
+    float hU = Read(p + int2( 0, 1)).r;
+    float force = _WaveAxisWeight.x * (hL + hR - 2.0 * info.r)
+                + _WaveAxisWeight.y * (hD + hU - 2.0 * info.r);
 
-    // move velocity toward the neighbor average, attenuate, integrate height
-    info.g += (average - info.r) * _WaveSpeed;
+    // move velocity by the restoring force, attenuate, integrate height
+    info.g += force * _WaveSpeed;
     info.g *= _Damping;
     info.r += info.g;
 

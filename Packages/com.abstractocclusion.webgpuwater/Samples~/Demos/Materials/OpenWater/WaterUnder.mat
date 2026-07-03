@@ -15,6 +15,7 @@ Material:
   - _REAL_REFRACTION
   - _USE_PLANAR
   - _USE_SSR
+  - _USE_URP_PROBE
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
@@ -50,7 +51,7 @@ Material:
     - _Underwater: 1
     - _UsePlanar: 1
     - _UseSSR: 1
-    - _UseUrpProbe: 0
+    - _UseUrpProbe: 1
     m_Colors:
     - _FoamTexFrames: {r: 1, g: 1, b: 0, a: 0}
   m_BuildTextureStacks: []

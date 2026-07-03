@@ -1613,7 +1613,7 @@ GameObject:
   m_Component:
   - component: {fileID: 808945834}
   m_Layer: 0
-  m_Name: TEMP MultiLevel Pool Demo
+  m_Name: MultiLevel Pool Demo
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

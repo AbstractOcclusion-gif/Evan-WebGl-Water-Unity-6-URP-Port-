@@ -15,7 +15,7 @@ MonoBehaviour:
   selection: 3
   highSimResolution: 512
   highCausticResolution: 1024
-  highGodRaySteps: 64
+  highGodRaySteps: 32
   highGodRays: 1
   highRichReflections: 1
   highMaxWaveCount: 16
@@ -26,7 +26,7 @@ MonoBehaviour:
   highCausticInterval: 1
   highReadbackInterval: 1
   highMaxFoamParticles: 65536
-  mediumSimResolution: 128
+  mediumSimResolution: 256
   mediumCausticResolution: 512
   mediumGodRaySteps: 16
   mediumGodRays: 1

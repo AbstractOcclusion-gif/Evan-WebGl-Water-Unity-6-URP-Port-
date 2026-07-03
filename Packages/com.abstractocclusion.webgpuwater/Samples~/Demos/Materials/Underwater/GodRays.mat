@@ -25,7 +25,7 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _GodRayDensity: 1.5
+    - _GodRayDensity: 3
     - _GodRaySteps: 24
     m_Colors:
     - _GodRayColor: {r: 0.7, g: 0.85, b: 1, a: 1}

@@ -636,6 +636,7 @@ namespace AbstractOcclusion.WebGpuWater
             _stepDebt = 0f;
             _foamTimeDebt = 0f;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
+            ApplySimAnisotropy();       // round ripples on a rectangular pool (no-op for square/windowed)
 
             if (obstacleShader != null)
                 _obstacle = new WaterObstacle(obstacleShader, _simRes,
@@ -1361,6 +1362,28 @@ namespace AbstractOcclusion.WebGpuWater
         internal Vector3 VolumeUp => VolumeRotation * Vector3.up;
         // Average horizontal extent, used to keep a click ripple round in world units.
         float VolumeHorizontalExtent => 0.5f * (VolumeExtentSafe.x + VolumeExtentSafe.z);
+
+        // Tell the sim how to keep ripples ROUND in world on a rectangular (non-square) pool. The
+        // heightfield runs on a square grid over pool space, so on a body with extent.x != extent.z
+        // both the drop stamp and the wavefront would stretch to that ratio. We weight the wave
+        // Laplacian per axis by ~1/extent^2 (equal WORLD propagation speed; normalised by the
+        // smaller extent so the max weight stays at the stable 0.25) and squash the drop stamp by
+        // extent/avg (matching the average-extent radius normalisation used by AddRipple). Windowed
+        // bodies sim over a SQUARE world window already, so they use the identity values.
+        void ApplySimAnisotropy()
+        {
+            if (_water == null) return;
+            if (_windowed) { _water.SetAnisotropy(new Vector2(0.25f, 0.25f), Vector2.one); return; }
+
+            float ex = VolumeExtentSafe.x;
+            float ez = VolumeExtentSafe.z;
+            float minExtent = Mathf.Min(ex, ez);
+            float minSq = minExtent * minExtent;
+            float avg = VolumeHorizontalExtent;
+            var waveWeight = new Vector2(0.25f * minSq / (ex * ex), 0.25f * minSq / (ez * ez));
+            var dropScale = new Vector2(ex / avg, ez / avg);
+            _water.SetAnisotropy(waveWeight, dropScale);
+        }
 
         internal Vector3 PoolToWorld(Vector3 pool) => VolumeCenter + VolumeRotation * Vector3.Scale(pool, VolumeExtentSafe);
 

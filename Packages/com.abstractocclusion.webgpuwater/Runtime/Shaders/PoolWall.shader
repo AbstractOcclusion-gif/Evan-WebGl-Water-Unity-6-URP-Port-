@@ -9,6 +9,12 @@ Shader "WebGLWater/PoolWall"
     Properties
     {
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2 // Back
+        _TilesTiling ("Tiles Tiling", Vector) = (1,1,0,0)
+        [Toggle(_AUTOTILE)] _AutoTileByFace ("Auto Tile By Face Size", Float) = 0
+        [Toggle(_USECUSTOMTILES)] _UseCustomTiles ("Use Custom Tiles Texture", Float) = 0
+        _BaseMap ("Custom Tiles", 2D) = "white" {}
+        [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
+        _BumpScale ("Normal Scale", Float) = 1
         _ObjectShadowStrength ("Object Shadow Strength", Range(0,1)) = 0.6
     }
     SubShader
@@ -29,6 +35,8 @@ Shader "WebGLWater/PoolWall"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma shader_feature_local _USECUSTOMTILES
+            #pragma shader_feature_local _AUTOTILE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -41,6 +49,10 @@ Shader "WebGLWater/PoolWall"
             #define UNDERWATER_WALL_BOOST 1.2 // walls read a touch brighter than the surface underwater
 
             float _ObjectShadowStrength;
+            sampler2D _BaseMap;   // optional per-material tiles albedo (used when _USECUSTOMTILES is on)
+            sampler2D _BumpMap;   // pool-wall normal map (defaults flat, so untouched materials are unchanged)
+            float4 _TilesTiling;  // xy = tile repeat across the pool faces
+            float _BumpScale;
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f
@@ -63,7 +75,31 @@ Shader "WebGLWater/PoolWall"
 
             half4 frag(v2f i) : SV_Target
             {
-                float3 color = GetWallColor(i.position);
+                // Per-material tiles + tiling + normal map on the wall faces, reusing the shared
+                // analytic shading (AO / caustics / rim). Defaults reproduce the old look exactly:
+                // global _Tiles, tiling (1,1), flat normal.
+                float2 wallUV; float3 faceN, wallT, wallB;
+                WallSurface(i.position, wallUV, faceN, wallT, wallB);
+                // Auto Tile By Face Size: scale each face's UV by its WORLD size along the U/V
+                // axes (from the volume extent), so tiles keep an even density on the floor and
+                // every wall even when the pool is rectangular or deep. _TilesTiling is then a
+                // tiles-per-world-unit density. Off = the raw pool-space UV (legacy).
+            #ifdef _AUTOTILE
+                float3 volExtent = VolumeExtentSafe();
+                float2 faceWorld = float2(dot(abs(wallT), volExtent), dot(abs(wallB), volExtent));
+                float2 tileUV = wallUV * faceWorld * _TilesTiling.xy;
+            #else
+                float2 tileUV = wallUV * _TilesTiling.xy;
+            #endif
+            #ifdef _USECUSTOMTILES
+                float3 albedo = tex2D(_BaseMap, tileUV).rgb;
+            #else
+                float3 albedo = tex2D(_Tiles, tileUV).rgb;
+            #endif
+                float3 nmap = UnpackNormalScale(tex2D(_BumpMap, tileUV), _BumpScale);
+                float3 wallN = normalize(nmap.x * wallT + nmap.y * wallB + nmap.z * faceN);
+                float3 color = albedo * GetWallShade(i.position, wallN);
+
                 // Water shading gates on the footprint so geometry beyond the pool box (a wall
                 // that overhangs, or an oversized user mesh) doesn't pick up the underwater
                 // look. i.position is already pool space, so test it directly.

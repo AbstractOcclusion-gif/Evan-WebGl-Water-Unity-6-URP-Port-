@@ -15,6 +15,7 @@ Material:
   - _REAL_REFRACTION
   - _USE_PLANAR
   - _USE_SSR
+  - _USE_URP_PROBE
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
@@ -26,13 +27,19 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
+    - _FoamNormalTex:
+        m_Texture: {fileID: 2800000, guid: 704d645b388fb464686854f6645dc921, type: 3}
+        m_Scale: {x: 25, y: 25}
+        m_Offset: {x: 0, y: 0}
     - _FoamTex:
-        m_Texture: {fileID: 2800000, guid: 0fc073cfe43682649916d44991ec868d, type: 3}
-        m_Scale: {x: 1, y: 1}
+        m_Texture: {fileID: 2800000, guid: 324dfaf81cac65a42ad21a18b6b1d0a4, type: 3}
+        m_Scale: {x: 25, y: 25}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _Cull: 2
+    - _FoamNormalStrength: 1.5
+    - _FoamTexFPS: 16
     - _RealRefraction: 1
     - _ReflectionDistortion: 0.05
     - _ReflectionStrength: 1
@@ -44,6 +51,8 @@ Material:
     - _Underwater: 0
     - _UsePlanar: 1
     - _UseSSR: 1
-    m_Colors: []
+    - _UseUrpProbe: 1
+    m_Colors:
+    - _FoamTexFrames: {r: 4, g: 4, b: 0, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

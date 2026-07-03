@@ -366,46 +366,39 @@ Shader "WebGLWater/WaterSurface"
                 return tex2D(_PlanarReflectionTex, saturate(uv)).rgb;
             }
 
-            // Shade a WORLD-space ray (origin + direction) against the analytic pool/sky.
-            // The pool box is intersected in POOL space (where it is the unit box), so any
-            // volume rotation or non-uniform extent is handled exactly, while the sky
-            // lookup and sun glint use the WORLD ray - which keeps reflections/refraction
-            // angle-correct for rotated or rectangular volumes.
+            // Sample the environment (reflection probe / procedural sky) for a WORLD-space ray,
+            // plus the sun glint. This is what the water REFLECTS - never the analytic pool tiles.
+            float3 SampleEnvironment(float3 worldRay)
+            {
+                float3 color;
+            #if defined(_USE_URP_PROBE)
+                // The scene's active reflection probe / skybox (URP binds it to unity_SpecCube0),
+                // so the water matches the user's lit environment. Mip 0 keeps it mirror-sharp.
+                half4 encodedProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, worldRay, 0);
+                color = DecodeHDR(encodedProbe, unity_SpecCube0_HDR).rgb;
+            #else
+                color = texCUBE(_Sky, worldRay).rgb;
+            #endif
+                // sun glint - direction from _LightDir, tint/brightness from the Unity sun
+                color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
+                return color;
+            }
+
+            // Shade a WORLD-space ray: a DOWN ray refracts into the pool and samples the analytic
+            // floor/walls (the tiles seen THROUGH the water); an UP ray is a reflection and samples
+            // the environment only. Reflections never return the pool tiles - the floor is seen via
+            // refraction alone. The pool box is intersected in POOL space so rotation / non-uniform
+            // extent is handled exactly, while the environment uses the WORLD ray.
             float3 getSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor)
             {
-                float3 po = WorldToPool(worldOrigin);
-                float3 pd = WorldDirToPool(worldRay);
-                float3 color;
                 if (worldRay.y < 0.0)
                 {
+                    float3 po = WorldToPool(worldOrigin);
+                    float3 pd = WorldDirToPool(worldRay);
                     float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
-                    color = GetWallColor(po + pd * t.y);
+                    return GetWallColor(po + pd * t.y) * waterColor;
                 }
-                else
-                {
-                    float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
-                    float3 hit = po + pd * t.y;
-                    if (hit.y < POOL_RIM_HEIGHT)
-                    {
-                        color = GetWallColor(hit);
-                    }
-                    else
-                    {
-                    #if defined(_USE_URP_PROBE)
-                        // Reflect the scene's active reflection probe / skybox: URP binds it to
-                        // unity_SpecCube0, so the water matches the user's lit environment rather
-                        // than the baked procedural sky. Mip 0 keeps the reflection mirror-sharp.
-                        half4 encodedProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, worldRay, 0);
-                        color = DecodeHDR(encodedProbe, unity_SpecCube0_HDR).rgb;
-                    #else
-                        color = texCUBE(_Sky, worldRay).rgb;
-                    #endif
-                        // sun glint - direction from _LightDir, tint/brightness from the Unity sun
-                        color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
-                    }
-                }
-                if (worldRay.y < 0.0) color *= waterColor;
-                return color;
+                return SampleEnvironment(worldRay);
             }
 
             fixed4 frag(v2f i) : SV_Target
@@ -449,7 +442,11 @@ Shader "WebGLWater/WaterSurface"
                     // negative -> NaN sparkle.
                     float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
 
-                    float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, UNDERWATER_COLOR);
+                    // TIR reflection reflects the ENVIRONMENT, tinted underwater - never the pool
+                    // tiles. The reflected ray points back DOWN into the pool, so routing it through
+                    // getSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
+                    // reflection on the underside of the surface).
+                    float3 reflectedColor = SampleEnvironment(reflectedRay) * UNDERWATER_COLOR;
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
 
                     // Real transparency from below: sample the live scene above the surface.

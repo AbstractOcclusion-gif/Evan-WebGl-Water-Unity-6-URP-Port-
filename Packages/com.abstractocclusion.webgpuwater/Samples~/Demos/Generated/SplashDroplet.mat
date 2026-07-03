@@ -35,7 +35,7 @@ Material:
     m_Floats:
     - PixelSnap: 0
     - _EnableExternalAlpha: 0
-    - _ParticleOpacity: 0.516
+    - _ParticleOpacity: 0.178
     - _SoftFadeDistance: 0.011
     m_Colors:
     - _Color: {r: 0.92, g: 0.97, b: 1, a: 1}

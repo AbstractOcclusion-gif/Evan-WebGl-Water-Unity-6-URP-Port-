@@ -203,8 +203,8 @@ MonoBehaviour:
   waterAngularDamping: 1
   samplesPerAxis: 2
   floatRadiusScale: 1.5
-  waveDriftStrength: 1
-  verticalSettleDamping: 1
+  waveDriftStrength: 0.1
+  verticalSettleDamping: 2
 --- !u!114 &142369258
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -217,7 +217,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
-  displaceScale: 1
+  displaceScale: 0.3
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
 --- !u!54 &142369259
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -544,6 +547,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
   displaceScale: 1
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
 --- !u!23 &762163586
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -5938,26 +5944,37 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   volumeExtent: {x: 2, y: 3, z: 2}
+  enableLargeBodyWindow: 1
+  largeBodyThreshold: 48
+  simWindowMeters: 32
+  clampWindowToShore: 0
+  simWindowEdgeFadeTexels: 8
   surfaceAbove: {fileID: 2123582566}
   surfaceUnder: {fileID: 1043721375}
   poolRenderer: {fileID: 1437453446}
   godRayRenderer: {fileID: 789960789}
   isPrimary: 1
+  autoLinkReceivers: 1
   quality: {fileID: 11400000, guid: 9ac62b790871b16449e0b1f34b6796e8, type: 2}
   enableCulling: 1
   activationDistance: 100
   reflectionMode: 1
-  lightDir: {x: 2, y: 2, z: -1}
+  environmentSource: 0
+  lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
+  objectInteraction: 0
   obstacleStrength: 0.08
+  obstacleDeadband: 0.0006
+  obstacleSmoothing: 0.65
   obstacleFlipY: 1
   waterFog: 1
   fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  fogDensity: 2
+  fogDensity: 9.1
+  waterOpacity: 0
   depthDarken: 1
-  depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  depthDarkenStrength: 1
+  depthExtinction: {r: 0.6377357, g: 0.17837597, b: 0.07099317, a: 1}
+  depthDarkenStrength: 8
   causticDepthFade: 0.5
   godRayDepthFade: 0.3
   linkDepthToFog: 0
@@ -5978,12 +5995,16 @@ MonoBehaviour:
   foam: 0
   foamGenRate: 0.6
   foamDecay: 0.97
+  foamDecayResidual: 0.993
+  foamDecayRate: 1
   foamSpread: 0.2
   foamAdvect: 3
   foamFromSpeed: 6
   foamFromCurvature: 30
   foamColor: {r: 1, g: 1, b: 1, a: 1}
   foamStrength: 1
+  foamFeather: 0.15
+  foamCoreCut: 0.5
   foamBorderWidth: 0.08
   foamContactDepth: 0.06
   waveSpeed: 0.6
@@ -5993,7 +6014,9 @@ MonoBehaviour:
   rippleRadius: 0.05
   seedRipplesOnStart: 1
   conserveVolume: 1
+  conserveMaxCorrection: 0.05
   orbit: {fileID: 961739754}
+  configureCamera: 0
   splashEmitter: {fileID: 828585373}
 --- !u!1 &1433908026
 GameObject:
@@ -6012,7 +6035,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!198 &1433908027
 ParticleSystem:
   m_ObjectHideFlags: 0

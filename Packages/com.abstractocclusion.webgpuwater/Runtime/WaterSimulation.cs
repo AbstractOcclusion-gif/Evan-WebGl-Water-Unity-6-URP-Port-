@@ -31,6 +31,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Center = Shader.PropertyToID("_Center");
         static readonly int ID_Radius = Shader.PropertyToID("_Radius");
         static readonly int ID_Strength = Shader.PropertyToID("_Strength");
+        static readonly int ID_DropAxisScale = Shader.PropertyToID("_DropAxisScale");
+        static readonly int ID_WaveAxisWeight = Shader.PropertyToID("_WaveAxisWeight");
         static readonly int ID_ObstaclePrev = Shader.PropertyToID("ObstaclePrev");
         static readonly int ID_ObstacleCurr = Shader.PropertyToID("ObstacleCurr");
         static readonly int ID_ObstacleStrength = Shader.PropertyToID("_ObstacleStrength");
@@ -62,6 +64,12 @@ namespace AbstractOcclusion.WebGpuWater
         readonly int _kReduceMean, _kReduceMeanFinal;
         readonly int _groups;
         readonly Vector4 _delta; // (1/Resolution, 1/Resolution, 0, 0), precomputed once
+
+        // Per-axis anisotropy so ripples stay round in WORLD on a rectangular (non-square) pool.
+        // Defaults are the isotropic square case, so a body that never calls SetAnisotropy is
+        // identical to before. (0.25,0.25) reproduces the old 4-neighbour average Laplacian.
+        Vector4 _waveAxisWeight = new Vector4(0.25f, 0.25f, 0f, 0f);
+        Vector4 _dropAxisScale = new Vector4(1f, 1f, 0f, 0f);
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
@@ -171,11 +179,23 @@ namespace AbstractOcclusion.WebGpuWater
             (_a, _b) = (_b, _a); // ping-pong: _a is always the latest state
         }
 
+        /// <summary>Set the per-axis anisotropy for a rectangular pool so ripples read ROUND in
+        /// world. <paramref name="laplacianWeight"/> weights the wave-propagation neighbours per
+        /// axis (default 0.25,0.25 = isotropic square); <paramref name="dropScale"/> squashes the
+        /// drop stamp per axis (default 1,1). Computed by WaterVolume from the body's extent;
+        /// windowed bodies pass the defaults (their sim window is already square in world).</summary>
+        public void SetAnisotropy(Vector2 laplacianWeight, Vector2 dropScale)
+        {
+            _waveAxisWeight = new Vector4(laplacianWeight.x, laplacianWeight.y, 0f, 0f);
+            _dropAxisScale = new Vector4(dropScale.x, dropScale.y, 0f, 0f);
+        }
+
         public void AddDrop(float x, float y, float radius, float strength)
         {
             _cs.SetVector(ID_Center, new Vector4(x, y, 0, 0));
             _cs.SetFloat(ID_Radius, radius);
             _cs.SetFloat(ID_Strength, strength);
+            _cs.SetVector(ID_DropAxisScale, _dropAxisScale);
             Dispatch(_kDrop);
         }
 
@@ -195,6 +215,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _cs.SetFloat(ID_WaveSpeed, waveSpeed);
             _cs.SetFloat(ID_Damping, damping);
+            _cs.SetVector(ID_WaveAxisWeight, _waveAxisWeight);
             Dispatch(_kUpdate);
         }
 
