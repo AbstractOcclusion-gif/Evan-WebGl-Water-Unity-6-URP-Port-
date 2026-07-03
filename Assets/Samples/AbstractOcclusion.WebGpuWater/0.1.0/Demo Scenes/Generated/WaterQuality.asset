@@ -20,6 +20,12 @@ MonoBehaviour:
   highRichReflections: 1
   highMaxWaveCount: 16
   highRefineSteps: 5
+  highRenderScale: 1
+  highRealRefraction: 1
+  highMeshDetail: 0
+  highCausticInterval: 1
+  highReadbackInterval: 1
+  highMaxFoamParticles: 65536
   mediumSimResolution: 128
   mediumCausticResolution: 512
   mediumGodRaySteps: 16
@@ -27,10 +33,22 @@ MonoBehaviour:
   mediumRichReflections: 1
   mediumMaxWaveCount: 12
   mediumRefineSteps: 3
+  mediumRenderScale: 1
+  mediumRealRefraction: 1
+  mediumMeshDetail: 0
+  mediumCausticInterval: 1
+  mediumReadbackInterval: 1
+  mediumMaxFoamParticles: 65536
   lowSimResolution: 128
-  lowCausticResolution: 256
-  lowGodRaySteps: 12
+  lowCausticResolution: 128
+  lowGodRaySteps: 6
   lowGodRays: 1
   lowRichReflections: 0
-  lowMaxWaveCount: 8
+  lowMaxWaveCount: 6
   lowRefineSteps: 2
+  lowRenderScale: 0.6
+  lowRealRefraction: 0
+  lowMeshDetail: 100
+  lowCausticInterval: 3
+  lowReadbackInterval: 4
+  lowMaxFoamParticles: 1024

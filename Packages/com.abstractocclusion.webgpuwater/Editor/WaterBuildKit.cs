@@ -472,34 +472,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return go;
         }
 
-        // XY-plane grid in [-1,1], z = 0 (matches the original lightgl plane mesh).
-        internal static Mesh BuildGrid(int detail)
-        {
-            int n = detail + 1;
-            var verts = new Vector3[n * n];
-            for (int i = 0; i < n; i++)
-                for (int j = 0; j < n; j++)
-                    verts[i * n + j] = new Vector3(i / (float)detail * 2f - 1f, j / (float)detail * 2f - 1f, 0f);
-
-            var tris = new int[detail * detail * 6];
-            int t = 0;
-            for (int i = 0; i < detail; i++)
-                for (int j = 0; j < detail; j++)
-                {
-                    int a = i * n + j;
-                    int b = (i + 1) * n + j;
-                    int c = i * n + (j + 1);
-                    int d = (i + 1) * n + (j + 1);
-                    tris[t++] = a; tris[t++] = c; tris[t++] = b;
-                    tris[t++] = b; tris[t++] = c; tris[t++] = d;
-                }
-
-            var mesh = new Mesh { name = "WaterGrid", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-            mesh.vertices = verts;
-            mesh.triangles = tris;
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeMeshBoundsSize);
-            return mesh;
-        }
+        // XY-plane grid in [-1,1], z = 0. Shared with the runtime (the Low tier rebuilds a
+        // coarser grid on weak devices), so the actual builder lives in WaterMeshBuilder.
+        internal static Mesh BuildGrid(int detail) => WaterMeshBuilder.BuildGrid(detail);
 
         // Open-top box: floor at y=-1, walls up to y=2/12, spanning x,z in [-1,1]. Faces inward.
         internal static Mesh BuildPool()

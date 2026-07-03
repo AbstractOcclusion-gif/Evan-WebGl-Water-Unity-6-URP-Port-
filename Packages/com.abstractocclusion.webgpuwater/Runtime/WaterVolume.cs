@@ -290,7 +290,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(0.1f, 2.0f)] public float waveSpeed = 0.6f;
         [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
         [Range(0.90f, 1.0f)] public float damping = 0.99f;
-        [Tooltip("Simulation sub-steps per frame. More = faster, smoother propagation.")]
+        [Tooltip("Solver steps per frame AT THE 60 FPS REFERENCE - the sim accumulates real " +
+                 "time and runs this rate regardless of frame rate, so wave speed is identical " +
+                 "in a 30 fps build and a 144 fps editor. More = faster, smoother propagation.")]
         [Range(1, 8)] public int stepsPerFrame = 2;
         [Tooltip("Height added by a click/drag ripple (world units; volume-scale independent).")]
         [Range(0.001f, 0.08f)] public float rippleStrength = 0.025f;
@@ -300,9 +302,9 @@ namespace AbstractOcclusion.WebGpuWater
         public bool seedRipplesOnStart = true;
         [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
         public bool conserveVolume = true;
-        [Tooltip("Caps how far Conserve Volume can shift the whole surface per step (pool units). " +
-                 "The true drift mean is tiny, so this doesn't affect normal conservation - it only " +
-                 "blocks the over-simulation 'plane pop' from an imprecise float-mip mean on WebGPU/GLES.")]
+        [Tooltip("Safety cap on how far Conserve Volume can shift the whole surface per step " +
+                 "(pool units). The mean is computed exactly, so this only guards against a " +
+                 "diverged transient moving the plane in one step.")]
         [Range(0.005f, 0.5f)] public float conserveMaxCorrection = 0.05f;
 
         [Header("Camera")]
@@ -365,6 +367,15 @@ namespace AbstractOcclusion.WebGpuWater
         int _godRaySteps = WaterQuality.Default.GodRaySteps;
         int _maxWaveCount = WaterQuality.Default.MaxWaveCount;
         int _peakedRefineSteps = WaterQuality.Default.RefineSteps;
+        // Low-end tier knobs (see WaterQuality): at their defaults every one is a no-op.
+        float _renderScale = WaterQuality.Default.RenderScale;
+        bool _realRefractionAllowed = true;
+        int _meshDetail = WaterQuality.Default.MeshDetail;
+        int _causticInterval = WaterQuality.Default.CausticInterval;
+        int _readbackInterval = WaterQuality.Default.ReadbackInterval;
+        int _maxFoamParticles = WaterQuality.Default.MaxFoamParticles;
+        /// <summary>Tier cap on the GPU foam-particle pool (WaterFoamParticles clamps to it).</summary>
+        internal int FoamParticleBudget => _maxFoamParticles;
         // Per-body surface material instances so reflection keywords don't leak across bodies
         // that share the source material. Created at OnEnable (play mode only) and destroyed at
         // OnDisable, which also restores the renderer's original shared material so an
@@ -374,10 +385,15 @@ namespace AbstractOcclusion.WebGpuWater
         const string KW_SSR = "_USE_SSR";
         const string KW_PLANAR = "_USE_PLANAR";
         const string KW_URP_PROBE = "_USE_URP_PROBE";
-        RenderTexture _heightMip; // mipped copy of the height field; top 1x1 mip = mean (volume conservation)
+        const string KW_REAL_REFRACTION = "_REAL_REFRACTION";
+        // Low-tier coarse grid swapped onto the surface renderers at init (play mode only);
+        // the originals are restored on disable, mirroring the material-instance pattern.
+        Mesh _lowDetailGrid;
+        Mesh _surfaceAboveOriginalMesh, _surfaceUnderOriginalMesh;
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
 
         bool _paused;
+        float _stepDebt; // fractional solver steps owed (frame-rate-independent stepping)
 
         bool _windowed; // this body runs the camera-following windowed sim (decided at OnEnable)
 
@@ -412,6 +428,13 @@ namespace AbstractOcclusion.WebGpuWater
         // Skip a sim step after an editor hitch/breakpoint: integrating one huge dt would
         // slam the explicit solver with energy in a single step.
         const float MaxStepSeconds = 1f;
+
+        // Frame-rate-independent stepping: 'stepsPerFrame' is authored against this frame
+        // rate; the solver runs stepsPerFrame * ReferenceFrameRate steps per SECOND at any
+        // fps. The per-frame cap bounds the catch-up burst on slow devices/hitches - beyond
+        // it the debt is dropped, so waves degrade to "slightly slower" instead of bursting.
+        const float ReferenceFrameRate = 60f;
+        const int MaxSolverStepsPerFrame = 8;
 
         // Numeric guards.
         const float MinVolumeExtent = 1e-5f;        // a zero extent would collapse the pool-space transforms
@@ -468,6 +491,7 @@ namespace AbstractOcclusion.WebGpuWater
             _sampler = new WaterSurfaceSampler(this); // probes readback support itself
             _simWindow = new WaterSimWindow(this);
             _lastEditorTick = 0d;
+            _stepDebt = 0f;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
 
             if (obstacleShader != null)
@@ -475,21 +499,6 @@ namespace AbstractOcclusion.WebGpuWater
                                               VolumeCenter, VolumeRotation, VolumeExtentSafe);
 
             _caustics = new WaterCausticsPass(causticsShader, causticResolution);
-
-            // Runtime-created GPU objects are HideAndDontSave so an edit-mode preview can never
-            // serialize them into the scene.
-            _heightMip = new RenderTexture(_simRes, _simRes, 0, RenderTextureFormat.RFloat)
-            {
-                useMipMap = true,
-                autoGenerateMips = false,
-                // Point: only the 1x1 top mip is ever read, and a filtering sampler bound to an
-                // unfilterable float32 texture is a WebGPU validation hazard.
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp,
-                name = "HeightMip",
-                hideFlags = HideFlags.HideAndDontSave
-            };
-            _heightMip.Create();
 
             // seed the pool with a few ripples. Compensate the strength for extent.y (like
             // AddRipple) so seed splashes keep a fixed world height on a deep pool - PoolToWorld
@@ -520,6 +529,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (!Bodies.Contains(this)) Bodies.Add(this);
             _mpb = new MaterialPropertyBlock();
             ApplyReflections();
+            ApplyMeshDetail();   // Low tier: coarse surface grid (play mode only)
+            ApplyPipelineTier(); // Low tier: render scale / opaque-copy release (primary, play mode only)
 
             BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
 
@@ -544,14 +555,101 @@ namespace AbstractOcclusion.WebGpuWater
             _obstacle?.Dispose(); _obstacle = null;
             _caustics?.Dispose(); _caustics = null;
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
-            ReleaseRenderTexture(ref _heightMip);
             RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
             RestoreSurfaceMaterial(surfaceUnder, ref _surfaceUnderInstance, ref _surfaceUnderOriginal);
+            RestoreMeshDetail();
+            RestorePipelineTier();
             // Fresh per-enable state: a re-enable must not float objects on a stale height
             // field, and the window centre re-primes from the camera.
             _sampler = null;
             _simWindow = null;
             _inputRouter = null;
+        }
+
+        // ---- Low-tier surface grid swap ----------------------------------------
+        // The authored grid is 200x200 and the vertex shader runs 4 fetches + the wave sines
+        // per vertex; a 128 sim doesn't need that tessellation. Play mode only (an edit-mode
+        // swap could serialize the runtime mesh reference into the scene), mirroring the
+        // material-instance pattern: originals restored on disable.
+        void ApplyMeshDetail()
+        {
+            if (!Application.isPlaying || _meshDetail <= 0) return;
+
+            _lowDetailGrid = WaterMeshBuilder.BuildGrid(_meshDetail);
+            _lowDetailGrid.hideFlags = HideFlags.HideAndDontSave;
+            SwapRendererMesh(surfaceAbove, _lowDetailGrid, ref _surfaceAboveOriginalMesh);
+            SwapRendererMesh(surfaceUnder, _lowDetailGrid, ref _surfaceUnderOriginalMesh);
+        }
+
+        void RestoreMeshDetail()
+        {
+            RestoreRendererMesh(surfaceAbove, ref _surfaceAboveOriginalMesh);
+            RestoreRendererMesh(surfaceUnder, ref _surfaceUnderOriginalMesh);
+            if (_lowDetailGrid != null) { DestroyRuntimeObject(_lowDetailGrid); _lowDetailGrid = null; }
+        }
+
+        // The caustic pass shares whichever grid the surface uses this session.
+        Mesh EffectiveWaterMesh => _lowDetailGrid != null ? _lowDetailGrid : waterMesh;
+
+        static void SwapRendererMesh(Renderer r, Mesh replacement, ref Mesh original)
+        {
+            original = null;
+            if (r == null) return;
+            var filter = r.GetComponent<MeshFilter>();
+            if (filter == null) return;
+            original = filter.sharedMesh;
+            filter.sharedMesh = replacement;
+        }
+
+        static void RestoreRendererMesh(Renderer r, ref Mesh original)
+        {
+            if (original == null) return;
+            var filter = r != null ? r.GetComponent<MeshFilter>() : null;
+            if (filter != null) filter.sharedMesh = original;
+            original = null;
+        }
+
+        // ---- Low-tier global URP knobs ------------------------------------------
+        // Render scale and the opaque-texture copy are PIPELINE-wide, so the primary body
+        // applies them once (play mode only) and restores the authored values on disable -
+        // the asset never keeps a tier's values.
+#if WEBGPUWATER_URP
+        static WaterVolume _pipelineOwner; // the body that applied the tweaks (and must restore them)
+        static float _savedRenderScale;
+        static bool _savedOpaqueTexture;
+#endif
+
+        void ApplyPipelineTier()
+        {
+#if WEBGPUWATER_URP
+            if (!Application.isPlaying || !isPrimary || _pipelineOwner != null) return;
+            var pipeline = UnityEngine.Rendering.Universal.UniversalRenderPipeline.asset;
+            if (pipeline == null) return;
+
+            bool wantScale = _renderScale < 1f;
+            bool wantOpaqueOff = !_realRefractionAllowed; // nothing else in the package reads the opaque copy
+            if (!wantScale && !wantOpaqueOff) return;
+
+            _savedRenderScale = pipeline.renderScale;
+            _savedOpaqueTexture = pipeline.supportsCameraOpaqueTexture;
+            if (wantScale) pipeline.renderScale = _renderScale;
+            if (wantOpaqueOff) pipeline.supportsCameraOpaqueTexture = false;
+            _pipelineOwner = this;
+#endif
+        }
+
+        void RestorePipelineTier()
+        {
+#if WEBGPUWATER_URP
+            if (_pipelineOwner != this) return; // only the body that applied restores
+            var pipeline = UnityEngine.Rendering.Universal.UniversalRenderPipeline.asset;
+            if (pipeline != null)
+            {
+                pipeline.renderScale = _savedRenderScale;
+                pipeline.supportsCameraOpaqueTexture = _savedOpaqueTexture;
+            }
+            _pipelineOwner = null;
+#endif
         }
 
         bool HasRequiredWiring() => simCompute != null && causticsShader != null && waterMesh != null;
@@ -591,16 +689,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (obj == null) return;
             if (Application.isPlaying) Destroy(obj); else DestroyImmediate(obj);
-        }
-
-        // Release frees the GPU surface immediately; Destroy frees the wrapper object, which
-        // otherwise accumulates across enable/disable cycles until scene unload.
-        static void ReleaseRenderTexture(ref RenderTexture rt)
-        {
-            if (rt == null) return;
-            rt.Release();
-            DestroyRuntimeObject(rt);
-            rt = null;
         }
 
         // Fill in the scene-level references a prefab can't carry, so dropping the WaterVolume
@@ -644,6 +732,20 @@ namespace AbstractOcclusion.WebGpuWater
             _godRaySteps = Mathf.Max(1, tier.GodRaySteps);
             _maxWaveCount = tier.MaxWaveCount;
             _peakedRefineSteps = tier.RefineSteps;
+            _renderScale = tier.RenderScale;
+            _realRefractionAllowed = tier.RealRefraction;
+            _meshDetail = tier.MeshDetail;
+            _causticInterval = tier.CausticInterval;
+            _readbackInterval = tier.ReadbackInterval;
+            _maxFoamParticles = tier.MaxFoamParticles;
+
+            // One line per enable so a build's console shows exactly which knobs landed -
+            // tier mismatches (stale build cache, wrong asset, missing serialized fields)
+            // are otherwise near-impossible to diagnose on a device.
+            Debug.Log($"WaterVolume '{name}': quality tier applied - sim {_simRes}, caustics {causticResolution}, " +
+                      $"mesh {(_meshDetail > 0 ? _meshDetail.ToString() : "authored")}, renderScale {_renderScale:0.##}, " +
+                      $"realRefraction {_realRefractionAllowed}, godRays {_godRaysAllowed} ({_godRaySteps} steps), " +
+                      $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}", this);
         }
 
         // Give the surface renderers per-body material instances and set their reflection
@@ -692,6 +794,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Base environment is independent of the mode above and of the tier: a single cube
             // sample either way, so it is not capped on Low.
             SetKeyword(m, KW_URP_PROBE, environmentSource == EnvironmentSource.UrpProbe);
+            // A tier can DISABLE real refraction (it needs the URP opaque-texture copy, a big
+            // bandwidth cost on mobile tilers) but never force it on over the authored material.
+            if (!_realRefractionAllowed) SetKeyword(m, KW_REAL_REFRACTION, false);
         }
 
         static void SetKeyword(Material m, string keyword, bool on)
@@ -748,14 +853,19 @@ namespace AbstractOcclusion.WebGpuWater
             // Caustics/god rays are out of scope for windowed bodies (the caustic pass maps the
             // whole floor from _WaterTex, which now holds only the moving window). See the
             // floor-relative scheme noted in docs/large-water-sim-window-plan.md.
-            if (_simulate && !_windowed) RenderCaustics();  // renders THIS body's caustic RT from its own sim
+            // The tier can amortise the pass over N frames (the caustic RT simply holds).
+            if (_simulate && !_windowed && Time.frameCount % _causticInterval == 0)
+                RenderCaustics();  // renders THIS body's caustic RT from its own sim
 
             ApplyBodyBlock();           // per-body uniforms -> this body's renderers (MPB)
             // Primary bridge: mirror this body's data to globals as the fallback for objects
             // without a WaterMembership (those resolve their own containing body instead).
             if (isPrimary) Publisher.PublishBodyGlobals();
 
-            if (_simulate) _sampler.RequestReadback();  // paused bodies keep their last height (objects still float)
+            // Tier-amortised readback: buoyancy already tolerates async latency, so weak
+            // devices can trade a few frames of it for GPU->CPU bandwidth.
+            if (_simulate && Time.frameCount % _readbackInterval == 0)
+                _sampler.RequestReadback();  // paused bodies keep their last height (objects still float)
         }
 
         // Per-body uniforms pushed to THIS body's own renderers via a property block, so
@@ -956,8 +1066,24 @@ namespace AbstractOcclusion.WebGpuWater
         void Step(float seconds)
         {
             if (seconds > MaxStepSeconds) return; // hitch/breakpoint guard, see the const
+            if (seconds <= 0f) return;            // first edit-mode tick: no elapsed time yet
 
-            if (seconds <= 0f) return; // first edit-mode tick: no elapsed time yet
+            // Frame-rate-independent stepping: the explicit solver advances a fixed amount
+            // per STEP, so stepping per rendered frame made wave speed scale with fps (a
+            // 120 fps editor ran ripples 4x faster than a 30 fps build). Accumulate real
+            // time and pay it out in whole steps at the authored rate instead.
+            _stepDebt += seconds * ReferenceFrameRate * Mathf.Max(1, stepsPerFrame);
+            int steps = (int)_stepDebt;
+            if (steps <= 0) return; // very high fps: no full step owed yet, field unchanged
+            if (steps > MaxSolverStepsPerFrame)
+            {
+                steps = MaxSolverStepsPerFrame;
+                _stepDebt = 0f; // drop the excess: degrade to slightly-slower waves, never a burst
+            }
+            else
+            {
+                _stepDebt -= steps;
+            }
 
             // Scroll the sim window to track the camera before injecting/stepping, so ripples
             // stay world-anchored. No-op for whole-body bodies.
@@ -977,16 +1103,12 @@ namespace AbstractOcclusion.WebGpuWater
                                      obstacleStrength / VolumeExtentSafe.y, obstacleFlipY);
             }
 
-            int steps = Mathf.Max(1, stepsPerFrame);
             for (int i = 0; i < steps; i++)
                 _water.StepSimulation(waveSpeed, damping);
 
-            if (conserveVolume)
-            {
-                Graphics.Blit(_water.Texture, _heightMip); // copy height (R) into the mipped RT
-                _heightMip.GenerateMips();                 // top 1x1 mip = mean height
-                _water.ConserveVolume(_heightMip, conserveMaxCorrection); // subtract the (clamped) mean
-            }
+            // Exact GPU-reduced mean (no more Blit + GenerateMips: the float-mip mean silently
+            // point-sampled in WebGPU builds and popped the plane; see WaterSim.compute).
+            if (conserveVolume) _water.ConserveVolume(conserveMaxCorrection);
 
             _water.UpdateNormals();
 
@@ -997,7 +1119,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Render this body's own sim into its own caustic RT. The RT reaches the renderers
         // via the MPB; the primary also mirrors it to the _CausticTex global for objects.
-        void RenderCaustics() => _caustics.Render(waterMesh, _water?.Texture);
+        void RenderCaustics() => _caustics.Render(EffectiveWaterMesh, _water?.Texture);
 
         // ---- volume placement frame (center + rotation + non-uniform extent) ----
         internal Vector3 VolumeExtentSafe => new Vector3(

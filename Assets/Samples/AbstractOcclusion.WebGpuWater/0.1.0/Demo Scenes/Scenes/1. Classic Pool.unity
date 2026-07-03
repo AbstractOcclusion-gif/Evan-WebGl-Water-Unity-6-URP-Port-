@@ -5867,18 +5867,18 @@ MonoBehaviour:
   quality: {fileID: 11400000, guid: 9ac62b790871b16449e0b1f34b6796e8, type: 2}
   enableCulling: 0
   activationDistance: 100
-  reflectionMode: 1
+  reflectionMode: 0
   environmentSource: 0
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
-  causticResolution: 256
+  causticResolution: 128
   objectInteraction: 0
   obstacleStrength: 0.08
   obstacleSmoothing: 0.65
   obstacleFlipY: 1
-  waterFog: 1
+  waterFog: 0
   fogColor: {r: 0.037329994, g: 0.13441925, b: 0.18490559, a: 1}
   fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  fogDensity: 26.2
+  fogDensity: 12.2
   waterOpacity: 0
   depthDarken: 0
   depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -5900,7 +5900,7 @@ MonoBehaviour:
   waveAmplitudeScale: 4
   waveDirectionSpread: 2
   waveNormalStrength: 1
-  foam: 1
+  foam: 0
   foamGenRate: 0.3
   foamDecay: 0.978
   foamDecayResidual: 0.993
@@ -5914,12 +5914,14 @@ MonoBehaviour:
   foamContactDepth: 0
   waveSpeed: 0.5
   damping: 0.99
-  stepsPerFrame: 1
-  rippleStrength: 0.025
+  stepsPerFrame: 2
+  rippleStrength: 0.015
   rippleRadius: 0.05
   seedRipplesOnStart: 1
   conserveVolume: 1
+  conserveMaxCorrection: 0.5
   orbit: {fileID: 961739754}
+  configureCamera: 0
   splashEmitter: {fileID: 1342015187}
 --- !u!1 &1806408810
 GameObject:
@@ -6046,7 +6048,7 @@ Light:
   m_InnerSpotAngle: 21.80208
   m_CookieSize2D: {x: 0.5, y: 0.5}
   m_Shadows:
-    m_Type: 2
+    m_Type: 1
     m_Resolution: -1
     m_CustomResolution: -1
     m_Strength: 1

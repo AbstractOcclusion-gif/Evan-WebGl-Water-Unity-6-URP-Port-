@@ -17,6 +17,8 @@ namespace AbstractOcclusion.WebGpuWater
         const string KernelNormal = "Normal";
         const string KernelObstacle = "Obstacle";
         const string KernelFoam = "Foam";
+        const string KernelReduceMean = "ReduceMean";
+        const string KernelReduceMeanFinal = "ReduceMeanFinal";
         const string KernelConserve = "Conserve";
         const string KernelScroll = "Scroll";
         const string KernelScrollFoam = "ScrollFoam";
@@ -44,7 +46,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamAdvect = Shader.PropertyToID("_FoamAdvect");
         static readonly int ID_FoamSrc = Shader.PropertyToID("FoamSrc");
         static readonly int ID_FoamDst = Shader.PropertyToID("FoamDst");
-        static readonly int ID_HeightMip = Shader.PropertyToID("HeightMip");
+        static readonly int ID_PartialSums = Shader.PropertyToID("PartialSums");
+        static readonly int ID_MeanResult = Shader.PropertyToID("MeanResult");
         static readonly int ID_MeanCorrectionMax = Shader.PropertyToID("_MeanCorrectionMax");
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
 
@@ -53,12 +56,17 @@ namespace AbstractOcclusion.WebGpuWater
 
         readonly ComputeShader _cs;
         readonly int _kDrop, _kUpdate, _kNormal, _kObstacle, _kFoam, _kConserve, _kScroll, _kScrollFoam;
+        readonly int _kReduceMean, _kReduceMeanFinal;
         readonly int _groups;
         readonly Vector4 _delta; // (1/Resolution, 1/Resolution, 0, 0), precomputed once
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
         RenderTexture _foamA, _foamB; // foam amount ping-pong (R)
+        // Exact mean-height reduction for Conserve (see the WaterSim.compute rationale:
+        // the old float-mip mean silently point-sampled in WebGPU builds).
+        GraphicsBuffer _partialSums; // one float per 8x8 thread group
+        GraphicsBuffer _meanResult;  // single float: the exact mean
 
         /// <summary>The texture holding the current simulation state.</summary>
         public RenderTexture Texture => _a;
@@ -82,6 +90,8 @@ namespace AbstractOcclusion.WebGpuWater
             _kNormal = cs.FindKernel(KernelNormal);
             _kObstacle = cs.FindKernel(KernelObstacle);
             _kFoam = cs.FindKernel(KernelFoam);
+            _kReduceMean = cs.FindKernel(KernelReduceMean);
+            _kReduceMeanFinal = cs.FindKernel(KernelReduceMeanFinal);
             _kConserve = cs.FindKernel(KernelConserve);
             _kScroll = cs.FindKernel(KernelScroll);
             _kScrollFoam = cs.FindKernel(KernelScrollFoam);
@@ -92,6 +102,10 @@ namespace AbstractOcclusion.WebGpuWater
             _foamA = Create(RenderTextureFormat.RFloat, "WaterFoam");
             _foamB = Create(RenderTextureFormat.RFloat, "WaterFoam");
             Clear(_a); Clear(_b); Clear(_foamA); Clear(_foamB);
+
+            _partialSums = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _groups * _groups, sizeof(float));
+            _meanResult = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(float));
+            _meanResult.SetData(new float[1]); // mean = 0 until the first reduction
         }
 
         RenderTexture Create(RenderTextureFormat format, string name)
@@ -124,6 +138,8 @@ namespace AbstractOcclusion.WebGpuWater
             ReleaseAndDestroy(ref _b);
             ReleaseAndDestroy(ref _foamA);
             ReleaseAndDestroy(ref _foamB);
+            _partialSums?.Dispose(); _partialSums = null;
+            _meanResult?.Dispose(); _meanResult = null;
         }
 
         // Release frees the GPU surface immediately; Destroy frees the wrapper object, which
@@ -203,13 +219,25 @@ namespace AbstractOcclusion.WebGpuWater
             (_foamA, _foamB) = (_foamB, _foamA);
         }
 
-        /// <summary>Subtracts the mean height (from heightMip's top mip) to conserve volume.
-        /// The subtracted mean is clamped to +/- <paramref name="maxCorrection"/> (pool units) so an
-        /// imprecise float-mip mean under over-simulation can't shift the whole surface at once.</summary>
-        public void ConserveVolume(RenderTexture heightMip, float maxCorrection)
+        /// <summary>Subtracts the mean height to conserve volume. The mean is computed EXACTLY
+        /// by a two-pass compute reduction (the old Blit + GenerateMips top-mip read silently
+        /// point-sampled in WebGPU builds - float32 isn't filterable there - making the "mean"
+        /// one arbitrary texel and popping the whole plane). The subtracted mean stays clamped
+        /// to +/- <paramref name="maxCorrection"/> (pool units) as a pure safety bound.</summary>
+        public void ConserveVolume(float maxCorrection)
         {
-            _cs.SetTexture(_kConserve, ID_HeightMip, heightMip);
+            SetGridUniforms();
             _cs.SetFloat(ID_MeanCorrectionMax, maxCorrection);
+
+            _cs.SetTexture(_kReduceMean, ID_Src, _a);
+            _cs.SetBuffer(_kReduceMean, ID_PartialSums, _partialSums);
+            _cs.Dispatch(_kReduceMean, _groups, _groups, 1);
+
+            _cs.SetBuffer(_kReduceMeanFinal, ID_PartialSums, _partialSums);
+            _cs.SetBuffer(_kReduceMeanFinal, ID_MeanResult, _meanResult);
+            _cs.Dispatch(_kReduceMeanFinal, 1, 1, 1);
+
+            _cs.SetBuffer(_kConserve, ID_MeanResult, _meanResult);
             Dispatch(_kConserve);
         }
 

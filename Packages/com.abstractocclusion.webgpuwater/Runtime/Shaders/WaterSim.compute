@@ -9,6 +9,8 @@
 #pragma kernel Normal
 #pragma kernel Obstacle
 #pragma kernel Foam
+#pragma kernel ReduceMean
+#pragma kernel ReduceMeanFinal
 #pragma kernel Conserve
 #pragma kernel Scroll
 #pragma kernel ScrollFoam
@@ -16,9 +18,8 @@
 // Compute thread-group size. MUST equal WaterSimulation.ThreadGroupSize on the C# side.
 #define THREAD_GROUP_SIZE 8
 
-// LOD that samples HeightMip's top (1x1) mip = the mean height. Any value >= the largest
-// mip index works (SampleLevel clamps to the top), so this covers every practical resolution.
-#define MEAN_MIP_LOD 20.0
+// Threads in one reduction group (8x8 spatial pass and the 1D final pass alike).
+#define REDUCE_GROUP_THREADS 64
 
 static const float PI = 3.141592653589793;
 
@@ -61,13 +62,20 @@ static const float OBSTACLE_DELTA_DEADBAND = 0.0015;
 Texture2D<float4>   Src;   // previous state (read via Load)
 RWTexture2D<float4> Dst;   // write destination
 
-// Mip-mapped copy of the height channel; its top (1x1) mip is the mean height.
-Texture2D<float4> HeightMip;
-SamplerState sampler_HeightMip;
+// Exact mean-height reduction for Conserve. The old path (Blit + GenerateMips, read the
+// 1x1 top mip) silently broke in WebGPU builds: float32 textures are NOT filterable there,
+// so the emulated mip chain point-samples and the "mean" collapses to one arbitrary texel
+// of the ripple field - Conserve then subtracted a wave crest/trough instead of the true
+// mean, riding the whole plane up and popping it down. A groupshared tree reduction sums
+// every texel exactly on every backend (and is cheaper than the fullscreen blit was).
+RWStructuredBuffer<float> PartialSums; // one partial sum per 8x8 group (ReduceMean out)
+RWStructuredBuffer<float> MeanResult;  // single float: the exact mean height
+
+groupshared float gsSum[REDUCE_GROUP_THREADS];
 
 float  _Size;     // texture resolution (set per quality tier from C#)
 float2 _Delta;    // 1.0 / _Size
-float  _MeanCorrectionMax; // Conserve: max |mean| subtracted per step (pool units); caps over-sim plane pops
+float  _MeanCorrectionMax; // Conserve: max |mean| subtracted per step (pool units); pure safety clamp
 
 // Scroll (windowed large bodies): integer texel shift of the whole sim state so
 // ripples stay world-anchored while the sim window follows the camera. C# passes
@@ -253,17 +261,67 @@ void Foam(uint3 id : SV_DispatchThreadID)
     FoamDst[p] = saturate(foam);
 }
 
-// Subtract the mean height so the closed pool conserves volume (stops the whole
-// surface drifting up/down as ripples are added). Mean = top mip of HeightMip.
+// NOTE on structure: WGSL's uniformity analysis (WebGPU) is more conservative than the
+// HLSL spec and rejects the classic tree reduction (barriers inside a loop that also
+// contains thread-index branches). Both kernels therefore keep every barrier in
+// straight-line, provably uniform control flow: all threads write groupshared, ONE
+// barrier, then thread 0 serially sums the 64 slots (negligible at this size). Loop
+// trip counts are uniform and out-of-range reads use select(), never a branch.
+
+// Pass 1: each 8x8 group sums its 64 heights and writes one partial sum.
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ReduceMean(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid : SV_GroupID)
+{
+    gsSum[gi] = Read(int2(id.xy)).r;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (gi == 0)
+    {
+        float sum = 0.0;
+        [unroll]
+        for (uint i = 0; i < REDUCE_GROUP_THREADS; i++) sum += gsSum[i];
+        uint groupsPerSide = (uint)_Size / THREAD_GROUP_SIZE;
+        PartialSums[gid.y * groupsPerSide + gid.x] = sum;
+    }
+}
+
+// Pass 2 (single group): strided sum over all partials, then divide by the texel
+// count. Handles any grid size that is a multiple of the thread-group size.
+[numthreads(REDUCE_GROUP_THREADS, 1, 1)]
+void ReduceMeanFinal(uint gi : SV_GroupIndex)
+{
+    uint groupsPerSide = (uint)_Size / THREAD_GROUP_SIZE;
+    uint count = groupsPerSide * groupsPerSide;
+    uint iterations = (count + REDUCE_GROUP_THREADS - 1) / REDUCE_GROUP_THREADS; // uniform trip count
+
+    float sum = 0.0;
+    for (uint k = 0; k < iterations; k++)
+    {
+        uint i = gi + k * REDUCE_GROUP_THREADS;
+        sum += (i < count) ? PartialSums[i] : 0.0; // select, not a branch
+    }
+    gsSum[gi] = sum;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (gi == 0)
+    {
+        float total = 0.0;
+        [unroll]
+        for (uint i = 0; i < REDUCE_GROUP_THREADS; i++) total += gsSum[i];
+        MeanResult[0] = total / (_Size * _Size);
+    }
+}
+
+// Subtract the (exact) mean height so the closed pool conserves volume - stops the
+// whole surface drifting up as positive drops (touch drags, wake drops) are added.
 [numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Conserve(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
     float4 info = Read(p);
-    float mean = HeightMip.SampleLevel(sampler_HeightMip, float2(0.5, 0.5), MEAN_MIP_LOD).r;
-    // Cap the per-step correction: on backends where the float-mip mean is imprecise (WebGPU/GLES),
-    // a big transient can spike it and pop the whole plane. The true drift mean is tiny, so clamping
-    // removes the spurious spike without affecting normal volume conservation.
+    float mean = MeanResult[0];
+    // Safety clamp only: the mean is exact now, but a diverged transient (see Sanitize)
+    // should still never be allowed to shift the whole plane in one step.
     mean = clamp(mean, -_MeanCorrectionMax, _MeanCorrectionMax);
     info.r -= mean;
     Dst[p] = info;

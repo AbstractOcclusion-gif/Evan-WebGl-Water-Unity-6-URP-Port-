@@ -158,7 +158,11 @@ namespace AbstractOcclusion.WebGpuWater
             _kSpawn = particleCompute.FindKernel(KernelSpawn);
             _kUpdate = particleCompute.FindKernel(KernelUpdate);
 
-            _capacityPow2 = Mathf.NextPowerOfTwo(Mathf.Max(UpdateThreadGroupSize, capacity));
+            // Tier cap first: the whole pool is drawn every frame (dead slots emit degenerate
+            // quads), so weak devices pay for capacity whether particles are alive or not.
+            // Relies on WaterVolume's earlier execution order (-50) having applied its tier.
+            int budget = Mathf.Min(capacity, volume.FoamParticleBudget);
+            _capacityPow2 = Mathf.NextPowerOfTwo(Mathf.Max(UpdateThreadGroupSize, budget));
             _particles = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _capacityPow2, ParticleStride);
             _particles.SetData(new FoamParticle[_capacityPow2]); // life = 0 -> every slot dead
             _counters = new GraphicsBuffer(GraphicsBuffer.Target.Structured, CounterCount, sizeof(uint));
