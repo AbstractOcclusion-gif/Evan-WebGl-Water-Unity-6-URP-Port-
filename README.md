@@ -263,6 +263,11 @@ different shading model than the transparent pool path.
 gradient from a Terrain heightmap, but full terrain integration (splat/detail blending, robust
 handling of arbitrary terrains) is not there yet — treat it as a preview.
 
+**Foam and foam particles are an enhancement area.** The turbulence-driven surface foam and the
+GPU foam/spray particles are functional and shipping, but are deliberately left as a place to push
+further: richer foam shaping, wake/trail particle emitters, and more physically-driven spray are
+planned rather than done.
+
 **Reflections don't all scale.** Planar reflection is a second camera render *per body*, so it
 does not scale to many bodies — use SSR + a reflection probe for multi-body scenes and reserve
 planar for a single hero body.
