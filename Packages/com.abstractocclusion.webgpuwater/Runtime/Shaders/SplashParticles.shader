@@ -94,7 +94,11 @@ Shader "WebGLWater/SplashParticles"
                 float sceneEye = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(suv, 0, 0)));
                 alpha *= saturate((sceneEye - i.fade.y) / _SoftFadeDistance);
 
-                float3 lit = _Tint.rgb * i.color.rgb * sprite.rgb * (FOAM_AMBIENT + _SunColor * i.fade.x);
+                // The flipbook is premultiplied (rgb = intensity * tint), so sprite.rgb
+                // re-applies the intensity already present in sprite.a and darkens the
+                // sprite wherever erosion boosts coverage above it -> the black halo.
+                // The crown's true (un-premultiplied) color is flat _Tint, so light that.
+                float3 lit = _Tint.rgb * i.color.rgb * (FOAM_AMBIENT + _SunColor * i.fade.x);
                 return fixed4(lit, alpha);
             }
             ENDCG

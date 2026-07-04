@@ -16,6 +16,12 @@ Shader "WebGLWater/PoolWall"
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Float) = 1
         _ObjectShadowStrength ("Object Shadow Strength", Range(0,1)) = 0.6
+        // Matches WaterReceiver's caustic controls. Default 2 reproduces the legacy baked
+        // strength, so existing pools look unchanged until tuned (WaterReceiver defaults to 4,
+        // but the pool's caustic term also carries refracted diffuse + rim occlusion, so the
+        // two strength values are not directly comparable).
+        _CausticStrength ("Caustic Strength", Range(0,8)) = 2
+        _CausticTint ("Caustic Tint", Color) = (1,1,1,1)
     }
     SubShader
     {
@@ -53,6 +59,8 @@ Shader "WebGLWater/PoolWall"
             sampler2D _BumpMap;   // pool-wall normal map (defaults flat, so untouched materials are unchanged)
             float4 _TilesTiling;  // xy = tile repeat across the pool faces
             float _BumpScale;
+            float _CausticStrength; // per-material caustic gain (see GetWallShadeSplit); default 2 = legacy
+            float4 _CausticTint;    // per-material caustic colour, applied like WaterReceiver
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f
@@ -98,7 +106,14 @@ Shader "WebGLWater/PoolWall"
             #endif
                 float3 nmap = UnpackNormalScale(tex2D(_BumpMap, tileUV), _BumpScale);
                 float3 wallN = normalize(nmap.x * wallT + nmap.y * wallB + nmap.z * faceN);
-                float3 color = albedo * GetWallShade(i.position, wallN);
+
+                // Base analytic wall shade, then projected caustics added with this material's own
+                // strength + tint (mirrors WaterReceiver). At strength 2 / white tint this equals the
+                // legacy albedo * GetWallShade, so the additive split changes nothing until tuned.
+                float wallCaustic;
+                float wallShade = GetWallShadeSplit(i.position, wallN, wallCaustic);
+                float3 color = albedo * wallShade;
+                color += albedo * _CausticTint.rgb * (wallCaustic * _CausticStrength);
 
                 // Water shading gates on the footprint so geometry beyond the pool box (a wall
                 // that overhangs, or an oversized user mesh) doesn't pick up the underwater

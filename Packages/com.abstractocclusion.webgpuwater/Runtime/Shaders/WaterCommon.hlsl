@@ -71,8 +71,19 @@ void WallSurface(float3 p, out float2 uv, out float3 normal, out float3 tangent,
 // the supplied normal, projected caustics below the waterline and the rim shadow above it. Split
 // out so the PoolWall geometry pass can reuse it with a normal-mapped normal and its own albedo,
 // while GetWallColor keeps the original analytic behaviour byte-for-byte.
-float GetWallShade(float3 p, float3 normal)
+
+// Strength the projected caustics are baked at in the legacy analytic path (GetWallColor). PoolWall
+// overrides this with its own material Caustic Strength; keeping the legacy value here as a named
+// constant preserves GetWallColor's result exactly.
+#define WALL_CAUSTIC_LEGACY_STRENGTH 2.0
+
+// Base wall shade (pool AO + refracted diffuse + above-water rim shadow) WITHOUT caustics, plus the
+// separated caustic term via 'causticTerm' (0 above the waterline). A geometry pass can apply its
+// own strength/tint to the caustic like WaterReceiver, while GetWallShade below re-bakes it at the
+// legacy strength so the analytic GetWallColor path is unchanged.
+float GetWallShadeSplit(float3 p, float3 normal, out float causticTerm)
 {
+    causticTerm = 0.0;
     float scale = 0.5;
     scale /= max(length(p), POOL_AO_MIN_DIST);                                 // pool ambient occlusion
 
@@ -84,7 +95,8 @@ float GetWallShade(float3 p, float3 normal)
     if (p.y < info.r)
     {
         float4 caustic = tex2D(_CausticTex, ProjectCausticUV(p, refractedLight));
-        scale += diffuse * caustic.r * 2.0 * caustic.g;
+        // Caller scales this (diffuse * focus * rim-occluder) by its own caustic strength.
+        causticTerm = diffuse * caustic.r * caustic.g;
     }
     else
     {
@@ -94,6 +106,15 @@ float GetWallShade(float3 p, float3 normal)
         scale += diffuse * 0.5;
     }
     return scale;
+}
+
+// Full analytic wall shade with caustics baked at the legacy strength. Kept so GetWallColor (and
+// its WaterSurface underwater-reflection use) render exactly as before.
+float GetWallShade(float3 p, float3 normal)
+{
+    float causticTerm;
+    float scale = GetWallShadeSplit(p, normal, causticTerm);
+    return scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH;
 }
 
 float3 GetWallColor(float3 p)
