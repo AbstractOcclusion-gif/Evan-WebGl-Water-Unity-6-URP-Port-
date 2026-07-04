@@ -41,12 +41,12 @@ MonoBehaviour:
   mediumMaxFoamParticles: 65536
   lowSimResolution: 128
   lowCausticResolution: 256
-  lowGodRaySteps: 12
+  lowGodRaySteps: 6
   lowGodRays: 1
   lowRichReflections: 0
   lowMaxWaveCount: 8
   lowRefineSteps: 2
-  lowRenderScale: 0.7
+  lowRenderScale: 0.5
   lowRealRefraction: 0
   lowMeshDetail: 100
   lowCausticInterval: 2

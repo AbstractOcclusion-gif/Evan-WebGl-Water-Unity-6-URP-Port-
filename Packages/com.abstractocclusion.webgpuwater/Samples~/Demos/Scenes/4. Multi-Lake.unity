@@ -6207,9 +6207,9 @@ MonoBehaviour:
   foamCoreCut: 0.5
   foamBorderWidth: 0.08
   foamContactDepth: 0.06
-  waveSpeed: 0.6
+  waveSpeed: 2
   damping: 0.99
-  stepsPerFrame: 2
+  stepsPerFrame: 3
   rippleStrength: 0.025
   rippleRadius: 0.05
   seedRipplesOnStart: 1
@@ -11986,9 +11986,9 @@ MonoBehaviour:
   foamCoreCut: 0.5
   foamBorderWidth: 0.08
   foamContactDepth: 0.06
-  waveSpeed: 0.6
+  waveSpeed: 2
   damping: 0.99
-  stepsPerFrame: 2
+  stepsPerFrame: 3
   rippleStrength: 0.025
   rippleRadius: 0.05
   seedRipplesOnStart: 1
@@ -12074,13 +12074,13 @@ MonoBehaviour:
   obstacleSmoothing: 0.65
   obstacleFlipY: 1
   waterFog: 1
-  fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
+  fogColor: {r: 0.100968294, g: 0.25052997, b: 0.3283019, a: 1}
   fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  fogDensity: 2
+  fogDensity: 5.7
   waterOpacity: 0
   depthDarken: 1
   depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  depthDarkenStrength: 1
+  depthDarkenStrength: 8
   causticDepthFade: 0.5
   godRayDepthFade: 0.4
   linkDepthToFog: 0
@@ -12093,10 +12093,10 @@ MonoBehaviour:
   windWaves: 1
   windSpeed: 7
   windFromDegrees: 0
-  poolHalfExtentMeters: 5
+  poolHalfExtentMeters: 2
   waveCount: 12
   waveAmplitudeScale: 4
-  waveDirectionSpread: 1.18
+  waveDirectionSpread: 1
   waveNormalStrength: 1
   foam: 0
   foamGenRate: 0.6
@@ -12113,9 +12113,9 @@ MonoBehaviour:
   foamCoreCut: 0.5
   foamBorderWidth: 0.08
   foamContactDepth: 0.06
-  waveSpeed: 0.6
+  waveSpeed: 2
   damping: 0.99
-  stepsPerFrame: 2
+  stepsPerFrame: 3
   rippleStrength: 0.025
   rippleRadius: 0.05
   seedRipplesOnStart: 1

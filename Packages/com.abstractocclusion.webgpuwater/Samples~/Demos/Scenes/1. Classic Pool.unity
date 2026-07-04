@@ -833,7 +833,7 @@ MonoBehaviour:
   displaceScale: 0.2
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
-  rippleRadiusScale: 2
+  rippleRadiusScale: 1
 --- !u!54 &1272759485
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -5906,15 +5906,15 @@ MonoBehaviour:
   waveNormalStrength: 1
   foam: 1
   foamGenRate: 0.6
-  foamDecay: 0.953
+  foamDecay: 0.933
   foamDecayResidual: 0.9609
   foamDecayRate: 0.34
-  foamSpread: 0.196
+  foamSpread: 0.043
   foamAdvect: 3
   foamFromSpeed: 20
   foamFromCurvature: 30
   foamColor: {r: 1, g: 1, b: 1, a: 1}
-  foamStrength: 1.53
+  foamStrength: 1
   foamFeather: 0.083
   foamCoreCut: 0.759
   foamBorderWidth: 0

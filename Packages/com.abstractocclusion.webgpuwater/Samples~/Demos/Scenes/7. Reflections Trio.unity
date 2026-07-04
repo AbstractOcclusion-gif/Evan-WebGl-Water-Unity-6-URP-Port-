@@ -296,7 +296,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!198 &284080212
 ParticleSystem:
   m_ObjectHideFlags: 0
@@ -5211,7 +5211,7 @@ MonoBehaviour:
   windWaves: 1
   windSpeed: 4
   windFromDegrees: 0
-  poolHalfExtentMeters: 10
+  poolHalfExtentMeters: 1
   waveCount: 12
   waveAmplitudeScale: 4
   waveDirectionSpread: 2
@@ -5308,7 +5308,7 @@ MonoBehaviour:
   emitter: {fileID: 0}
   minImpactSpeed: 0.4
   maxImpactSpeed: 3
-  rippleStrength: 0.04
+  rippleStrength: 0.01
 --- !u!114 &439256077
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5732,7 +5732,7 @@ MonoBehaviour:
   emitter: {fileID: 0}
   minImpactSpeed: 0.4
   maxImpactSpeed: 3
-  rippleStrength: 0.04
+  rippleStrength: 0.01
 --- !u!114 &572153375
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6029,7 +6029,7 @@ MonoBehaviour:
   emitter: {fileID: 0}
   minImpactSpeed: 0.4
   maxImpactSpeed: 3
-  rippleStrength: 0.04
+  rippleStrength: 0.01
 --- !u!114 &750242354
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6356,7 +6356,7 @@ MonoBehaviour:
   windWaves: 1
   windSpeed: 4
   windFromDegrees: 0
-  poolHalfExtentMeters: 10
+  poolHalfExtentMeters: 1
   waveCount: 12
   waveAmplitudeScale: 4
   waveDirectionSpread: 2
@@ -6483,7 +6483,7 @@ MonoBehaviour:
   windWaves: 1
   windSpeed: 4
   windFromDegrees: 0
-  poolHalfExtentMeters: 10
+  poolHalfExtentMeters: 1
   waveCount: 12
   waveAmplitudeScale: 4
   waveDirectionSpread: 2
