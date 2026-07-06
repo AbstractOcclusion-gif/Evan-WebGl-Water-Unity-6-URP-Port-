@@ -128,6 +128,22 @@ namespace AbstractOcclusion.WebGpuWater
                  "kilometres; raise it to pull the haze nearer.")]
         [Min(0f)] [SerializeField] internal float horizonHazeDensity = 0f;
 
+        [Header("Ocean god rays (large-body light shafts)")]
+        [Tooltip("Shaft colour, multiplied by the sun colour. Only used when God Ray Density > 0.")]
+        [SerializeField] internal Color largeGodRayColor = DefaultLargeGodRayColor;
+        [Tooltip("Master intensity of the ocean god-ray shafts. 0 = off (also the gate: the fullscreen " +
+                 "shaft pass is skipped entirely). Raise for brighter volumetric beams.")]
+        [Min(0f)] [SerializeField] internal float largeGodRayDensity = 0f;
+        [Tooltip("Raymarch samples per pixel for the ocean shafts - SEPARATE from the pool god-ray steps. " +
+                 "More = smoother beams, higher cost.")]
+        [Range(LargeGodRayMinSteps, LargeGodRayMaxSteps)] [SerializeField] internal int largeGodRaySteps = DefaultLargeGodRaySteps;
+        [Tooltip("Forward-scattering (Mie / Henyey-Greenstein g): 0 = even glow, higher = beams brighten " +
+                 "sharply when looking toward the sun, like real shafts through haze.")]
+        [Range(0f, LargeGodRayMaxAnisotropy)] [SerializeField] internal float largeGodRayAnisotropy = DefaultLargeGodRayAnisotropy;
+        [Tooltip("Distance extinction (per metre) that thins the shafts as they recede, so the far ocean " +
+                 "does not over-glow. 0 = no distance falloff.")]
+        [Min(0f)] [SerializeField] internal float largeGodRayExtinction = 0f;
+
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
         // calm flattens it. Both the shader publisher and the CPU buoyancy read these, so they match.
@@ -144,6 +160,13 @@ namespace AbstractOcclusion.WebGpuWater
         // Default horizon haze target: pale sky-blue, but alpha 0 so out of the box the far ocean
         // dissolves into the REAL reflected sky (seamless). The rgb only matters once alpha is raised.
         static readonly Color DefaultHorizonHazeColor = new Color(0.7f, 0.8f, 0.9f, 0f);
+        // Ocean god-ray defaults + guard rails. Density 0 keeps the whole shaft pass off out of the box.
+        static readonly Color DefaultLargeGodRayColor = new Color(1f, 0.97f, 0.85f, 1f);
+        const int LargeGodRayMinSteps = 8;
+        const int LargeGodRayMaxSteps = 96;
+        const int DefaultLargeGodRaySteps = 24;
+        const float LargeGodRayMaxAnisotropy = 0.95f;
+        const float DefaultLargeGodRayAnisotropy = 0.6f;
 
         // Ocean clipmap guard rails (mirror LargeWaterClipmap's) + defaults. Inner ring dense for
         // near-field chop/ripples; outer ring near the far plane to reach the horizon.
@@ -175,6 +198,13 @@ namespace AbstractOcclusion.WebGpuWater
         // hazed; the colour passes through (inert while density is 0).
         internal float HorizonHazeDensity => IsOceanClipmap ? horizonHazeDensity : 0f;
         internal Color HorizonHazeColor => horizonHazeColor;
+        // Ocean god rays for the shader: density gated to 0 for non-ocean bodies (pools/lakes never get
+        // shafts from this pass); the rest pass through (inert while density is 0).
+        internal Color LargeGodRayColor => largeGodRayColor;
+        internal float LargeGodRayDensity => IsOceanClipmap ? largeGodRayDensity : 0f;
+        internal float LargeGodRaySteps => largeGodRaySteps;
+        internal float LargeGodRayAnisotropy => largeGodRayAnisotropy;
+        internal float LargeGodRayExtinction => largeGodRayExtinction;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
@@ -1133,6 +1163,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Primary bridge: mirror this body's data to globals as the fallback for objects
             // without a WaterMembership (those resolve their own containing body instead).
             if (isPrimary) Publisher.PublishBodyGlobals();
+            if (isPrimary) UpdateUnderwaterState(); // camera-submerged flag + globals for the underwater fog pass
 
             // Tier-amortised readback: buoyancy already tolerates async latency, so weak
             // devices can trade a few frames of it for GPU->CPU bandwidth.
@@ -1658,6 +1689,55 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 e = VolumeExtentSafe;
             Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - VolumeCenter);
             return new Vector3(local.x / e.x, local.y / e.y, local.z / e.z);
+        }
+
+        /// <summary>True when the underwater fog pass should run this frame (set each frame by the
+        /// primary body). Ocean fog is infinite, so it runs only when the camera is submerged; a bounded
+        /// pond is a finite volume the shader clips to its box, so its fog runs from ANY angle whenever
+        /// Water Fog is on (circle the pond and see the murk inside). The feature reads this to gate.</summary>
+        internal static bool UnderwaterFogActive { get; private set; }
+
+        // Detect whether the camera is submerged in THIS (primary) body and publish the globals the
+        // underwater fog shader needs. U1 uses the flat surface plane (VolumeCenter.y); a wave-accurate
+        // waterline is a later step. Bounded bodies require the camera inside their footprint; an ocean
+        // clipmap spans everywhere, so only the height test applies.
+        void UpdateUnderwaterState()
+        {
+            bool submerged = ComputeCameraSubmerged(out float surfaceY);
+            // Ocean fog is infinite, so it only matters when the camera is submerged. A bounded pond is a
+            // finite fog volume clipped to its box, so it should render from ANY angle (circle it and see
+            // the murk inside) whenever Water Fog is on.
+            UnderwaterFogActive = waterFog && (IsOceanClipmap ? submerged : true);
+            // The unbounded flag tells the shader to fog the whole below-surface half-space (ocean) vs
+            // clip the fog to this body's box (pond / bounded lake = a finite fog volume).
+            Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f);
+        }
+
+        // A little beyond the [-1,1] footprint so an edge-on view of a pond still triggers; the shader
+        // box-clips the fog per pixel, so this CPU gate only has to be roughly right.
+        const float UnderwaterFootprintMargin = 1.25f;
+
+        // Water intersects the view as soon as the camera's NEAR PLANE dips below the surface (partial
+        // submersion, KWS-style), not only when the whole camera is under - otherwise a shallow pond
+        // never triggers. Sample the four near-plane corners (plus the eye) and run on the lowest.
+        bool ComputeCameraSubmerged(out float surfaceY)
+        {
+            surfaceY = VolumeCenter.y;
+            if (!waterFog) return false; // one Water Fog toggle drives both looking-in and submerged fog
+            Camera cam = targetCamera;
+            if (cam == null) return false;
+
+            float near = cam.nearClipPlane;
+            float lowestY = cam.transform.position.y;
+            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(0f, 0f, near)).y);
+            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(1f, 0f, near)).y);
+            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(0f, 1f, near)).y);
+            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(1f, 1f, near)).y);
+            if (lowestY >= surfaceY) return false; // the near plane is entirely above the surface
+
+            if (IsOceanClipmap) return true; // the ocean spans everywhere
+            Vector3 pool = WorldToPool(cam.transform.position);
+            return Mathf.Abs(pool.x) <= UnderwaterFootprintMargin && Mathf.Abs(pool.z) <= UnderwaterFootprintMargin;
         }
 
         // ---- large-water sim window frame ----------------------------------

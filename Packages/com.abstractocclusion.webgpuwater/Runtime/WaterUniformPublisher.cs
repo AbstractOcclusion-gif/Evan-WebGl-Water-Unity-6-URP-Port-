@@ -67,6 +67,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_HorizonFade = Shader.PropertyToID("_HorizonFadeDistance");
         static readonly int ID_HorizonHazeColor = Shader.PropertyToID("_HorizonHazeColor");
         static readonly int ID_HorizonHazeDensity = Shader.PropertyToID("_HorizonHazeDensity");
+        static readonly int ID_LargeGodRayColor = Shader.PropertyToID("_LargeGodRayColor");
+        static readonly int ID_LargeGodRayDensity = Shader.PropertyToID("_LargeGodRayDensity");
+        static readonly int ID_LargeGodRaySteps = Shader.PropertyToID("_LargeGodRaySteps");
+        static readonly int ID_LargeGodRayAnisotropy = Shader.PropertyToID("_LargeGodRayAnisotropy");
+        static readonly int ID_LargeGodRayExtinction = Shader.PropertyToID("_LargeGodRayExtinction");
+        static readonly int ID_CameraUnderwater = Shader.PropertyToID("_CameraUnderwater");
+        static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
+        static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
 
         readonly WaterVolume _body;
@@ -101,6 +109,15 @@ namespace AbstractOcclusion.WebGpuWater
         // The primary body mirrors its per-body uniforms to shader globals, the fallback that
         // object shaders without a WaterMembership read. Same derivations as the property block.
         internal void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
+
+        /// <summary>Camera-submerged flag + flat surface Y for the underwater fog pass. Global only
+        /// (it is camera state, not a per-object uniform), so it lives outside WriteBodyUniforms.</summary>
+        internal void PublishUnderwater(float cameraUnderwater, float surfaceY, float unbounded)
+        {
+            Shader.SetGlobalFloat(ID_CameraUnderwater, cameraUnderwater);
+            Shader.SetGlobalFloat(ID_UnderwaterSurfaceY, surfaceY);
+            Shader.SetGlobalFloat(ID_UnderwaterUnbounded, unbounded);
+        }
 
         /// <summary>Push the body's placement-frame uniforms (volume + sim window) onto a
         /// compute shader so GPU consumers share the exact same transforms as the render side.</summary>
@@ -146,6 +163,11 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_HorizonFade, _body.HorizonFadeDistance);
             sink.SetColor(ID_HorizonHazeColor, _body.HorizonHazeColor);
             sink.SetFloat(ID_HorizonHazeDensity, _body.HorizonHazeDensity);
+            sink.SetColor(ID_LargeGodRayColor, _body.LargeGodRayColor);
+            sink.SetFloat(ID_LargeGodRayDensity, _body.LargeGodRayDensity);
+            sink.SetFloat(ID_LargeGodRaySteps, _body.LargeGodRaySteps);
+            sink.SetFloat(ID_LargeGodRayAnisotropy, _body.LargeGodRayAnisotropy);
+            sink.SetFloat(ID_LargeGodRayExtinction, _body.LargeGodRayExtinction);
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);

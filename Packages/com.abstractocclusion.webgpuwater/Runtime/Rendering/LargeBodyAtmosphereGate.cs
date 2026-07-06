@@ -1,32 +1,25 @@
 // WebGpuWater - large-body atmosphere gate.
-// Single definition of "does the large-body atmosphere pass have anything to do this frame".
-// The fog + god-ray render feature is OCEAN-ONLY: it must never run for pools or bounded
-// lakes, whose look stays byte-for-byte unchanged. Gating off the existing WaterVolume
-// registry (rather than a new registration path) means there is no second source of truth
-// that could drift from IsOceanClipmap.
+// Single definition of "should the fullscreen ocean god-ray pass run this frame". The pass is
+// OCEAN-ONLY and reads GLOBAL shader uniforms, which the primary body publishes - so the gate
+// tracks the primary body, matching exactly what the shader will sample. Bounded bodies report
+// IsOceanClipmap == false and pools never set a god-ray density, so their look is untouched.
 //
-// URP-only: the atmosphere pass is a URP ScriptableRendererFeature, so this gate only has a
-// consumer when the Universal Render Pipeline is present (WEBGPUWATER_URP).
+// URP-only: the pass is a URP ScriptableRendererFeature, so this gate only has a consumer when
+// the Universal Render Pipeline is present (WEBGPUWATER_URP).
 #if WEBGPUWATER_URP
-using System.Collections.Generic;
-
 namespace AbstractOcclusion.WebGpuWater
 {
     internal static class LargeBodyAtmosphereGate
     {
-        // True when at least one enabled body renders as an unbounded ocean clipmap. Bounded
-        // bodies (pools / lakes) report IsOceanClipmap == false, so a pond-only scene never
-        // arms the pass. Allocation-free and early-returning: it runs per camera, per frame.
-        internal static bool HasActiveOcean
+        // True when the primary body is an unbounded ocean with god-ray shafts enabled. Gating on
+        // the primary (not any body) keeps the CPU gate in lockstep with the globals the shader
+        // reads, and avoids running the fullscreen raymarch when the shafts would be zero anyway.
+        internal static bool HasActiveGodRayOcean
         {
             get
             {
-                IReadOnlyList<WaterVolume> bodies = WaterVolume.Bodies;
-                for (int i = 0; i < bodies.Count; i++)
-                {
-                    if (bodies[i] != null && bodies[i].IsOceanClipmap) return true;
-                }
-                return false;
+                WaterVolume primary = WaterVolume.Primary;
+                return primary != null && primary.IsOceanClipmap && primary.LargeGodRayDensity > 0f;
             }
         }
     }
