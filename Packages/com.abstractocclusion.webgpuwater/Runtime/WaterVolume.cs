@@ -119,6 +119,14 @@ namespace AbstractOcclusion.WebGpuWater
                  "the far mesh edge has no hard line. 0 = off. A light stopgap - real horizon softening " +
                  "is the future fog pass. Set near the Clipmap Outer Radius to try it.")]
         [Min(0f)] [SerializeField] internal float horizonFadeDistance = 0f;
+        [Tooltip("Atmosphere colour the far ocean dissolves toward at the horizon. Alpha controls how much " +
+                 "it overrides the reflected sky: 0 = pure sky (seamless, the natural default), 1 = fully " +
+                 "this colour (a coloured haze band). Only used when Horizon Haze Density > 0.")]
+        [SerializeField] internal Color horizonHazeColor = DefaultHorizonHazeColor;
+        [Tooltip("Exponential distance-haze density (per metre) that dissolves the far ocean surface into " +
+                 "the sky - the real replacement for Horizon Fade Distance. 0 = off. Tiny values fade over " +
+                 "kilometres; raise it to pull the haze nearer.")]
+        [Min(0f)] [SerializeField] internal float horizonHazeDensity = 0f;
 
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
@@ -133,6 +141,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal float SwellHeight => swellHeight;
         internal float SwellWavelength => swellWavelength;
         const float DefaultSwellWavelength = 140f;
+        // Default horizon haze target: pale sky-blue, but alpha 0 so out of the box the far ocean
+        // dissolves into the REAL reflected sky (seamless). The rgb only matters once alpha is raised.
+        static readonly Color DefaultHorizonHazeColor = new Color(0.7f, 0.8f, 0.9f, 0f);
 
         // Ocean clipmap guard rails (mirror LargeWaterClipmap's) + defaults. Inner ring dense for
         // near-field chop/ripples; outer ring near the far plane to reach the horizon.
@@ -160,6 +171,10 @@ namespace AbstractOcclusion.WebGpuWater
         internal float OceanDetailSlope => IsOceanClipmap ? oceanDetailFalloff : 0f;
         // Horizon fade distance for the shader. 0 for non-ocean bodies -> no fade (unchanged).
         internal float HorizonFadeDistance => IsOceanClipmap ? horizonFadeDistance : 0f;
+        // Horizon haze for the shader: density gated to 0 for non-ocean bodies so pools/lakes are never
+        // hazed; the colour passes through (inert while density is 0).
+        internal float HorizonHazeDensity => IsOceanClipmap ? horizonHazeDensity : 0f;
+        internal Color HorizonHazeColor => horizonHazeColor;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +

@@ -65,6 +65,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SwellWavelength = Shader.PropertyToID("_LargeSwellWavelength");
         static readonly int ID_SwellHeight = Shader.PropertyToID("_LargeSwellHeight");
         static readonly int ID_HorizonFade = Shader.PropertyToID("_HorizonFadeDistance");
+        static readonly int ID_HorizonHazeColor = Shader.PropertyToID("_HorizonHazeColor");
+        static readonly int ID_HorizonHazeDensity = Shader.PropertyToID("_HorizonHazeDensity");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
 
         readonly WaterVolume _body;
@@ -142,6 +144,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_SwellWavelength, _body.SwellWavelength);
             sink.SetFloat(ID_SwellHeight, _body.SwellHeight);
             sink.SetFloat(ID_HorizonFade, _body.HorizonFadeDistance);
+            sink.SetColor(ID_HorizonHazeColor, _body.HorizonHazeColor);
+            sink.SetFloat(ID_HorizonHazeDensity, _body.HorizonHazeDensity);
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);

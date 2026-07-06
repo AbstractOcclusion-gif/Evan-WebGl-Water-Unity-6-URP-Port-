@@ -131,6 +131,12 @@ Shader "WebGLWater/WaterSurface"
             // light stopgap - the real horizon softening is the (future) large-body fog pass.
             float  _HorizonFadeDistance;
             #define HORIZON_FADE_START 0.5   // fraction of the fade distance where the blend to sky begins
+            // Exponential atmospheric horizon haze (supersedes the smoothstep stopgap above): the far
+            // ocean dissolves toward the sky by distance with a physical 1 - exp(-density * dist) falloff.
+            // _HorizonHazeColor.a tints the sky toward a fixed atmosphere colour (0 = pure sky, seamless).
+            // Density 0 = off (bounded bodies, unchanged).
+            float4 _HorizonHazeColor;
+            float  _HorizonHazeDensity;
             float _ReflectionStrength;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
@@ -691,10 +697,22 @@ Shader "WebGLWater/WaterSurface"
                         }
                     }
 
-                    // ---- Horizon fade (ocean stopgap): dissolve the far surface into the horizon sky
-                    // so the outer mesh edge / water-sky boundary has no hard line. Off when the distance
-                    // is 0 (bounded bodies). The sky along the near-horizontal view ray IS the horizon. ----
-                    if (_HorizonFadeDistance > 0.0)
+                    // ---- Horizon haze: dissolve the far ocean surface into the sky so the outer mesh
+                    // edge / water-sky boundary has no hard line. The sky along the near-horizontal view
+                    // ray IS the horizon, so the surface fades toward SampleEnvironment(incomingRay),
+                    // optionally tinted toward a fixed atmosphere colour by _HorizonHazeColor.a. The
+                    // exponential 1 - exp(-density * dist) falloff reads like real distance haze instead
+                    // of a hard band. Off when density is 0 (bounded bodies, unchanged). ----
+                    if (_HorizonHazeDensity > 0.0)
+                    {
+                        float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
+                        float haze = 1.0 - exp(-_HorizonHazeDensity * horizD);
+                        float3 hazeTarget = lerp(SampleEnvironment(incomingRay), _HorizonHazeColor.rgb, _HorizonHazeColor.a);
+                        outColor = lerp(outColor, hazeTarget, haze);
+                    }
+                    // Legacy smoothstep stopgap (retired in a later increment): only when the new haze is
+                    // off, so a scene still tuned with Horizon Fade Distance keeps its look meanwhile.
+                    else if (_HorizonFadeDistance > 0.0)
                     {
                         float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
                         float horizonFade = smoothstep(_HorizonFadeDistance * HORIZON_FADE_START, _HorizonFadeDistance, horizD);

@@ -5558,11 +5558,14 @@ MonoBehaviour:
   openWater: 1
   largeWaveAmplitude: 3.96
   largeWaveChoppiness: 0.9
+  swellHeight: 0.8
+  swellWavelength: 140
   unboundedOcean: 1
   clipmapRings: 48
   clipmapSegments: 96
   clipmapOuterRadius: 10000
-  oceanWaveReach: 90
+  oceanDetailFalloff: 0.03
+  horizonFadeDistance: 0
   surfaceAbove: {fileID: 1450726827}
   surfaceUnder: {fileID: 1625076986}
   poolRenderer: {fileID: 1049831468}
