@@ -120,6 +120,9 @@ Shader "WebGLWater/WaterSurface"
             float2 _PatchPoolCenter;  // window centre in pool xz
             float2 _PatchPoolHalf;    // window half-size in pool units (per axis)
             float  _PatchDepthBias;   // tiny NDC bias so the patch wins over the coplanar far plane
+            // Unbounded-ocean clipmap: 1 = the camera-following radial mesh authored in WORLD metres
+            // (reaches the horizon), 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
+            float  _IsClipmap;
             float _ReflectionStrength;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
@@ -332,15 +335,32 @@ Shader "WebGLWater/WaterSurface"
             v2f vert(appdata v)
             {
                 v2f o;
-                // Full-plane surface uses the grid vertex as pool xz directly; the window
-                // patch remaps the SAME [-1,1] grid into the window's pool sub-region, so it
-                // tessellates only the near field (dense) while reusing every ripple/wave path.
-                float2 poolXZ = (_IsPatch > 0.5) ? (_PatchPoolCenter + v.vertex.xy * _PatchPoolHalf)
-                                                 : v.vertex.xy;
-                float3 poolFlat = float3(poolXZ.x, 0.0, poolXZ.y); // grid -> pool (x, 0, z)
+                // Three vertex sources feed the SAME ripple/wave path below:
+                //  - full plane   : the grid vertex IS pool xz;
+                //  - window patch : the SAME [-1,1] grid remapped into the window's pool sub-region,
+                //                   so it tessellates only the near field (dense);
+                //  - ocean clipmap: verts authored in WORLD metres (x,0,z) on a camera-following mesh,
+                //                   mapped BACK into pool space so the ripple/pool sampling is unchanged
+                //                   (ripples fade to flat past the sim window, leaving open-water swell).
+                float3 poolFlat;
+                float3 worldFlat;
+                if (_IsClipmap > 0.5)
+                {
+                    float3 worldOnPlane = mul(unity_ObjectToWorld, float4(v.vertex.xyz, 1.0)).xyz;
+                    worldFlat = float3(worldOnPlane.x, _VolumeCenter.y, worldOnPlane.z); // resting plane
+                    poolFlat = WorldToPool(worldFlat);
+                    poolFlat.y = 0.0;
+                }
+                else
+                {
+                    float2 gridPoolXZ = (_IsPatch > 0.5) ? (_PatchPoolCenter + v.vertex.xy * _PatchPoolHalf)
+                                                         : v.vertex.xy;
+                    poolFlat = float3(gridPoolXZ.x, 0.0, gridPoolXZ.y); // grid -> pool (x, 0, z)
+                    worldFlat = PoolToWorld(poolFlat);
+                }
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
-                float3 worldFlat = PoolToWorld(poolFlat);
+                float2 poolXZ = poolFlat.xz;
                 float fade;
                 float4 info = SampleRipple(poolFlat, worldFlat, fade);
                 float3 position = poolFlat;

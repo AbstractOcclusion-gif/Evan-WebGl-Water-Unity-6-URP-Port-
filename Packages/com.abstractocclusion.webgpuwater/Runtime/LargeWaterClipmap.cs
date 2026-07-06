@@ -1,8 +1,8 @@
-// LargeWaterClipmap - camera-following open-water surface geometry (Phase 2).
+// LargeWaterClipmap - camera-following open-water surface geometry.
 //
-// EXPERIMENTAL, opt-in: this whole file compiles only when the WEBGPUWATER_LARGE_BODY
-// scripting define is set (Player Settings > Scripting Define Symbols). With the define
-// absent it is inert, so it can never affect the shipped pool / small-body build.
+// Pure mesh builder (no side effects): always compiled, but only USED when a WaterVolume has
+// Open Water + Unbounded Ocean enabled (see WaterVolume.IsOceanClipmap). Bounded lakes and pools
+// never build one, so the shipped small-body build is unaffected.
 //
 // Technique (reused, not copied, from Crest's single-mesh clipmap and KWS's infinite
 // ocean): instead of stretching one fixed grid over a whole ocean (which goes blocky),
@@ -14,10 +14,9 @@
 // first open-water pass and is far simpler to drive.
 //
 // The mesh is authored flat in the XZ plane (y = 0) in LOCAL space, centred on the origin.
-// A driver places its Transform at the camera's XZ each frame; the surface shader adds FFT
+// A driver places its Transform at the camera's XZ each frame; the surface shader adds wave
 // displacement per vertex in world space. Height is a pure function of world XZ, so the
-// buoyancy sampler stays valid (see the analytic-spectrum bridge planned for Phase 3).
-#if WEBGPUWATER_LARGE_BODY
+// buoyancy sampler stays valid (the CPU wave mirror in LargeWaveField).
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -168,4 +167,3 @@ namespace AbstractOcclusion.WebGpuWater
         }
     }
 }
-#endif // WEBGPUWATER_LARGE_BODY

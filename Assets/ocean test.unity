@@ -5557,6 +5557,12 @@ MonoBehaviour:
   simWindowEdgeFadeTexels: 8
   openWater: 1
   largeWaveAmplitude: 3.96
+  largeWaveChoppiness: 1.67
+  unboundedOcean: 1
+  clipmapRings: 48
+  clipmapSegments: 96
+  clipmapInnerRadius: 2
+  clipmapOuterRadius: 10000
   surfaceAbove: {fileID: 1450726827}
   surfaceUnder: {fileID: 1625076986}
   poolRenderer: {fileID: 1049831468}
@@ -5593,7 +5599,7 @@ MonoBehaviour:
   shorelineFadeDepth: 6
   shorelineStrength: 0.8
   windWaves: 1
-  windSpeed: 0.32
+  windSpeed: 1.24
   windFromDegrees: 115
   poolHalfExtentMeters: 36.2
   waveCount: 15
@@ -5659,7 +5665,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db95254d7fef3c3479d701adbd938abb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.OrbitCamera
-  pivot: {x: 0, y: -0.5, z: 0}
+  pivot: {x: 0, y: 3, z: 0}
   pivotTarget: {fileID: 0}
   yaw: -200.5
   pitch: -25

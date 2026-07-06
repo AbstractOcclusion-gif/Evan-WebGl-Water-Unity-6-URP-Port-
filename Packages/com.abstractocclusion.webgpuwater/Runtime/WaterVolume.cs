@@ -91,6 +91,22 @@ namespace AbstractOcclusion.WebGpuWater
                  "0 = smooth sine swell (byte-for-byte the previous look); higher = sharper, more " +
                  "ocean-like peaks. Buoyancy inverts it, so floaters still ride the visible crest.")]
         [Range(0f, LargeWaveChoppinessMax)] [SerializeField] internal float largeWaveChoppiness = 0f;
+        [Tooltip("Extend this open-water body's surface to the HORIZON with a camera-following clipmap " +
+                 "mesh (an OCEAN, not a bounded lake). Requires Open Water ON and the large-body sim " +
+                 "window (near-field ripples fade to flat past it). OFF = the surface stays the bounded " +
+                 "footprint plane, unchanged. Drawing water past the shore would be wrong for a lake, so " +
+                 "this is opt-in.")]
+        [SerializeField] internal bool unboundedOcean = false;
+        [Header("Ocean clipmap (unbounded open water)")]
+        [Tooltip("Concentric rings in the radial clipmap mesh. More = denser far-field / smoother swell, " +
+                 "at more vertices.")]
+        [Min(ClipmapMinRings)] [SerializeField] internal int clipmapRings = DefaultClipmapRings;
+        [Tooltip("Vertices per ring. More = rounder rings, at more vertices.")]
+        [Min(ClipmapMinSegments)] [SerializeField] internal int clipmapSegments = DefaultClipmapSegments;
+        [Tooltip("Radius (metres) of the innermost ring: the dense near-field around the camera.")]
+        [Min(ClipmapMinRadius)] [SerializeField] internal float clipmapInnerRadius = DefaultClipmapInnerRadius;
+        [Tooltip("Radius (metres) of the outermost ring: push near the camera far plane to reach the horizon.")]
+        [Min(ClipmapMinRadius)] [SerializeField] internal float clipmapOuterRadius = DefaultClipmapOuterRadius;
 
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
@@ -102,6 +118,21 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
         internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
         internal float LargeWaveChoppiness => largeWaveChoppiness;
+
+        // Ocean clipmap guard rails (mirror LargeWaterClipmap's) + defaults. Inner ring dense for
+        // near-field chop/ripples; outer ring near the far plane to reach the horizon.
+        const int DefaultClipmapRings = 48;
+        const int DefaultClipmapSegments = 96;
+        const float DefaultClipmapInnerRadius = 2f;
+        const float DefaultClipmapOuterRadius = 10000f;
+        const int ClipmapMinRings = 2;
+        const int ClipmapMinSegments = 3;
+        const float ClipmapMinRadius = 1e-3f;
+
+        // True when this body renders its surface as an unbounded ocean clipmap: needs open water, the
+        // opt-in flag, AND the sim window (its ripple fade is what keeps the far field clean). Bounded
+        // lakes / pools are always false, so their render path is untouched.
+        bool IsOceanClipmap => openWater && unboundedOcean && _windowed;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
@@ -494,6 +525,15 @@ namespace AbstractOcclusion.WebGpuWater
         const float PatchDepthBiasNdc = 1e-4f;      // tiny nudge toward the camera to beat the coplanar far plane
         const string PatchObjectName = "Sim Window Patch";
 
+        // Camera-following clipmap surface for unbounded open-water (ocean) bodies: a radial ring mesh
+        // authored in world metres that reaches the horizon. Reuses THIS body's surface material; the
+        // _IsClipmap flag rides its own property block (so it never leaks onto the pool-grid renderers).
+        Renderer _clipmapRenderer;
+        Mesh _clipmapMesh;
+        MaterialPropertyBlock _clipmapMpb;
+        static readonly int ID_IsClipmap = Shader.PropertyToID("_IsClipmap");
+        const string ClipmapObjectName = "Ocean Clipmap";
+
         // Lazy: the bed baker serves the context-menu RebakeBed even on an uninitialized
         // body, and the publisher serves WriteBodyProps callers defensively.
         WaterBedBaker BedBaker => _bedBaker ??= new WaterBedBaker(this);
@@ -708,6 +748,7 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyMeshDetail();   // Low tier: coarse surface grid (play mode only)
             ApplyPipelineTier(); // Low tier: render scale / opaque-copy release (primary, play mode only)
             CreateSimWindowPatch(); // windowed bodies: dense near-field surface over the sim window
+            CreateOceanClipmap();   // unbounded-ocean bodies: horizon-reaching camera-following surface
 
             BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
 
@@ -733,6 +774,7 @@ namespace AbstractOcclusion.WebGpuWater
             _caustics?.Dispose(); _caustics = null;
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
             DestroySimWindowPatch(); // before restoring the surface material it borrows
+            DestroyOceanClipmap();   // ditto - it borrows the same surface material
             RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
             RestoreSurfaceMaterial(surfaceUnder, ref _surfaceUnderInstance, ref _surfaceUnderOriginal);
             RestoreMeshDetail();
@@ -1067,6 +1109,7 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyBlockTo(poolRenderer);
             ApplyBlockTo(godRayRenderer);
             ApplyPatchBlock();
+            ApplyClipmapBlock();
         }
 
         // Feed the sim-window patch the same per-body uniforms PLUS the window remap it needs.
@@ -1126,6 +1169,65 @@ namespace AbstractOcclusion.WebGpuWater
             _patchMpb = null;
         }
 
+        // Feed the ocean clipmap the same per-body uniforms PLUS the _IsClipmap flag so its vertex path
+        // reads world-metre positions. Increment 1 parks it at the body centre (static); the camera
+        // follow + texel snap arrives in the next increment.
+        void ApplyClipmapBlock()
+        {
+            if (_clipmapRenderer == null) return;
+            if (_clipmapMpb == null) _clipmapMpb = new MaterialPropertyBlock();
+            WriteBodyProps(_clipmapMpb);
+            _clipmapMpb.SetFloat(ID_IsClipmap, 1f);
+            _clipmapRenderer.SetPropertyBlock(_clipmapMpb);
+
+            Transform t = _clipmapRenderer.transform;
+            t.SetPositionAndRotation(VolumeCenter, Quaternion.identity); // mesh is world-axis-aligned;
+            t.localScale = Vector3.one;                                  // verts are already in metres
+        }
+
+        // Build the unbounded-ocean clipmap: a radial ring mesh in world metres, reusing THIS body's
+        // surface material with _IsClipmap on its block. Play mode only, and only when the body is a
+        // true ocean (open water + opt-in + sim window). Fails loudly if the sim window is missing,
+        // because without it the near-field ripple fade can't keep the far field clean.
+        void CreateOceanClipmap()
+        {
+            if (!Application.isPlaying) return;
+            if (openWater && unboundedOcean && !_windowed)
+            {
+                Debug.LogWarning("WaterVolume: Unbounded Ocean needs the large-body sim window " +
+                                 "(Enable Large Body Window) for near-field ripples; the surface stays " +
+                                 "the bounded plane until it is enabled.", this);
+                return;
+            }
+            if (!IsOceanClipmap) return;
+            if (_clipmapRenderer != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
+
+            _clipmapMesh = LargeWaterClipmap.BuildRadialGrid(clipmapRings, clipmapSegments,
+                                                             clipmapInnerRadius, clipmapOuterRadius);
+            _clipmapMesh.hideFlags = HideFlags.HideAndDontSave;
+
+            var go = new GameObject(ClipmapObjectName) { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(surfaceAbove.transform.parent, false);
+            go.AddComponent<MeshFilter>().sharedMesh = _clipmapMesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = surfaceAbove.sharedMaterial; // same per-body instance; _IsClipmap rides the block
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            _clipmapRenderer = mr;
+        }
+
+        void DestroyOceanClipmap()
+        {
+            if (_clipmapRenderer != null)
+            {
+                DestroyRuntimeObject(_clipmapRenderer.gameObject);
+                _clipmapRenderer = null;
+            }
+            DestroyRuntimeObject(_clipmapMesh);
+            _clipmapMesh = null;
+            _clipmapMpb = null;
+        }
+
         // (1/res, 1/res, res, res) of the sim texture, so shaders can bilinear-filter it manually
         // (WebGPU won't hardware-filter the RGBAFloat sim RT). Paired with every _WaterTex bind.
         internal Vector4 WaterTexel => new Vector4(1f / _simRes, 1f / _simRes, _simRes, _simRes);
@@ -1160,10 +1262,16 @@ namespace AbstractOcclusion.WebGpuWater
 
         void SetRenderersEnabled(bool on)
         {
-            SetRendererEnabled(surfaceAbove, on);
+            // An ocean body draws the horizon-reaching clipmap INSTEAD of the bounded above-water
+            // plane, so the two never double-draw (z-fight). But the clipmap only exists in play mode,
+            // so gate on its ACTUAL presence - otherwise edit mode hides the plane with nothing to
+            // replace it (the surface looks cut).
+            bool clipmapActive = _clipmapRenderer != null;
+            SetRendererEnabled(surfaceAbove, on && !clipmapActive);
             SetRendererEnabled(surfaceUnder, on);
             SetRendererEnabled(poolRenderer, on);
             SetRendererEnabled(_patchRenderer, on && _windowed);
+            SetRendererEnabled(_clipmapRenderer, on && IsOceanClipmap);
             // God rays obey the quality tier as well as culling: a tier that disables them
             // keeps the renderer off even when the body is on-screen. Windowed bodies also
             // suppress god rays (out of scope, same reason as caustics).
@@ -1565,6 +1673,9 @@ namespace AbstractOcclusion.WebGpuWater
         bool ShouldWindow()
         {
             if (!enableLargeBodyWindow) return false;
+            // An unbounded ocean is infinite by definition, so the footprint-size threshold does not
+            // apply - it always needs the camera-following window for its near-field ripples.
+            if (openWater && unboundedOcean) return true;
             Vector3 e = VolumeExtentSafe;
             return Mathf.Max(e.x, e.z) > largeBodyThreshold;
         }
