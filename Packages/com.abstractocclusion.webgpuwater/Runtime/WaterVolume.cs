@@ -679,7 +679,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 7;
+        const int CurrentSettingsVersion = 8;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -694,6 +694,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion < 5) MigrateFoamV5();
             if (_settingsVersion < 6) MigrateInteractionAndRippleV6();
             if (_settingsVersion < 7) MigrateReflectionsV7();
+            if (_settingsVersion < 8) MigrateBedDepthV8();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -808,28 +809,64 @@ namespace AbstractOcclusion.WebGpuWater
             reflectionSettings.environmentSource = _legacyEnvironmentSource;
         }
 
+        // v8: the "Bed depth (real terrain depth)" fields moved into BedDepthSettings.
+        void MigrateBedDepthV8()
+        {
+            bedDepthSettings.useBedDepth = _legacyUseBedDepth;
+            bedDepthSettings.bedTerrain = _legacyBedTerrain;
+            bedDepthSettings.bedResolution = _legacyBedResolution;
+            bedDepthSettings.deepWaterColor = _legacyDeepWaterColor;
+            bedDepthSettings.shorelineFadeDepth = _legacyShorelineFadeDepth;
+            bedDepthSettings.shorelineStrength = _legacyShorelineStrength;
+        }
+
         // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
         // on new bodies. Only assets serialized before a feature existed (no _settingsVersion -> 0) migrate.
         // (Distinguishing new from pre-migration data is exactly what a field initializer cannot do.)
         void Reset() => _settingsVersion = CurrentSettingsVersion;
 
         [Header("Bed depth (real terrain depth - EXPERIMENTAL)")]
-        [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
-                 "gradient). Off = flat-floor behaviour.")]
-        [SerializeField] internal bool useBedDepth = false;
-        [Tooltip("Terrain whose heightmap defines the lake bed. Auto-resolves to the active " +
-                 "Terrain if empty. Baked once at startup; call RebakeBed() (or the context-menu " +
-                 "item) if the terrain changes.")]
-        [SerializeField] internal Terrain bedTerrain;
-        [Tooltip("Resolution of the baked pool-space bed-height map.")]
-        [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] [SerializeField] internal int bedResolution = 256;
-        [Tooltip("Colour the surface tints toward over deep water.")]
-        [SerializeField] internal Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
-        [Tooltip("World-unit depth at which the shoreline gradient reaches ~63% toward the deep " +
-                 "colour. Smaller = the water darkens in shallower depth.")]
-        [Range(0.1f, 50f)] [SerializeField] internal float shorelineFadeDepth = 6f;
-        [Tooltip("Maximum tint toward the deep-water colour.")]
-        [Range(0f, 1f)] [SerializeField] internal float shorelineStrength = 0.8f;
+        [SerializeField] BedDepthSettings bedDepthSettings = new BedDepthSettings();
+
+        /// <summary>Real water-column depth from a baked terrain bed (shoreline gradient) vs flat-floor.
+        /// Migrated off the flat WaterVolume fields into this block (Phase 2); the same-named accessors
+        /// keep every reader (WaterBedBaker, the publisher) unchanged.</summary>
+        [System.Serializable]
+        public sealed class BedDepthSettings
+        {
+            [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
+                     "gradient). Off = flat-floor behaviour.")]
+            public bool useBedDepth = false;
+            [Tooltip("Terrain whose heightmap defines the lake bed. Auto-resolves to the active " +
+                     "Terrain if empty. Baked once at startup; call RebakeBed() (or the context-menu " +
+                     "item) if the terrain changes.")]
+            public Terrain bedTerrain;
+            [Tooltip("Resolution of the baked pool-space bed-height map.")]
+            [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] public int bedResolution = 256;
+            [Tooltip("Colour the surface tints toward over deep water.")]
+            public Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
+            [Tooltip("World-unit depth at which the shoreline gradient reaches ~63% toward the deep " +
+                     "colour. Smaller = the water darkens in shallower depth.")]
+            [Range(0.1f, 50f)] public float shorelineFadeDepth = 6f;
+            [Tooltip("Maximum tint toward the deep-water colour.")]
+            [Range(0f, 1f)] public float shorelineStrength = 0.8f;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
+        internal bool useBedDepth => bedDepthSettings.useBedDepth;
+        internal Terrain bedTerrain => bedDepthSettings.bedTerrain;
+        internal int bedResolution => bedDepthSettings.bedResolution;
+        internal Color deepWaterColor => bedDepthSettings.deepWaterColor;
+        internal float shorelineFadeDepth => bedDepthSettings.shorelineFadeDepth;
+        internal float shorelineStrength => bedDepthSettings.shorelineStrength;
+
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
+        [SerializeField, HideInInspector, FormerlySerializedAs("bedTerrain")] Terrain _legacyBedTerrain;
+        [SerializeField, HideInInspector, FormerlySerializedAs("bedResolution")] int _legacyBedResolution = 256;
+        [SerializeField, HideInInspector, FormerlySerializedAs("deepWaterColor")] Color _legacyDeepWaterColor = new Color(0.02f, 0.10f, 0.15f);
+        [SerializeField, HideInInspector, FormerlySerializedAs("shorelineFadeDepth")] float _legacyShorelineFadeDepth = 6f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("shorelineStrength")] float _legacyShorelineStrength = 0.8f;
 
         [Header("Wind waves (spectral)")]
         [SerializeField] WindWaveSettings windWaveSettings = new WindWaveSettings();
