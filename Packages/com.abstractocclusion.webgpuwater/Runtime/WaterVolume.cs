@@ -153,6 +153,29 @@ namespace AbstractOcclusion.WebGpuWater
                  "Caustics Shader assigned.")]
         [Min(0f)] [SerializeField] internal float largeGodRayCausticStrength = DefaultLargeGodRayCausticStrength;
 
+        [Header("Ocean foam (whitecaps)")]
+        [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
+                 "to the same Wind Speed that drives the swell: calmer seas stay foam-free. Ocean-only.")]
+        [Min(0f)] [SerializeField] internal float oceanFoamWindThreshold = DefaultOceanFoamWindThreshold;
+        [Tooltip("How readily a folding wave crest turns to foam. 1 = only where the surface actually pinches " +
+                 "(the natural default); higher spreads foam onto gentler folds; lower needs sharper breaks. " +
+                 "Needs Large Wave Choppiness above 0 for crests to fold at all.")]
+        [Range(0f, OceanFoamCoverageMax)] [SerializeField] internal float oceanFoamCoverage = DefaultOceanFoamCoverage;
+        [Tooltip("How fast foam builds up on breaking crests. Higher = denser whitecaps sooner.")]
+        [Range(0f, OceanFoamStrengthMax)] [SerializeField] internal float oceanFoamStrength = DefaultOceanFoamStrength;
+        [Tooltip("How fast foam fades once a crest passes (per second). Lower = foam lingers and streaks; " +
+                 "higher = it dies back quickly. This is what stops whitecaps flickering frame to frame.")]
+        [Range(0f, OceanFoamFadeRateMax)] [SerializeField] internal float oceanFoamFadeRate = DefaultOceanFoamFadeRate;
+        [Tooltip("Whitecap tint (RGB) and overall opacity (alpha) where foam sits on the surface. White is " +
+                 "the natural default; alpha 0 hides the surface foam entirely (accumulation still runs).")]
+        [SerializeField] internal Color oceanFoamColor = Color.white;
+        [Tooltip("Metres per tile of the Foam Pattern texture on the ocean surface. Smaller = finer, more " +
+                 "repeated lace; larger = broader foam shapes. Uses the material's Foam Pattern slot.")]
+        [Min(OceanFoamTileSizeMin)] [SerializeField] internal float oceanFoamTileSize = DefaultOceanFoamTileSize;
+        [Tooltip("How softly the foam texture dissolves in as coverage rises. 0 = hard edges; higher = a " +
+                 "gentle feathered fade from water to foam.")]
+        [Range(0f, 1f)] [SerializeField] internal float oceanFoamFeather = DefaultOceanFoamFeather;
+
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
         // calm flattens it. Both the shader publisher and the CPU buoyancy read these, so they match.
@@ -160,11 +183,29 @@ namespace AbstractOcclusion.WebGpuWater
         // Crest's _Chop range; beyond this the Gerstner surface self-intersects (pinch-through) and the
         // buoyancy inversion stops converging, so the knob is clamped here.
         const float LargeWaveChoppinessMax = 2f;
+        // Ocean whitecap foam defaults - subtle + wind-gated so the current look is unchanged until dialed.
+        const float DefaultOceanFoamWindThreshold = 4f; // KWS FOAM_MIN_WIND: no whitecaps below ~4 m/s
+        const float DefaultOceanFoamCoverage = 1f;      // fold threshold; 1 == the original saturate(1 - jacobian)
+        const float DefaultOceanFoamStrength = 1f;      // accumulation gain per unit fold
+        const float DefaultOceanFoamFadeRate = 0.5f;    // exponential decay per second (lower = foam lingers)
+        const float OceanFoamCoverageMax = 2f;          // beyond ~2 the whole surface foams; clamp the knob
+        const float OceanFoamStrengthMax = 4f;          // sane upper bound for the build-up gain slider
+        const float OceanFoamFadeRateMax = 4f;          // fastest useful decay; higher just flickers
+        const float DefaultOceanFoamTileSize = 8f;      // metres per foam-pattern tile on the surface
+        const float OceanFoamTileSizeMin = 0.5f;        // guard the divide + keep the pattern from collapsing
+        const float DefaultOceanFoamFeather = 0.25f;    // dissolve softness of the foam texture black point
         internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
         internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
         internal float LargeWaveChoppiness => largeWaveChoppiness;
         internal float SwellHeight => swellHeight;
         internal float SwellWavelength => swellWavelength;
+        internal float OceanFoamWindThreshold => oceanFoamWindThreshold;
+        internal float OceanFoamCoverage => oceanFoamCoverage;
+        internal float OceanFoamStrength => oceanFoamStrength;
+        internal float OceanFoamFadeRate => oceanFoamFadeRate;
+        internal Color OceanFoamColor => oceanFoamColor;
+        internal float OceanFoamTileSize => oceanFoamTileSize;
+        internal float OceanFoamFeather => oceanFoamFeather;
         const float DefaultSwellWavelength = 140f;
         // Default horizon haze target: pale sky-blue, but alpha 0 so out of the box the far ocean
         // dissolves into the REAL reflected sky (seamless). The rgb only matters once alpha is raised.
@@ -651,6 +692,10 @@ namespace AbstractOcclusion.WebGpuWater
         // True only when this body is an unbounded ocean whose FFT pass is producing cascades. Drives the
         // per-body _OceanFftActive flag so the surface samples the FFT instead of the analytic generator.
         internal bool OceanFftActive => _oceanFft != null && _oceanFft.Ready;
+        // Cascade whitecap data for the foam-particle spawn compute (crest foam source).
+        internal RenderTexture OceanFftNormalTexture => _oceanFft?.NormalTexture;
+        internal Vector4 OceanFftDomainSizes => _oceanFft != null ? _oceanFft.DomainSizes : Vector4.one;
+        internal float OceanFftCascadeCount => _oceanFft != null ? _oceanFft.CascadeCount : 0f;
         internal Texture2D BedTexture => _bedBaker?.Texture;
         internal bool IsBedBaked => _bedBaker != null && _bedBaker.IsBaked;
         internal int GodRaySteps => _godRaySteps;
@@ -1207,8 +1252,10 @@ namespace AbstractOcclusion.WebGpuWater
                 Vector2 camXZ = targetCamera != null
                     ? new Vector2(targetCamera.transform.position.x, targetCamera.transform.position.z)
                     : new Vector2(VolumeCenter.x, VolumeCenter.z);
+                var foam = new WaterOceanFft.FoamParams(OceanFoamWindThreshold, OceanFoamCoverage,
+                                                        OceanFoamStrength, OceanFoamFadeRate);
                 _oceanFft?.Dispatch(_waveTime, windSpeed, LargeWaveHeadingRad, LargeWaveAmplitudeEffective,
-                                    SwellWavelength, SwellHeight, camXZ);
+                                    SwellWavelength, SwellHeight, camXZ, foam);
             }
             if (_simulate && Time.frameCount % _causticInterval == 0)
                 RenderCausticsForThisBody();

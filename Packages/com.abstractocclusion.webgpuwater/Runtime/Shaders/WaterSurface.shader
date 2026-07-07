@@ -634,7 +634,29 @@ Shader "WebGLWater/WaterSurface"
                 #endif
 
                     refractedColor = ApplyWaterOpacity(refractedColor); // art-directed turbidity floor
-                    float3 outColor = lerp(refractedColor, reflectedColor, fresnel * _ReflectionStrength);
+
+                    // ---- Ocean FFT whitecap foam: coverage sampled per pixel from the cascade (.w), on the
+                    // same crests as the normal tilt, then broken into moving lace by the foam flipbook -
+                    // the coverage is a black-point threshold that dissolves the pattern in (Crest's
+                    // WhiteFoamTexture). Whitecaps are matte, so the resulting alpha knocks the specular
+                    // reflection down before compositing (this surface expresses gloss as the reflection
+                    // term). Ocean-only; the analytic/pool path leaves this at 0. ----
+                    float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
+                    float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
+                    if (_OceanFftActive > 0.5)
+                    {
+                        float coverage = OceanFftFoam(i.largeWaveSourceXZ);
+                        if (coverage > FOAM_MASK_EPSILON)
+                        {
+                            // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
+                            // foam texture dissolves in as lace. frac() inside SampleFoamPattern does the tile.
+                            oceanFoamPattern = SampleFoamPattern(i.largeWaveSourceXZ / max(_OceanFoamTileSize, 1e-3));
+                            float threshold = 1.0 - coverage;
+                            oceanFoam = smoothstep(threshold, threshold + max(_OceanFoamFeather, 1e-3), oceanFoamPattern.r);
+                        }
+                    }
+                    float3 outColor = lerp(refractedColor, reflectedColor,
+                                           fresnel * _ReflectionStrength * (1.0 - oceanFoam));
 
                     // ---- Shoreline gradient from the real terrain depth (baked bed map).
                     // Tint toward the deep-water colour by the water-column depth, so the surface
@@ -647,6 +669,31 @@ Shader "WebGLWater/WaterSurface"
                         float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
                         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
                         outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
+                    }
+
+                    // ---- Ocean whitecap blend: lay the lit foam colour over the water by the sampled
+                    // coverage. Lit with the same wrapped-sun + ambient model as the pond foam so crests
+                    // shade with the waves instead of reading as flat paint. Separate from the pond
+                    // _FoamMask path below and gated on the FFT ocean, so pools stay unchanged. ----
+                    if (oceanFoam > FOAM_MASK_EPSILON)
+                    {
+                        // ---- Foam relief: emboss the lighting normal by the foam normal map (same flipbook,
+                        // frame-synced to the pattern) so the lace shades three-dimensionally and its specular
+                        // breakup matches the texture. Built as a LOCAL normal - the base wave normal that the
+                        // pond foam / haze below rely on is left untouched. Default "bump" map = zero tilt. ----
+                        float2 oceanFoamTilt = SampleFoamNormalTilt(i.largeWaveSourceXZ / max(_OceanFoamTileSize, 1e-3))
+                                             * (_FoamNormalStrength * oceanFoam);
+                        float3 oceanFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+                        float3 oceanFoamBitangent = cross(normal, oceanFoamTangent);
+                        float3 oceanFoamNormal = normalize(normal + oceanFoamTangent * oceanFoamTilt.x
+                                                                  + oceanFoamBitangent * oceanFoamTilt.y);
+
+                        // Modulate the tint by the pattern so the foam carries internal light/dark detail
+                        // instead of reading as a flat wash; whiten toward the peaks so dense foam stays bright.
+                        float oceanWrap = saturate(dot(oceanFoamNormal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+                        float3 oceanTint = _OceanFoamColor.rgb * lerp(oceanFoamPattern, float3(1.0, 1.0, 1.0), oceanFoam);
+                        float3 oceanFoamLook = oceanTint * (FOAM_AMBIENT + _SunColor * oceanWrap);
+                        outColor = lerp(outColor, oceanFoamLook, oceanFoam * _OceanFoamColor.a);
                     }
 
                     // ---- Foam: advected buffer + shoreline border + waterline contact ----

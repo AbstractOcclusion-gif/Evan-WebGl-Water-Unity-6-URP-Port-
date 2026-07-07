@@ -154,6 +154,9 @@ float4 _OceanFftDomainSizes;   // metres per cascade
 float4 _OceanFftVisibleAreas;  // per-cascade view distance (m) at which its detail fully fades out
 float  _OceanFftCascadeCount;  // active cascades (<= 4)
 float  _OceanFftActive;        // 1 when the FFT pass drives this body; 0 -> analytic fallback
+float4 _OceanFoamColor;        // whitecap tint (rgb) + master opacity (a); default opaque white
+float  _OceanFoamTileSize;     // metres per foam-pattern tile on the ocean surface
+float  _OceanFoamFeather;      // black-point dissolve softness (0..1) for the foam texture
 
 #define OCEAN_FFT_MAX_CASCADES 4
 
@@ -193,6 +196,29 @@ float2 OceanFftNormalTilt(float2 worldXZ)
         tilt += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).xz;
     }
     return tilt;
+}
+
+// Sum the accumulated whitecap foam (.w of the per-cascade normal target) across the active cascades,
+// with the SAME distance fade + mip LOD as the tilt above, so foam anti-aliases and fades toward the
+// horizon exactly like the ripple detail it rides on. The compute silences cascade 0 and damps cascade 1,
+// so this just gathers what the temporal accumulation already shaped. Saturated: overlapping cascades can
+// sum past 1 on a hard break, but foam coverage is a 0..1 mask.
+float OceanFftFoam(float2 worldXZ)
+{
+    float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
+    float foam = 0.0;
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
+        float domain = max(_OceanFftDomainSizes[c], 1e-3);
+        float2 uv = worldXZ / domain;
+        float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
+        float fade = 1.0 - f * f * f;
+        float lod = log2(1.0 + camDist / domain);
+        foam += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
+    }
+    return saturate(foam);
 }
 
 // Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera

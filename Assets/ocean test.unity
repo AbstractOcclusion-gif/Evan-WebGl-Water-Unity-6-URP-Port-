@@ -359,6 +359,9 @@ MonoBehaviour:
   flowDrift: 0.25
   windDriftSpeed: 0.02
   drag: 2
+  crestRollSpeed: 0.6
+  flipbookGrid: {x: 2, y: 2}
+  flipbookFps: 0
 --- !u!114 &229386708
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -406,6 +409,13 @@ MonoBehaviour:
   largeGodRayAnisotropy: 0.3
   largeGodRayExtinction: 0
   largeGodRayCausticStrength: 4
+  oceanFoamWindThreshold: 4
+  oceanFoamCoverage: 1
+  oceanFoamStrength: 1
+  oceanFoamFadeRate: 0.5
+  oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
+  oceanFoamTileSize: 8
+  oceanFoamFeather: 0.25
   surfaceAbove: {fileID: 1010039348}
   surfaceUnder: {fileID: 2143424729}
   poolRenderer: {fileID: 1044300549}
@@ -704,6 +714,7 @@ GameObject:
   - component: {fileID: 344666083}
   - component: {fileID: 344666082}
   - component: {fileID: 344666084}
+  - component: {fileID: 344666085}
   m_Layer: 0
   m_Name: Frame (WaterVolume)
   m_TagString: Untagged
@@ -753,6 +764,9 @@ MonoBehaviour:
   flowDrift: 0.25
   windDriftSpeed: 0.02
   drag: 2
+  crestRollSpeed: 0.6
+  flipbookGrid: {x: 2, y: 2}
+  flipbookFps: 0
 --- !u!114 &344666083
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -800,6 +814,13 @@ MonoBehaviour:
   largeGodRayAnisotropy: 0.6
   largeGodRayExtinction: 100
   largeGodRayCausticStrength: 10
+  oceanFoamWindThreshold: 4
+  oceanFoamCoverage: 1
+  oceanFoamStrength: 0.45
+  oceanFoamFadeRate: 2.03
+  oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
+  oceanFoamTileSize: 8
+  oceanFoamFeather: 0.25
   surfaceAbove: {fileID: 1978089426}
   surfaceUnder: {fileID: 2009765920}
   poolRenderer: {fileID: 289560618}
@@ -844,7 +865,7 @@ MonoBehaviour:
   waveDirectionSpread: 2
   waveNormalStrength: 1
   foam: 0
-  foamGenRate: 0.6
+  foamGenRate: 2
   foamDecay: 0.96
   foamDecayResidual: 0.993
   foamDecayRate: 1
@@ -853,7 +874,7 @@ MonoBehaviour:
   foamFromSpeed: 6
   foamFromCurvature: 30
   foamColor: {r: 1, g: 1, b: 1, a: 1}
-  foamStrength: 1
+  foamStrength: 2
   foamFeather: 0.15
   foamCoreCut: 0.5
   foamBorderWidth: 0
@@ -883,8 +904,38 @@ MonoBehaviour:
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterOceanFftDebugView
   oceanBody: {fileID: 344666083}
   show: 1
-  cascadeSlice: 0
+  cascadeSlice: 2
   screenSize: 256
+--- !u!114 &344666085
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 344666080}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
+  volume: {fileID: 344666083}
+  particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
+  particleMaterial: {fileID: 2100000, guid: 4e2a0b139461bf44ba2a9ef9d2b1182a, type: 2}
+  capacity: 4096
+  spawnThreshold: 0.25
+  spawnRate: 30
+  maxSpawnPerFrame: 256
+  sprayChance: 0.15
+  sprayLaunchSpeed: 0.6
+  lifeRange: {x: 1.5, y: 4}
+  sizeRange: {x: 0.02, y: 0.06}
+  gravity: 4
+  flowDrift: 0.25
+  windDriftSpeed: 0.02
+  drag: 2
+  crestRollSpeed: 0.6
+  flipbookGrid: {x: 1, y: 1}
+  flipbookFps: 0
 --- !u!1 &395032097
 GameObject:
   m_ObjectHideFlags: 0
@@ -16452,6 +16503,9 @@ MonoBehaviour:
   flowDrift: 0.25
   windDriftSpeed: 0.02
   drag: 2
+  crestRollSpeed: 0.6
+  flipbookGrid: {x: 2, y: 2}
+  flipbookFps: 0
 --- !u!114 &1146352995
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16499,6 +16553,13 @@ MonoBehaviour:
   largeGodRayAnisotropy: 0.6
   largeGodRayExtinction: 0
   largeGodRayCausticStrength: 4
+  oceanFoamWindThreshold: 4
+  oceanFoamCoverage: 1
+  oceanFoamStrength: 1
+  oceanFoamFadeRate: 0.5
+  oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
+  oceanFoamTileSize: 8
+  oceanFoamFeather: 0.25
   surfaceAbove: {fileID: 1450726827}
   surfaceUnder: {fileID: 1625076986}
   poolRenderer: {fileID: 1049831468}

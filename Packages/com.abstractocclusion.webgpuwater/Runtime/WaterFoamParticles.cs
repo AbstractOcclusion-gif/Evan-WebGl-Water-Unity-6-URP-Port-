@@ -66,6 +66,15 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FlowDrift = Shader.PropertyToID("_FlowDrift");
         static readonly int ID_WindDrift = Shader.PropertyToID("_WindDrift");
         static readonly int ID_Drag = Shader.PropertyToID("_Drag");
+        static readonly int ID_OceanFftNormal = Shader.PropertyToID("_OceanFftNormal");
+        static readonly int ID_OceanFftDomainSizes = Shader.PropertyToID("_OceanFftDomainSizes");
+        static readonly int ID_OceanFftCascadeCount = Shader.PropertyToID("_OceanFftCascadeCount");
+        static readonly int ID_CrestRoll = Shader.PropertyToID("_CrestRoll");
+        static readonly int ID_FlipbookGrid = Shader.PropertyToID("_ParticleFlipbookGrid");
+        static readonly int ID_FlipbookFps = Shader.PropertyToID("_ParticleFlipbookFps");
+
+        // Local compute keyword: turns on the FFT-crest spawn source for the ocean body only.
+        const string KeywordOceanCrest = "OCEAN_CREST_FOAM";
 
         [Header("Wiring")]
         [Tooltip("The water body this system spawns from. Defaults to the WaterVolume on this GameObject.")]
@@ -108,6 +117,18 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(0f, 0.5f)] [SerializeField] internal float windDriftSpeed = 0.02f;
         [Tooltip("How quickly foam velocity relaxes to the driven flow (1/sec).")]
         [Range(0f, 10f)] [SerializeField] internal float drag = 2f;
+
+        [Header("Wave particles (ocean crest only)")]
+        [Tooltip("How fast whitecap foam rolls forward along the wave-travel direction (world units/sec). " +
+                 "0 = foam sits still. Ocean bodies only; ignored on pools.")]
+        [Range(0f, 4f)] [SerializeField] internal float crestRollSpeed = 0.6f;
+        [Tooltip("Foam sprite atlas layout (columns, rows). (1,1) = a plain foam texture (no flipbook); " +
+                 "(2,2) = a 4-frame sheet, etc. Optional, like the surface foam's flipbook grid.")]
+        [SerializeField] internal Vector2Int flipbookGrid = new Vector2Int(2, 2);
+        [Tooltip("Flipbook animation speed of the foam sprite over its life (frames/sec). 0 = each particle " +
+                 "shows one fixed atlas cell (or the plain texture at grid 1x1); higher = the foam churns " +
+                 "through the frames as it lives. This is the ONE place to set particle flipbook speed.")]
+        [Range(0f, 30f)] [SerializeField] internal float flipbookFps = 0f;
 
         GraphicsBuffer _particles;
         GraphicsBuffer _counters;
@@ -183,7 +204,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (volume == null || !volume.isActiveAndEnabled) return;
             if (volume.SimStateTexture == null || volume.FoamMaskTexture == null) return;
-            if (!volume.Foam) return; // foam sim off -> nothing to spawn from
+            // Spawn when the 2D foam sim is on OR this is an ocean (whose FFT crests are the source).
+            if (!volume.Foam && !volume.OceanFftActive) return;
 
             if (volume.IsSimulating && Time.deltaTime > 0f)
                 DispatchSimulation(Time.deltaTime);
@@ -225,6 +247,23 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetBuffer(_kSpawn, ID_Counters, _counters);
             cs.SetTexture(_kSpawn, ID_Sim, volume.SimStateTexture);
             cs.SetTexture(_kSpawn, ID_FoamTex, volume.FoamMaskTexture);
+
+            // Ocean crest source: enable the keyword + bind the cascade whitecap array so the spawn
+            // kernel can emit foam on breaking FFT crests. Pools leave it off (no cascade binding).
+            bool oceanCrest = volume.OceanFftActive && volume.OceanFftNormalTexture != null;
+            if (oceanCrest)
+            {
+                cs.EnableKeyword(KeywordOceanCrest);
+                cs.SetTexture(_kSpawn, ID_OceanFftNormal, volume.OceanFftNormalTexture);
+                cs.SetVector(ID_OceanFftDomainSizes, volume.OceanFftDomainSizes);
+                cs.SetFloat(ID_OceanFftCascadeCount, volume.OceanFftCascadeCount);
+                cs.SetVector(ID_CrestRoll, CrestRollWorld()); // foam rolls along the wave direction
+            }
+            else
+            {
+                cs.DisableKeyword(KeywordOceanCrest);
+            }
+
             int spawnGroups = volume.SimResolution / SpawnThreadGroupSize;
             cs.Dispatch(_kSpawn, spawnGroups, spawnGroups, 1);
 
@@ -245,12 +284,25 @@ namespace AbstractOcclusion.WebGpuWater
             return new Vector2(world.x, world.z);
         }
 
+        // Same heading as the wind drift, scaled by the crest-roll speed: whitecap foam is carried along
+        // the wave-travel direction so it rolls forward with the breaking crest.
+        Vector2 CrestRollWorld()
+        {
+            float radians = volume.windFromDegrees * Mathf.Deg2Rad;
+            Vector3 local = new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians));
+            Vector3 world = volume.transform.rotation * local * crestRollSpeed;
+            return new Vector2(world.x, world.z);
+        }
+
         void Draw()
         {
             // The body's own uniforms (sim texture, volume frame, waves, sun) drive the
             // vertex shader; the particle buffer rides along in the same block.
             volume.WriteBodyProps(_mpb);
             _mpb.SetBuffer(ID_ParticlesShader, _particles);
+            // Flipbook atlas + speed are driven from here (the single control point), not material sliders.
+            _mpb.SetVector(ID_FlipbookGrid, new Vector4(Mathf.Max(1, flipbookGrid.x), Mathf.Max(1, flipbookGrid.y), 0f, 0f));
+            _mpb.SetFloat(ID_FlipbookFps, flipbookFps); // 0 = static variant (unchanged); >0 animates the atlas
 
             var rp = new RenderParams(particleMaterial)
             {

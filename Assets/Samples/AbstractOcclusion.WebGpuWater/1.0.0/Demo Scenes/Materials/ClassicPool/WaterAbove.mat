@@ -13,6 +13,8 @@ Material:
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:
   - _REAL_REFRACTION
+  - _USE_PLANAR
+  - _USE_SSR
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
@@ -46,8 +48,8 @@ Material:
     - _SSRStrength: 1
     - _SSRThickness: 0.2
     - _Underwater: 0
-    - _UsePlanar: 0
-    - _UseSSR: 0
+    - _UsePlanar: 1
+    - _UseSSR: 1
     - _UseUrpProbe: 0
     m_Colors:
     - _FoamTexFrames: {r: 4, g: 4, b: 0, a: 0}

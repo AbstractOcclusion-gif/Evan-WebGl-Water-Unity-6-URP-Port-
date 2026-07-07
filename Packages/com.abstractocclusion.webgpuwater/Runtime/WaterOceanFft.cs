@@ -16,6 +16,19 @@ namespace AbstractOcclusion.WebGpuWater
     /// <summary>GPU compute pass owning the ocean FFT cascade textures. Ocean-gated, default-off elsewhere.</summary>
     internal sealed class WaterOceanFft : System.IDisposable
     {
+        /// <summary>Per-body whitecap-foam accumulation knobs, authored on the ocean WaterVolume.</summary>
+        internal readonly struct FoamParams
+        {
+            internal readonly float WindThreshold; // m/s; no foam below this wind speed
+            internal readonly float Coverage;      // fold threshold: fresh = saturate(coverage - jacobian)
+            internal readonly float Strength;      // accumulation gain per unit fold
+            internal readonly float FadeRate;      // exponential decay per second (lower = foam lingers)
+            internal FoamParams(float windThreshold, float coverage, float strength, float fadeRate)
+            {
+                WindThreshold = windThreshold; Coverage = coverage; Strength = strength; FadeRate = fadeRate;
+            }
+        }
+
         // Per-cascade FFT grid side. Fixed at 128: the compute sizes its groupshared butterfly buffers at
         // this compile-time constant (FFT_SIZE) and stays well under the WebGPU threadgroup limits.
         internal const int DefaultResolution = 128;
@@ -35,6 +48,10 @@ namespace AbstractOcclusion.WebGpuWater
         const int MaxCascades = 4;
         const int SpectrumSeed = 1337;
         const float PreviewGain = 8f; // TEMP (1c) debug-view display gain
+        // Ocean whitecap foam internal calibration (NOT art knobs - the coverage/strength/fade/threshold
+        // sliders live on the ocean WaterVolume and arrive via FoamParams). Named so there are no magic numbers.
+        const float FoamMax = 1f;            // soft ceiling on accumulated foam
+        const float MaxFoamDeltaTime = 0.1f; // clamp dt so a frame hitch or pause can't over-accumulate foam
         // Camera-centred buoyancy height field: a small readback covering the near ocean where floaters
         // live. 256 m / 128 texels = 2 m per texel, enough for swell + medium waves under a boat.
         const int HeightFieldRes = 128;
@@ -80,6 +97,15 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_GlobalDomainSizes = Shader.PropertyToID("_OceanFftDomainSizes");
         static readonly int ID_GlobalCascadeCount = Shader.PropertyToID("_OceanFftCascadeCount");
         static readonly int ID_GlobalVisibleAreas = Shader.PropertyToID("_OceanFftVisibleAreas");
+        static readonly int ID_FoamPrev = Shader.PropertyToID("OceanFoamPrev");
+        static readonly int ID_FoamNext = Shader.PropertyToID("OceanFoamNext");
+        static readonly int ID_FoamDeltaTime = Shader.PropertyToID("OceanFoamDeltaTime");
+        static readonly int ID_FoamHistoryValid = Shader.PropertyToID("OceanFoamHistoryValid");
+        static readonly int ID_FoamMinWind = Shader.PropertyToID("OceanFoamMinWind");
+        static readonly int ID_FoamCoverage = Shader.PropertyToID("OceanFoamCoverage");
+        static readonly int ID_FoamStrength = Shader.PropertyToID("OceanFoamStrength");
+        static readonly int ID_FoamFadeRate = Shader.PropertyToID("OceanFoamFadeRate");
+        static readonly int ID_FoamMax = Shader.PropertyToID("OceanFoamMax");
 
         readonly ComputeShader _cs;
         readonly int _kInit, _kUpdate, _kFftH, _kFftV, _kNormal, _kBake, _kPreview;
@@ -94,6 +120,9 @@ namespace AbstractOcclusion.WebGpuWater
 
         RenderTexture _h0, _specX, _specY, _specZ, _displacement, _normal, _preview;
         RenderTexture _heightField;
+        RenderTexture _foamHistA, _foamHistB; // ping-pong accumulated-foam history (one slice per cascade)
+        float _lastDispatchTime;              // wave time at the previous dispatch, for the foam delta time
+        bool _hasLastDispatchTime;            // false until the first dispatch runs (history not yet valid)
         Texture2D _butterfly;
         bool _ready;
         bool _spectrumBuilt;
@@ -109,6 +138,11 @@ namespace AbstractOcclusion.WebGpuWater
         // The debug view shows the readable preview, not the raw signed displacement.
         internal RenderTexture DisplacementTexture => _preview;
         internal bool Ready => _ready;
+        // Cascade data for consumers outside the render globals (e.g. the foam-particle spawn compute,
+        // which samples the whitecap .w to emit crest foam).
+        internal RenderTexture NormalTexture => _normal;
+        internal Vector4 DomainSizes => _domainSizes;
+        internal int CascadeCount => _cascades;
 
         internal WaterOceanFft(ComputeShader compute, int resolution, int cascades, float[] domainSizes)
         {
@@ -182,10 +216,18 @@ namespace AbstractOcclusion.WebGpuWater
             _normal = CreateArray("OceanFftNormal", RenderTextureFormat.ARGBHalf, RenderTextureFormat.ARGBFloat, mips: true);
             _preview = CreateArray("OceanFftPreview", RenderTextureFormat.ARGBHalf, RenderTextureFormat.ARGBFloat);
 
+            // Foam history: single-channel, ping-ponged so ComputeNormal reads last frame's accumulated foam
+            // (SRV) and writes this frame's (UAV) - WebGPU forbids read+write on one storage texture. RFloat
+            // (r32f), not RHalf: r16f is NOT a WebGPU storage format, and this is point-read (no filtering)
+            // so float32 costs nothing here (the filtered surface sample reads the half-float OceanNormal.w).
+            _foamHistA = CreateArray("OceanFftFoamA", RenderTextureFormat.RFloat, RenderTextureFormat.RFloat);
+            _foamHistB = CreateArray("OceanFftFoamB", RenderTextureFormat.RFloat, RenderTextureFormat.RFloat);
+
             _heightField = CreateHeightField();
 
             if (_h0 == null || _specX == null || _specY == null || _specZ == null
-                || _displacement == null || _normal == null || _preview == null || _heightField == null)
+                || _displacement == null || _normal == null || _preview == null || _heightField == null
+                || _foamHistA == null || _foamHistB == null)
             {
                 Debug.LogWarning("WaterOceanFft: could not allocate the random-write float texture arrays; FFT ocean disabled.");
                 return false;
@@ -297,7 +339,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Per-frame: (re)build H0 on a wind change, evolve, inverse-FFT to a spatial displacement cascade,
         // preview, and publish the displacement array as a global for the surface shader (from increment 2).
         internal void Dispatch(float waveTime, float windSpeed, float windHeadingRad, float amplitude,
-                               float swellWavelength, float swellHeight, Vector2 cameraXZ)
+                               float swellWavelength, float swellHeight, Vector2 cameraXZ, FoamParams foam)
         {
             if (!_ready) return;
             SetSharedUniforms(windSpeed, windHeadingRad, swellWavelength, swellHeight);
@@ -328,10 +370,27 @@ namespace AbstractOcclusion.WebGpuWater
             // Normal + foam cascade from the finished displacement, then mips for per-pixel trilinear
             // sampling. GenerateMips on an array RT may no-op on some WebGPU backends; the fragment then
             // just samples mip 0 (still correct, less distance anti-aliasing) - it never hard-fails.
+            // Whitecap foam: framerate-independent accumulation needs the real time since the last dispatch,
+            // and must ignore uninitialised history on the very first frame (historyValid = 0 then).
+            float historyValid = _hasLastDispatchTime ? 1f : 0f;
+            float foamDt = _hasLastDispatchTime ? Mathf.Clamp(waveTime - _lastDispatchTime, 0f, MaxFoamDeltaTime) : 0f;
+            _lastDispatchTime = waveTime;
+            _hasLastDispatchTime = true;
+            _cs.SetFloat(ID_FoamDeltaTime, foamDt);
+            _cs.SetFloat(ID_FoamHistoryValid, historyValid);
+            _cs.SetFloat(ID_FoamMinWind, foam.WindThreshold);
+            _cs.SetFloat(ID_FoamCoverage, foam.Coverage);
+            _cs.SetFloat(ID_FoamStrength, foam.Strength);
+            _cs.SetFloat(ID_FoamFadeRate, foam.FadeRate);
+            _cs.SetFloat(ID_FoamMax, FoamMax);
+
             _cs.SetTexture(_kNormal, ID_Displacement, _displacement);
             _cs.SetTexture(_kNormal, ID_Normal, _normal);
+            _cs.SetTexture(_kNormal, ID_FoamPrev, _foamHistA); // read last frame's accumulated foam
+            _cs.SetTexture(_kNormal, ID_FoamNext, _foamHistB); // write this frame's accumulated foam
             _cs.Dispatch(_kNormal, _groups, _groups, _cascades);
             if (_normal.useMipMap) _normal.GenerateMips();
+            (_foamHistA, _foamHistB) = (_foamHistB, _foamHistA); // ping-pong: this frame becomes next frame's prev
 
             // Bake the camera-centred height field for CPU buoyancy readback.
             _bakedCenter = cameraXZ;
@@ -347,6 +406,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             _cs.SetFloat(ID_PreviewGain, PreviewGain);
             _cs.SetTexture(_kPreview, ID_Displacement, _displacement);
+            _cs.SetTexture(_kPreview, ID_Normal, _normal); // preview overlays the accumulated foam (.w) as white
             _cs.SetTexture(_kPreview, ID_Preview, _preview);
             _cs.Dispatch(_kPreview, _groups, _groups, _cascades);
 
@@ -469,6 +529,9 @@ namespace AbstractOcclusion.WebGpuWater
             Release(ref _normal);
             Release(ref _preview);
             Release(ref _heightField);
+            Release(ref _foamHistA);
+            Release(ref _foamHistB);
+            _hasLastDispatchTime = false;
             _heightReady = false;
             if (_butterfly != null)
             {

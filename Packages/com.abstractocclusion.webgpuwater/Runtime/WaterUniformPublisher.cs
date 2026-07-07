@@ -58,6 +58,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SimEdgeFade = Shader.PropertyToID("_SimEdgeFadeTexels");
         static readonly int ID_LargeBody = Shader.PropertyToID("_LargeBody");
         static readonly int ID_OceanFftActive = Shader.PropertyToID("_OceanFftActive");
+        static readonly int ID_OceanFoamColor = Shader.PropertyToID("_OceanFoamColor");
+        static readonly int ID_OceanFoamTileSize = Shader.PropertyToID("_OceanFoamTileSize");
+        static readonly int ID_OceanFoamFeather = Shader.PropertyToID("_OceanFoamFeather");
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
@@ -158,6 +161,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Per-body: only the FFT-driven ocean samples the cascade textures; every other body (pools,
             // bounded open water) publishes 0 and keeps the analytic large-wave path unchanged.
             sink.SetFloat(ID_OceanFftActive, _body.OceanFftActive ? 1f : 0f);
+            sink.SetColor(ID_OceanFoamColor, _body.OceanFoamColor);
+            sink.SetFloat(ID_OceanFoamTileSize, _body.OceanFoamTileSize);
+            sink.SetFloat(ID_OceanFoamFeather, _body.OceanFoamFeather);
             sink.SetFloat(ID_LargeWaveAmp, _body.LargeWaveAmplitudeEffective);
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);

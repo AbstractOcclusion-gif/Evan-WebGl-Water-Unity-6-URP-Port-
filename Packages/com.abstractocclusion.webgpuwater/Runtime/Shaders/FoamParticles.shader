@@ -17,6 +17,8 @@ Shader "WebGLWater/FoamParticles"
         _ParticleOpacity ("Opacity", Range(0, 1)) = 0.85
         _VelocityStretch ("Velocity Stretch (per unit speed)", Range(0, 10)) = 3.0
         _SoftFadeDistance ("Soft Fade vs Scene Depth (world)", Range(0.001, 0.5)) = 0.05
+        // Flipbook grid + FPS are NOT material sliders: they are driven from the WaterFoamParticles
+        // component (one place to tweak) via its MaterialPropertyBlock. Declared as uniforms below.
     }
     SubShader
     {
@@ -36,10 +38,10 @@ Shader "WebGLWater/FoamParticles"
             #include "WaterCommon.hlsl" // _WaterTex + SampleWaterBilinear, _LightDir
             #include "WaterWaves.hlsl"  // WaveHeight (ambient wind-wave layer)
             #include "WaterVolume.hlsl" // pool/window <-> world frame
+            #include "WaterLargeWaves.hlsl" // FFT ocean surface: LargeBodyWaveHeight, OceanFftNormalTilt, _OceanFftActive
 
-            // Atlas layout: 2x2 sprite variants, chosen per particle by its seed.
-            #define VARIANT_COLS 2.0
-            #define VARIANT_ROWS 2.0
+            // Atlas layout is a uniform now (_ParticleFlipbookGrid): (1,1) = a plain non-atlas texture,
+            // (2,2) etc. = a flipbook. Optional, like the surface foam's _FoamTexFrames.
 
             // Life envelope: quick fade-in, erosion-driven fade-out beginning at this
             // fraction of the particle's life.
@@ -85,6 +87,8 @@ Shader "WebGLWater/FoamParticles"
             float _ParticleOpacity;
             float _VelocityStretch;
             float _SoftFadeDistance;
+            float2 _ParticleFlipbookGrid; // atlas (cols, rows); (1,1) = plain texture, no flipbook
+            float _ParticleFlipbookFps;   // 0 = static per-seed variant; >0 animates the atlas over age
             sampler2D _CameraDepthTexture;
 
             struct v2f
@@ -112,15 +116,30 @@ Shader "WebGLWater/FoamParticles"
 
                 float2 corner = QUAD_CORNERS[QUAD_INDICES[vid % 6]];
 
-                // ---- glue the particle to the animated surface (ripple + wind wave) ----
-                float3 poolPos = WorldToPool(particle.worldPos);
-                float2 fcoord = (_SimWindowed < 0.5) ? (poolPos.xz * 0.5 + 0.5)
-                                                     : (WorldToSim(particle.worldPos).xz * 0.5 + 0.5);
-                float4 info = SampleWaterBilinear(fcoord);
-                poolPos.y = info.r + WaveHeight(poolPos.xz);
-                float3 surfaceWorld = PoolToWorld(poolPos);
-                float3 surfaceNormal = PoolNormalToWorld(
-                    float3(info.b, sqrt(max(1e-4, 1.0 - dot(info.ba, info.ba))), info.a));
+                // ---- glue the particle to the animated surface ----
+                float3 surfaceWorld;
+                float3 surfaceNormal;
+                if (_OceanFftActive > 0.5)
+                {
+                    // Ocean: ride the FFT swell/chop crest (sea level + FFT height, leaned by the cascade
+                    // tilt) so foam sits ON the breaking wave, not on the flat rest plane. The pond path
+                    // (else) is byte-for-byte unchanged.
+                    float2 wxz = particle.worldPos.xz;
+                    surfaceWorld = float3(wxz.x, _VolumeCenter.y + LargeBodyWaveHeight(wxz), wxz.y);
+                    float2 tilt = OceanFftNormalTilt(wxz);
+                    surfaceNormal = normalize(float3(tilt.x, 1.0, tilt.y));
+                }
+                else
+                {
+                    float3 poolPos = WorldToPool(particle.worldPos);
+                    float2 fcoord = (_SimWindowed < 0.5) ? (poolPos.xz * 0.5 + 0.5)
+                                                         : (WorldToSim(particle.worldPos).xz * 0.5 + 0.5);
+                    float4 info = SampleWaterBilinear(fcoord);
+                    poolPos.y = info.r + WaveHeight(poolPos.xz);
+                    surfaceWorld = PoolToWorld(poolPos);
+                    surfaceNormal = PoolNormalToWorld(
+                        float3(info.b, sqrt(max(1e-4, 1.0 - dot(info.ba, info.ba))), info.a));
+                }
                 float3 center = surfaceWorld
                               + surfaceNormal * SURFACE_LIFT
                               + float3(0, 1, 0) * max(0.0, particle.worldPos.y); // spray height offset
@@ -170,10 +189,16 @@ Shader "WebGLWater/FoamParticles"
                 float fadeOut = 1.0 - smoothstep(particle.life * FADE_OUT_START, particle.life, particle.age);
                 float envelope = fadeIn * fadeOut * particle.strength;
 
-                // ---- sprite variant from the atlas ----
-                float variant = floor(particle.seed * VARIANT_COLS * VARIANT_ROWS);
-                float2 cell = float2(fmod(variant, VARIANT_COLS), floor(variant / VARIANT_COLS));
-                float2 uv = (corner * 0.5 + 0.5 + cell) / float2(VARIANT_COLS, VARIANT_ROWS);
+                // ---- sprite cell from the atlas: a fixed per-seed variant, or an animated flipbook (foam
+                // churn) when _ParticleFlipbookFps > 0. The seed offsets each particle's phase so they never
+                // flip in lockstep. Grid (1,1) = a plain texture (no cells, no animation); fps = 0 = the
+                // original static variant. ----
+                float2 grid = max(float2(1.0, 1.0), _ParticleFlipbookGrid.xy);
+                float cellCount = grid.x * grid.y;
+                float framePos = particle.seed * cellCount + particle.age * _ParticleFlipbookFps;
+                float variant = fmod(floor(framePos), cellCount);
+                float2 cell = float2(fmod(variant, grid.x), floor(variant / grid.x));
+                float2 uv = (corner * 0.5 + 0.5 + cell) / grid;
 
                 // ---- lighting, matched to the surface foam ----
                 float wrapped = saturate(dot(surfaceNormal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);

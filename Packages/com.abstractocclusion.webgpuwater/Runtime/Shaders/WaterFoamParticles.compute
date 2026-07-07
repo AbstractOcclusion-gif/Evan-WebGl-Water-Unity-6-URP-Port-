@@ -17,6 +17,10 @@
 #pragma kernel Spawn
 #pragma kernel Update
 
+// Ocean-only: adds the FFT whitecap cascade as a second spawn source (breaking-crest foam). Off for
+// pools/bounded bodies, so the cascade texture is never declared or bound on those dispatches.
+#pragma multi_compile _ OCEAN_CREST_FOAM
+
 #include "WaterVolume.hlsl" // pool/window <-> world frame (same uniforms as the render side)
 
 // MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
@@ -80,6 +84,31 @@ float _FlowDrift;         // world units/sec of drift per unit of surface slope
 float2 _WindDrift;        // constant world-space xz drift from the wind
 float _Drag;              // 1/sec velocity relaxation toward the driven speed
 
+#ifdef OCEAN_CREST_FOAM
+// Ocean whitecap cascade (bound per-frame from WaterFoamParticles.cs; same array the surface samples).
+Texture2DArray<float4> _OceanFftNormal;
+SamplerState sampler_OceanFftNormal;
+float4 _OceanFftDomainSizes;   // metres per cascade
+float  _OceanFftCascadeCount;  // active cascades (<= 4)
+float2 _CrestRoll;             // world xz drift (m/s) along the wave direction: foam rolls with the crest
+#define OCEAN_FFT_MAX_CASCADES 4
+
+// Sum the accumulated whitecap foam (.w) across cascades at a world xz. No distance fade here (the
+// spawn window is already near-camera): we want to emit wherever the surface is actually breaking.
+float OceanCrestFoamAt(float2 worldXZ)
+{
+    float foam = 0.0;
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
+        float2 uv = worldXZ / max(_OceanFftDomainSizes[c], 1e-3);
+        foam += active * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), 0).w;
+    }
+    return saturate(foam);
+}
+#endif
+
 // ---------------------------------------------------------------- helpers
 int2 ClampTexel(int2 p) { return clamp(p, int2(0, 0), int2((int)_Size - 1, (int)_Size - 1)); }
 
@@ -140,6 +169,11 @@ void Spawn(uint3 id : SV_DispatchThreadID)
 {
     int2 texel = int2(id.xy);
     float foam = FoamTex.Load(int3(texel, 0));
+#ifdef OCEAN_CREST_FOAM
+    // Add breaking-crest foam from the FFT cascade, sampled at this texel's world position. max() so a
+    // texel that is both interaction-foamy and on a crest still emits at the stronger of the two.
+    foam = max(foam, OceanCrestFoamAt(TexelToWorld(texel).xz));
+#endif
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;
 
@@ -219,6 +253,11 @@ void Update(uint3 id : SV_DispatchThreadID)
         float4 info = SampleSim(simNorm);
         float3 driven = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift
                       + float3(_WindDrift.x, 0.0, _WindDrift.y);
+#ifdef OCEAN_CREST_FOAM
+        // Roll the whitecap foam forward along the wave-travel direction so it moves WITH the breaking
+        // crest instead of sitting still (the near-field 2D flow is ~0 on open ocean).
+        driven += float3(_CrestRoll.x, 0.0, _CrestRoll.y);
+#endif
         particle.velocity = lerp(particle.velocity, driven, saturate(_Drag * _DeltaTime));
         particle.velocity.y = 0.0;
         particle.worldPos += particle.velocity * _DeltaTime;

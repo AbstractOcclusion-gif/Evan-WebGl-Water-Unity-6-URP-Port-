@@ -43,6 +43,17 @@ float  OceanFftTime;
 uint   OceanSpectrumSeed;
 float  OceanPreviewGain;     // TEMP: display gain for VisualizePreview
 
+// --- Ocean whitecap foam: temporal Jacobian accumulation (ComputeNormal) ---
+Texture2DArray<float>   OceanFoamPrev;   // previous-frame accumulated foam (read-only SRV)
+RWTexture2DArray<float>  OceanFoamNext;  // this-frame accumulated foam (write-only UAV; ping-ponged)
+float  OceanFoamDeltaTime;    // seconds since the last dispatch (framerate-independent decay/gen)
+float  OceanFoamHistoryValid; // 0 on the first dispatch so uninitialised history can't leak in, else 1
+float  OceanFoamMinWind;      // m/s; no whitecaps below this wind speed
+float  OceanFoamCoverage;     // fold threshold: fresh = saturate(coverage - jacobian)
+float  OceanFoamStrength;     // accumulation gain per unit fold
+float  OceanFoamFadeRate;     // exponential decay rate per second (foam lingers, then fades)
+float  OceanFoamMax;          // soft ceiling on accumulated foam
+
 // --- CPU buoyancy height-field bake (increment 4) ---
 RWTexture2D<float> OceanHeightField; // camera-centred summed height (metres) for async CPU readback
 float2 OceanFieldCenter;             // world XZ centre of the baked region
@@ -62,6 +73,8 @@ float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveA
 #define OCEAN_SWELL_WIDTH     0.12  // relative width of the swell peak in k-space (narrow = coherent)
 #define OCEAN_SWELL_DIR_POWER 6.0   // directional coherence: higher = tighter along the wind
 #define OCEAN_SWELL_GAIN      2.0   // maps the swell-height knob to spectral energy (rough calibration)
+#define OCEAN_FOAM_ACCUM_RATE     5.0   // foam gained per second at full fold * strength (Crest-calibrated)
+#define OCEAN_FOAM_CASCADE1_DAMP  0.25  // cascade 1 carries only a little breaking detail (KWS quarters it)
 
 float2 OceanCMul(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 float2 OceanConj(float2 a) { return float2(a.x, -a.y); }
@@ -242,15 +255,32 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)
     float3 tangentZ = float3(du.x - dd.x, du.y - dd.y, 2.0 * step + du.z - dd.z);
     float3 n = normalize(cross(tangentZ, tangentX));
 
-    // Jacobian of the horizontal displacement; where it folds (< 1) the surface is pinching -> foam.
+    // Jacobian determinant of the horizontal displacement; below the coverage threshold the surface is
+    // folding onto itself - a breaking crest that throws foam. (Crest form saturate(coverage - det);
+    // coverage = 1 reproduces the plain saturate(1 - det) fold this used to write directly.)
     float invTwoStep = 1.0 / (2.0 * step);
     float jxx = 1.0 + (dr.x - dl.x) * invTwoStep;
     float jzz = 1.0 + (du.z - dd.z) * invTwoStep;
     float jxz = (dr.z - dl.z) * invTwoStep;
     float jzx = (du.x - dd.x) * invTwoStep;
-    float foam = saturate(1.0 - (jxx * jzz - jxz * jzx));
+    float jacobian = jxx * jzz - jxz * jzx;
 
-    OceanNormal[id] = float4(n, foam);
+    // Fresh foam only where the surface folds, only above the whitecap wind threshold, silenced on the
+    // coarsest cascade (no breaking detail) and damped on the next (KWS skips 0, quarters 1).
+    float fresh = saturate(OceanFoamCoverage - jacobian);
+    fresh *= (slice == 0u) ? 0.0 : ((slice == 1u) ? OCEAN_FOAM_CASCADE1_DAMP : 1.0);
+    fresh *= (OceanWindSpeed > OceanFoamMinWind) ? 1.0 : 0.0;
+
+    // Temporal accumulation (framerate-independent, Crest-style): fade the previous foam exponentially,
+    // then add the fresh fold so whitecaps linger and decay instead of flickering per frame. Ping-ponged
+    // targets keep this WebGPU-safe - a half-float storage texture can't be read AND written in one pass.
+    float prevFoam = OceanFoamPrev[id] * OceanFoamHistoryValid;
+    float foam = prevFoam * saturate(1.0 - OceanFoamFadeRate * OceanFoamDeltaTime)
+               + OCEAN_FOAM_ACCUM_RATE * OceanFoamStrength * OceanFoamDeltaTime * fresh;
+    foam = min(foam, OceanFoamMax);
+
+    OceanFoamNext[id] = foam;           // history the next frame decays from
+    OceanNormal[id] = float4(n, foam);  // mip 0 the surface samples once the fragment consumes .w
 }
 
 // Manual bilinear read of one cascade's height (.y) at a world xz. Cascades tile every 'domain' metres
@@ -294,7 +324,10 @@ void VisualizePreview(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
     float4 d = OceanDisplacement[id];
-    OceanPreview[id] = float4(0.5 + d.y * OceanPreviewGain,
-                              0.5 + d.x * OceanPreviewGain,
-                              0.5 + d.z * OceanPreviewGain, 1.0);
+    float3 col = float3(0.5 + d.y * OceanPreviewGain,
+                        0.5 + d.x * OceanPreviewGain,
+                        0.5 + d.z * OceanPreviewGain);
+    // Overlay accumulated whitecap foam (OceanNormal.w) as white so it can be verified in the debug view.
+    float foam = saturate(OceanNormal[id].w);
+    OceanPreview[id] = float4(lerp(col, float3(1.0, 1.0, 1.0), foam), 1.0);
 }
