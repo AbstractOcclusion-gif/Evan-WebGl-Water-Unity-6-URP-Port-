@@ -639,7 +639,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 4;
+        const int CurrentSettingsVersion = 5;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -651,6 +651,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion < 2) MigrateOceanV2();
             if (_settingsVersion < 3) MigrateWaterFogV3();
             if (_settingsVersion < 4) MigrateWindWavesV4();
+            if (_settingsVersion < 5) MigrateFoamV5();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -717,6 +718,26 @@ namespace AbstractOcclusion.WebGpuWater
             windWaveSettings.waveAmplitudeScale = _legacyWaveAmplitudeScale;
             windWaveSettings.waveDirectionSpread = _legacyWaveDirectionSpread;
             windWaveSettings.waveNormalStrength = _legacyWaveNormalStrength;
+        }
+
+        // v5: the "Foam" fields (pool/interactive surface foam) moved into FoamSettings.
+        void MigrateFoamV5()
+        {
+            foamSettings.foam = _legacyFoam;
+            foamSettings.foamGenRate = _legacyFoamGenRate;
+            foamSettings.foamDecay = _legacyFoamDecay;
+            foamSettings.foamDecayResidual = _legacyFoamDecayResidual;
+            foamSettings.foamDecayRate = _legacyFoamDecayRate;
+            foamSettings.foamSpread = _legacyFoamSpread;
+            foamSettings.foamAdvect = _legacyFoamAdvect;
+            foamSettings.foamFromSpeed = _legacyFoamFromSpeed;
+            foamSettings.foamFromCurvature = _legacyFoamFromCurvature;
+            foamSettings.foamColor = _legacyFoamColor;
+            foamSettings.foamStrength = _legacyFoamStrength;
+            foamSettings.foamFeather = _legacyFoamFeather;
+            foamSettings.foamCoreCut = _legacyFoamCoreCut;
+            foamSettings.foamBorderWidth = _legacyFoamBorderWidth;
+            foamSettings.foamContactDepth = _legacyFoamContactDepth;
         }
 
         // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
@@ -799,35 +820,81 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector, FormerlySerializedAs("waveNormalStrength")] float _legacyWaveNormalStrength = 1f;
 
         [Header("Foam")]
-        [SerializeField] private bool foam = false;
-        [Tooltip("How fast turbulence creates foam.")]
-        [Range(0f, 2f)] [SerializeField] internal float foamGenRate = 0.6f;
-        [Tooltip("SURVIVAL factor per step of thick, fresh foam (not a decay rate: HIGHER = foam lasts longer). Lower = bursts collapse faster.")]
-        [Range(0.80f, 1f)] [SerializeField] internal float foamDecay = 0.96f;
-        [Tooltip("SURVIVAL factor per step of thin residual lace. Must sit above the fresh value (clamped at runtime if not). Higher = lace lingers longer after the burst.")]
-        [Range(0.90f, 1f)] [SerializeField] internal float foamDecayResidual = 0.993f;
-        [Tooltip("Time scale of foam decay, frame-rate independent: 1 = authored speed, 2 = fades twice as fast, 0.5 = half. Tune fade SPEED here; the survival sliders above compound ~60x per second, so tiny changes there swing the look violently.")]
-        [Range(0.05f, 4f)] [SerializeField] internal float foamDecayRate = 1f;
-        [Tooltip("Diffusion of foam toward neighbours.")]
-        [Range(0f, 1f)] [SerializeField] internal float foamSpread = 0.2f;
-        [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
-        [Range(0f, 8f)] [SerializeField] internal float foamAdvect = 3f;
-        [SerializeField] internal float foamFromSpeed = 6f;
-        [SerializeField] internal float foamFromCurvature = 30f;
-        [Space]
-        [SerializeField] internal Color foamColor = Color.white;
-        [Range(0f, 2f)] [SerializeField] internal float foamStrength = 1f;
-        [Tooltip("Softness of the foam edges: mask level over which foam fades in from nothing. 0 = hard edges (no feathering).")]
-        [Range(0f, 0.5f)] [SerializeField] internal float foamFeather = 0.15f;
-        [Tooltip("How much the foam pattern erodes the dense core: 0 = solid white core, 1 = core breaks into pattern detail like the residual lace.")]
-        [Range(0f, 1f)] [SerializeField] internal float foamCoreCut = 0.5f;
-        [Tooltip("Width of the foam band along the pool walls (pool units).")]
-        [Range(0f, 0.5f)] [SerializeField] internal float foamBorderWidth = 0.08f;
-        [Tooltip("Depth band for contact foam where objects meet the waterline.")]
-        [Range(0f, 0.5f)] [SerializeField] internal float foamContactDepth = 0.06f;
+        [SerializeField] FoamSettings foamSettings = new FoamSettings();
+
+        /// <summary>Turbulence-driven surface foam simulation and shading (the pool/interactive foam,
+        /// distinct from the ocean whitecaps above). Migrated off the flat WaterVolume fields into this
+        /// block (Phase 2); the same-named accessors keep every reader unchanged.</summary>
+        [System.Serializable]
+        public sealed class FoamSettings
+        {
+            [Tooltip("Turbulence-driven surface foam simulation and shading (on/off).")]
+            public bool foam = false;
+            [Tooltip("How fast turbulence creates foam.")]
+            [Range(0f, 2f)] public float foamGenRate = 0.6f;
+            [Tooltip("SURVIVAL factor per step of thick, fresh foam (not a decay rate: HIGHER = foam lasts longer). Lower = bursts collapse faster.")]
+            [Range(0.80f, 1f)] public float foamDecay = 0.96f;
+            [Tooltip("SURVIVAL factor per step of thin residual lace. Must sit above the fresh value (clamped at runtime if not). Higher = lace lingers longer after the burst.")]
+            [Range(0.90f, 1f)] public float foamDecayResidual = 0.993f;
+            [Tooltip("Time scale of foam decay, frame-rate independent: 1 = authored speed, 2 = fades twice as fast, 0.5 = half. Tune fade SPEED here; the survival sliders above compound ~60x per second, so tiny changes there swing the look violently.")]
+            [Range(0.05f, 4f)] public float foamDecayRate = 1f;
+            [Tooltip("Diffusion of foam toward neighbours.")]
+            [Range(0f, 1f)] public float foamSpread = 0.2f;
+            [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
+            [Range(0f, 8f)] public float foamAdvect = 3f;
+            public float foamFromSpeed = 6f;
+            public float foamFromCurvature = 30f;
+            [Space]
+            public Color foamColor = Color.white;
+            [Range(0f, 2f)] public float foamStrength = 1f;
+            [Tooltip("Softness of the foam edges: mask level over which foam fades in from nothing. 0 = hard edges (no feathering).")]
+            [Range(0f, 0.5f)] public float foamFeather = 0.15f;
+            [Tooltip("How much the foam pattern erodes the dense core: 0 = solid white core, 1 = core breaks into pattern detail like the residual lace.")]
+            [Range(0f, 1f)] public float foamCoreCut = 0.5f;
+            [Tooltip("Width of the foam band along the pool walls (pool units).")]
+            [Range(0f, 0.5f)] public float foamBorderWidth = 0.08f;
+            [Tooltip("Depth band for contact foam where objects meet the waterline.")]
+            [Range(0f, 0.5f)] public float foamContactDepth = 0.06f;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged. Foam stays a public get/set (sample
+        // + Water Wizard API) targeting the settings; foam is the private read for the internal gate;
+        // foamBorderWidth stays writable (the Water Wizard sets it). The rest are read-only.
+        bool foam => foamSettings.foam;
+        internal float foamGenRate => foamSettings.foamGenRate;
+        internal float foamDecay => foamSettings.foamDecay;
+        internal float foamDecayResidual => foamSettings.foamDecayResidual;
+        internal float foamDecayRate => foamSettings.foamDecayRate;
+        internal float foamSpread => foamSettings.foamSpread;
+        internal float foamAdvect => foamSettings.foamAdvect;
+        internal float foamFromSpeed => foamSettings.foamFromSpeed;
+        internal float foamFromCurvature => foamSettings.foamFromCurvature;
+        internal Color foamColor => foamSettings.foamColor;
+        internal float foamStrength => foamSettings.foamStrength;
+        internal float foamFeather => foamSettings.foamFeather;
+        internal float foamCoreCut => foamSettings.foamCoreCut;
+        internal float foamBorderWidth { get => foamSettings.foamBorderWidth; set => foamSettings.foamBorderWidth = value; }
+        internal float foamContactDepth => foamSettings.foamContactDepth;
 
         /// <summary>Turbulence-driven surface foam simulation and shading.</summary>
-        public bool Foam { get => foam; set => foam = value; }
+        public bool Foam { get => foamSettings.foam; set => foamSettings.foam = value; }
+
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateFoamV5. Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("foam")] bool _legacyFoam = false;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamGenRate")] float _legacyFoamGenRate = 0.6f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamDecay")] float _legacyFoamDecay = 0.96f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamDecayResidual")] float _legacyFoamDecayResidual = 0.993f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamDecayRate")] float _legacyFoamDecayRate = 1f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamSpread")] float _legacyFoamSpread = 0.2f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamAdvect")] float _legacyFoamAdvect = 3f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamFromSpeed")] float _legacyFoamFromSpeed = 6f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamFromCurvature")] float _legacyFoamFromCurvature = 30f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamColor")] Color _legacyFoamColor = Color.white;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamStrength")] float _legacyFoamStrength = 1f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamFeather")] float _legacyFoamFeather = 0.15f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamCoreCut")] float _legacyFoamCoreCut = 0.5f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamBorderWidth")] float _legacyFoamBorderWidth = 0.08f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("foamContactDepth")] float _legacyFoamContactDepth = 0.06f;
 
         [Header("Ripple tuning")]
         [Tooltip("Propagation stiffness. Higher = faster waves. Stable up to ~2.0.")]
