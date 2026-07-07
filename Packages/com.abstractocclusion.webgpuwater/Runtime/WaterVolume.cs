@@ -18,12 +18,13 @@
 //   - light points toward the light source; default normalize(2, 2, -1).
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace AbstractOcclusion.WebGpuWater
 {
     [ExecuteAlways]
     [DefaultExecutionOrder(-50)]
-    public class WaterVolume : MonoBehaviour
+    public class WaterVolume : MonoBehaviour, ISerializationCallbackReceiver
     {
         /// <summary>How WaterInteractable objects disturb the surface.</summary>
         public enum ObjectInteraction
@@ -495,21 +496,81 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(0f, 1f)] [SerializeField] internal float waterOpacity = 0f;
 
         [Header("Depth attenuation (downwelling)")]
-        [Tooltip("Darken submerged surfaces, caustics and god rays the DEEPER they sit, " +
-                 "independent of view distance. Separate from the view-path fog above.")]
-        [SerializeField] internal bool depthDarken = false;
-        [Tooltip("Per-channel downwelling extinction (red highest so deep water shifts blue). " +
-                 "Applied as exp(-extinction * strength * depth).")]
-        [SerializeField] internal Color depthExtinction = new Color(0.45f, 0.15f, 0.08f);
-        [Tooltip("Master multiplier on the depth term (acts like the fog density).")]
-        [Range(0f, 8f)] [SerializeField] internal float depthDarkenStrength = 1f;
-        [Tooltip("Extra softening of projected caustics on objects, per world unit of depth.")]
-        [Range(0f, 8f)] [SerializeField] internal float causticDepthFade = 0.5f;
-        [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
-        [Range(0f, 8f)] [SerializeField] internal float godRayDepthFade = 0.5f;
-        [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
-                 "drives fog + depth darkening. Off = the depth colour is fully independent.")]
-        [SerializeField] internal bool linkDepthToFog = false;
+        [SerializeField] DepthAttenuationSettings depthAttenuation = new DepthAttenuationSettings();
+
+        /// <summary>Downwelling depth attenuation: darken submerged surfaces, caustics and god rays with
+        /// depth, independent of the view-path water fog. First feature migrated off the flat WaterVolume
+        /// fields into a nested Settings block (Phase 2).</summary>
+        [System.Serializable]
+        public sealed class DepthAttenuationSettings
+        {
+            [Tooltip("Darken submerged surfaces, caustics and god rays the DEEPER they sit, " +
+                     "independent of view distance. Separate from the view-path fog above.")]
+            public bool depthDarken = false;
+            [Tooltip("Per-channel downwelling extinction (red highest so deep water shifts blue). " +
+                     "Applied as exp(-extinction * strength * depth).")]
+            public Color depthExtinction = new Color(0.45f, 0.15f, 0.08f);
+            [Tooltip("Master multiplier on the depth term (acts like the fog density).")]
+            [Range(0f, 8f)] public float depthDarkenStrength = 1f;
+            [Tooltip("Extra softening of projected caustics on objects, per world unit of depth.")]
+            [Range(0f, 8f)] public float causticDepthFade = 0.5f;
+            [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
+            [Range(0f, 8f)] public float godRayDepthFade = 0.5f;
+            [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
+                     "drives fog + depth darkening. Off = the depth colour is fully independent.")]
+            public bool linkDepthToFog = false;
+        }
+
+        // Same-named forwarding accessors so every reader (WaterUniformPublisher, ...) is unchanged.
+        internal bool depthDarken => depthAttenuation.depthDarken;
+        internal Color depthExtinction => depthAttenuation.depthExtinction;
+        internal float depthDarkenStrength => depthAttenuation.depthDarkenStrength;
+        internal float causticDepthFade => depthAttenuation.causticDepthFade;
+        internal float godRayDepthFade => depthAttenuation.godRayDepthFade;
+        internal bool linkDepthToFog => depthAttenuation.linkDepthToFog;
+
+        // Legacy capture: scenes/prefabs authored before this migration serialized these under the old
+        // top-level names. [FormerlySerializedAs] IS valid here - the fields are still top-level on
+        // WaterVolume (only a C# rename), so the old values land here and are copied into the block above
+        // exactly once by MigrateDepthAttenuationV1 (see OnAfterDeserialize). Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("depthDarken")] bool _legacyDepthDarken = false;
+        [SerializeField, HideInInspector, FormerlySerializedAs("depthExtinction")] Color _legacyDepthExtinction = new Color(0.45f, 0.15f, 0.08f);
+        [SerializeField, HideInInspector, FormerlySerializedAs("depthDarkenStrength")] float _legacyDepthDarkenStrength = 1f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("causticDepthFade")] float _legacyCausticDepthFade = 0.5f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("godRayDepthFade")] float _legacyGodRayDepthFade = 0.5f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("linkDepthToFog")] bool _legacyLinkDepthToFog = false;
+
+        // ---- settings migration (god-class -> per-feature nested Settings blocks) ------------------
+        // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
+        // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
+        // the new block once, on load, so tuned values are never lost. The copies are idempotent.
+        const int CurrentSettingsVersion = 1;
+        [SerializeField, HideInInspector] int _settingsVersion = 0;
+
+        void ISerializationCallbackReceiver.OnBeforeSerialize() { }
+
+        void ISerializationCallbackReceiver.OnAfterDeserialize()
+        {
+            if (_settingsVersion >= CurrentSettingsVersion) return; // new or already-migrated asset
+            if (_settingsVersion < 1) MigrateDepthAttenuationV1();
+            _settingsVersion = CurrentSettingsVersion;
+        }
+
+        // v1: the "Depth attenuation (downwelling)" fields moved into DepthAttenuationSettings.
+        void MigrateDepthAttenuationV1()
+        {
+            depthAttenuation.depthDarken = _legacyDepthDarken;
+            depthAttenuation.depthExtinction = _legacyDepthExtinction;
+            depthAttenuation.depthDarkenStrength = _legacyDepthDarkenStrength;
+            depthAttenuation.causticDepthFade = _legacyCausticDepthFade;
+            depthAttenuation.godRayDepthFade = _legacyGodRayDepthFade;
+            depthAttenuation.linkDepthToFog = _legacyLinkDepthToFog;
+        }
+
+        // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
+        // on new bodies. Only assets serialized before a feature existed (no _settingsVersion -> 0) migrate.
+        // (Distinguishing new from pre-migration data is exactly what a field initializer cannot do.)
+        void Reset() => _settingsVersion = CurrentSettingsVersion;
 
         [Header("Bed depth (real terrain depth - EXPERIMENTAL)")]
         [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
