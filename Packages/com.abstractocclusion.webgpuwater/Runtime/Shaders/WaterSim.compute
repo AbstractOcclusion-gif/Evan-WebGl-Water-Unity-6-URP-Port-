@@ -124,6 +124,30 @@ float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
 float _FoamAdvect;     // texels foam is carried along the surface flow per step
 
+// Bed depth (Phase 1 shoreline): pool-space terrain bed height (R = bed pool-Y), baked by
+// WaterVolume in the SAME pool frame as the sim, so a sim cell's UV maps straight to it. Used to
+// shoal ripples and grow a shore-foam band as the water column thins. Inactive (_UseBedDepth = 0)
+// on bodies without a bed, so those behave exactly as a bottomless pool.
+Texture2D<float> _BedTex;
+SamplerState sampler_BedTex;
+float _UseBedDepth;        // 1 = bed active
+float _ShoalDepthPool;     // column depth (pool units) below which ripples shoal (slow + steepen)
+float _ShoreFoamDepthPool; // column depth (pool units) band over which shore foam fades in
+float _ShoreFoamStrength;  // strength of the standing shore-foam band
+
+// "Deep" column depth used when no bed is active, so shoal/shore terms are no-ops there.
+static const float BED_DEEP_DEPTH = 1000.0;
+
+// Still-water column depth (pool units) at a sim cell: the rest surface sits at pool y = 0 and the
+// bed below it, so depth = -bedPoolY. Point-sampled (r32 isn't filterable on WebGPU; the bed is
+// smooth, so this is fine).
+float BedColumnDepth(float2 uv)
+{
+    if (_UseBedDepth < 0.5) return BED_DEEP_DEPTH;
+    float bedPoolY = _BedTex.SampleLevel(sampler_BedTex, uv, 0);
+    return -bedPoolY;
+}
+
 int Clamp1(int v)            { return clamp(v, 0, (int)_Size - 1); }
 int2 ClampC(int2 p)         { return int2(Clamp1(p.x), Clamp1(p.y)); }
 
@@ -163,6 +187,11 @@ void Update(uint3 id : SV_DispatchThreadID)
     int2 p = int2(id.xy);
     float4 info = Read(p);
 
+    // Shoreline (bed depth): dry land holds flat so ripples REFLECT off the waterline instead of
+    // climbing onto exposed terrain. Keep the normal channels; the Normal pass rederives them.
+    float depth = BedColumnDepth(((float2)p + 0.5) * _Delta);
+    if (depth <= 0.0) { Dst[p] = Sanitize(float4(0.0, 0.0, info.b, info.a)); return; }
+
     // Per-axis weighted Laplacian: the x- and z-neighbour curvatures are weighted separately
     // (_WaveAxisWeight) so waves travel at equal WORLD speed on a rectangular pool. With the
     // default (0.25, 0.25) this is exactly the old isotropic form: 0.25*(hL+hR+hD+hU) - h.
@@ -173,8 +202,13 @@ void Update(uint3 id : SV_DispatchThreadID)
     float force = _WaveAxisWeight.x * (hL + hR - 2.0 * info.r)
                 + _WaveAxisWeight.y * (hD + hU - 2.0 * info.r);
 
-    // move velocity by the restoring force, attenuate, integrate height
-    info.g += force * _WaveSpeed;
+    // Shoaling: the discrete wave speed goes as sqrt(_WaveSpeed), so scaling by the depth ratio
+    // gives celerity ~ sqrt(depth) - ripples slow and bunch up as the column thins toward shore.
+    // saturate keeps deep water (and bed-less bodies, depth = BED_DEEP_DEPTH) at full speed.
+    float shoal = saturate(depth / max(_ShoalDepthPool, 1e-4));
+
+    // move velocity by the (shoaled) restoring force, attenuate, integrate height
+    info.g += force * (_WaveSpeed * shoal);
     info.g *= _Damping;
     info.r += info.g;
 
@@ -285,6 +319,17 @@ void Foam(uint3 id : SV_DispatchThreadID)
     float freshness = saturate(foam / FOAM_FRESH_THRESHOLD);
     float survival = lerp(_FoamDecayResidual, _FoamDecayFresh, freshness);
     foam *= pow(survival, _FoamDtSteps * _FoamDecayRate);
+
+    // Standing shoreline foam: a band that grows as the water column thins near the waterline
+    // (both KWS and Crest add a depth-threshold shore foam). Held as a floor so it persists rather
+    // than decaying away. No-op where there is no bed or the water is deeper than the band.
+    float depth = BedColumnDepth(((float2)p + 0.5) * _Delta);
+    if (depth > 0.0 && _ShoreFoamStrength > 0.0)
+    {
+        float shore = saturate(1.0 - depth / max(_ShoreFoamDepthPool, 1e-4));
+        foam = max(foam, shore * _ShoreFoamStrength);
+    }
+
     FoamDst[p] = saturate(foam);
 }
 

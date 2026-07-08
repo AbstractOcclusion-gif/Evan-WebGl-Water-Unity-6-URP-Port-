@@ -61,6 +61,11 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_MeanResult = Shader.PropertyToID("MeanResult");
         static readonly int ID_MeanCorrectionMax = Shader.PropertyToID("_MeanCorrectionMax");
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
+        static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
+        static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
+        static readonly int ID_ShoalDepthPool = Shader.PropertyToID("_ShoalDepthPool");
+        static readonly int ID_ShoreFoamDepthPool = Shader.PropertyToID("_ShoreFoamDepthPool");
+        static readonly int ID_ShoreFoamStrength = Shader.PropertyToID("_ShoreFoamStrength");
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
@@ -76,6 +81,14 @@ namespace AbstractOcclusion.WebGpuWater
         // identical to before. (0.25,0.25) reproduces the old 4-neighbour average Laplacian.
         Vector4 _waveAxisWeight = new Vector4(0.25f, 0.25f, 0f, 0f);
         Vector4 _dropAxisScale = new Vector4(1f, 1f, 0f, 0f);
+
+        // Bed-depth coupling (Phase 1 shoreline). Inactive by default so a body without a baked bed
+        // behaves exactly as a bottomless pool. Bound onto the Update and Foam kernels each frame.
+        Texture _bedTex;
+        float _useBedDepth;         // 1 = active
+        float _shoalDepthPool;      // pool-unit depth below which ripples shoal
+        float _shoreFoamDepthPool;  // pool-unit depth band for standing shore foam
+        float _shoreFoamStrength;
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
@@ -196,6 +209,29 @@ namespace AbstractOcclusion.WebGpuWater
             _dropAxisScale = new Vector4(dropScale.x, dropScale.y, 0f, 0f);
         }
 
+        /// <summary>Bed-depth shoreline coupling (Phase 1): the pool-space bed-height map plus the
+        /// shoal and shore-foam depths (pool units). With <paramref name="enabled"/> false (or a null
+        /// map) the sim runs as a bottomless pool, unchanged. Bound on the Update + Foam kernels.</summary>
+        public void SetBedDepth(Texture bed, bool enabled, float shoalDepthPool, float shoreFoamDepthPool, float shoreFoamStrength)
+        {
+            _bedTex = bed;
+            _useBedDepth = (enabled && bed != null) ? 1f : 0f;
+            _shoalDepthPool = shoalDepthPool;
+            _shoreFoamDepthPool = shoreFoamDepthPool;
+            _shoreFoamStrength = shoreFoamStrength;
+        }
+
+        // Bind the bed map + shoreline uniforms onto a kernel. A texture is always bound (black when
+        // inactive) so the backend never sees an unbound sampler; the shader early-outs on _UseBedDepth.
+        void BindBed(int kernel)
+        {
+            _cs.SetFloat(ID_UseBedDepth, _useBedDepth);
+            _cs.SetFloat(ID_ShoalDepthPool, _shoalDepthPool);
+            _cs.SetFloat(ID_ShoreFoamDepthPool, _shoreFoamDepthPool);
+            _cs.SetFloat(ID_ShoreFoamStrength, _shoreFoamStrength);
+            _cs.SetTexture(kernel, ID_BedTex, _bedTex != null ? _bedTex : Texture2D.blackTexture);
+        }
+
         public void AddDrop(float x, float y, float radius, float strength)
         {
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
@@ -223,6 +259,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_WaveSpeed, waveSpeed);
             _cs.SetFloat(ID_Damping, damping);
             _cs.SetVector(ID_WaveAxisWeight, _waveAxisWeight);
+            BindBed(_kUpdate);
             Dispatch(_kUpdate);
         }
 
@@ -253,6 +290,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(_kFoam, ID_Src, _a);        // height state (read)
             _cs.SetTexture(_kFoam, ID_FoamSrc, _foamA);
             _cs.SetTexture(_kFoam, ID_FoamDst, _foamB);
+            BindBed(_kFoam);
             _cs.Dispatch(_kFoam, _groups, _groups, 1);
             (_foamA, _foamB) = (_foamB, _foamA);
         }

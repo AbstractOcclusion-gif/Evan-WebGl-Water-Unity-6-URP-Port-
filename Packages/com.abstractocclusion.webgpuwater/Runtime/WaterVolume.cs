@@ -889,6 +889,16 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.1f, 50f)] public float shorelineFadeDepth = 6f;
             [Tooltip("Maximum tint toward the deep-water colour.")]
             [Range(0f, 1f)] public float shorelineStrength = 0.8f;
+
+            [Header("Shoreline ripples (bed depth)")]
+            [Tooltip("Interactive-ripple shoaling: WORLD-unit column depth below which ripples slow and " +
+                     "steepen toward shore (celerity ~ sqrt(depth)). 0 disables shoaling.")]
+            [Range(0f, 20f)] public float shoalDepth = 3f;
+            [Tooltip("WORLD-unit column depth band over which a standing shoreline foam line fades in " +
+                     "toward the waterline. 0 = no shore foam.")]
+            [Range(0f, 10f)] public float shorelineFoamDepth = 1f;
+            [Tooltip("Strength of the standing shoreline foam band.")]
+            [Range(0f, 1f)] public float shorelineFoamStrength = 0.6f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -898,6 +908,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color deepWaterColor => bedDepthSettings.deepWaterColor;
         internal float shorelineFadeDepth => bedDepthSettings.shorelineFadeDepth;
         internal float shorelineStrength => bedDepthSettings.shorelineStrength;
+        internal float shoalDepth => bedDepthSettings.shoalDepth;
+        internal float shorelineFoamDepth => bedDepthSettings.shorelineFoamDepth;
+        internal float shorelineFoamStrength => bedDepthSettings.shorelineFoamStrength;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -2327,6 +2340,16 @@ namespace AbstractOcclusion.WebGpuWater
                                      obstacleStrength / VolumeExtentSafe.y, obstacleFlipY,
                                      obstacleDeadband);
             }
+
+            // Shoreline (bed depth): couple the baked terrain bed into the sim so ripples shoal and a
+            // shore-foam band forms near the waterline. Bounded bodies only - a windowed ocean's sim is
+            // a world-space scrolling window, not the pool frame the bed is baked in. Depths are authored
+            // in world units; the sim works in pool units, so divide by extent.y (PoolToWorld's Y scale).
+            bool bedActive = !_windowed && useBedDepth && IsBedBaked;
+            float poolPerWorldY = 1f / VolumeExtentSafe.y;
+            _water.SetBedDepth(bedActive ? BedTexture : null, bedActive,
+                               shoalDepth * poolPerWorldY, shorelineFoamDepth * poolPerWorldY,
+                               shorelineFoamStrength);
 
             for (int i = 0; i < steps; i++)
                 _water.StepSimulation(waveSpeed, damping);
