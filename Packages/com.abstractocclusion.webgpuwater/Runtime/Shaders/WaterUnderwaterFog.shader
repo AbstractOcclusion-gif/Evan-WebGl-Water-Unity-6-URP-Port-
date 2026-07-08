@@ -9,7 +9,7 @@
 //   0 Absorb:    scene *= pathTransmittance * depthAttenuation   (Blend Zero SrcColor)
 //   1 Inscatter: scene += fog * (1 - pathTransmittance) * depthAttenuation   (Blend One One)
 // Driven by WaterUnderwaterFogFeature (gated on WaterVolume.UnderwaterFogActive: ocean = submerged
-// only, pond = whenever Water Fog is on). U2: camera-origin waterline (KWS half-line is later polish).
+// only, pond = whenever Water Fog is on). U2: per-pixel wave-aware waterline - the surface crossing follows crests/troughs.
 Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 {
     SubShader
@@ -25,9 +25,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #include "WaterFog.hlsl"    // _WaterFogColor/_WaterExtinction/_WaterFogDensity, WaterPathLength, DownwellingAttenuation
         #include "WaterVolume.hlsl" // PoolToWorld / WorldToPool (+ the body's volume frame globals)
         #include "WaterShared.hlsl" // IntersectCube
+        #include "WaterWaves.hlsl"      // WaveHeight: wind-wave layer for the per-pixel waterline
+        #include "WaterLargeWaves.hlsl" // LargeBodyWaveHeight: open-water swell/FFT; needs _WaveTime (above)
 
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
+        float _OceanWorldWaves;     // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
+
+        // Per-pixel wavy-waterline crossing search (U2). The camera->scene ray meets the DISPLACED surface
+        // at a height that follows crests/troughs, so we bracket the FIRST sign change of
+        // (rayY - SurfaceHeightAtXZ) with a constant-step coarse scan and refine by bisection. Constant
+        // step/iteration counts keep this fullscreen pass cheap and allocation-free.
+        #define UNDERWATER_CROSS_COARSE_STEPS 16
+        #define UNDERWATER_CROSS_REFINE_ITERS 5
+        #define WAVE_METERS_MIN 1e-3 // matches WindWaveSampleXZ's guard in WaterSurface.shader
 
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -46,17 +57,121 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
         }
 
-        // World-space length of the in-water part of the camera->scene ray, and the deepest submerged
-        // point's world Y (for downwelling). pathLen 0 = this pixel's ray never enters the water.
-        void UnderwaterSegment(float3 sceneWorld, out float pathLen, out float deepestY)
+        // Displaced world-space surface height at a WORLD xz: the single source of truth for the wavy
+        // waterline. Rest plane (via the volume transform, so extent.y + rotation are exact, matching
+        // TryGetAnalyticWaterline) + wind-wave layer + open-water swell/FFT. Pools: the swell is a no-op
+        // (_LargeBody = 0), so this reduces to the wind-wave surface over the flat pool top.
+        float SurfaceHeightAtXZ(float2 worldXZ)
+        {
+            // Map to pool xz at the rest plane; the surface shader samples the wind waves off this xz.
+            float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
+            float2 poolXZ = poolAtRest.xz;
+
+            // Oceans sample the wind waves in WORLD metres (extent-independent) to match WindWaveSampleXZ.
+            float2 windSampleXZ = (_OceanWorldWaves > 0.5) ? (worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN))
+                                                           : poolXZ;
+            // Wind-wave height is authored in pool units; lift it to world through the full transform,
+            // exactly as the vertex path does (PoolToWorld of the displaced pool point).
+            float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
+
+            // Open-water swell/FFT is authored in WORLD metres and layered on top (no-op for pools).
+            if (_LargeBody > 0.5) surfaceY += LargeBodyWaveHeight(worldXZ);
+            return surfaceY;
+        }
+
+        // Signed height of a world point above its local displaced surface (>0 in air, <=0 underwater).
+        float SurfaceSignedGap(float3 world)
+        {
+            return world.y - SurfaceHeightAtXZ(world.xz);
+        }
+
+        // Refine a bracketed surface crossing [a(gapA), b(opposite sign)] to a world point on the surface.
+        // 'gapA' is the signed gap at 'a' (passed in so it is not re-evaluated); bisection keeps the
+        // sub-interval that still straddles the sign change. Constant iteration count -> constant cost.
+        float3 RefineSurfaceCrossing(float3 a, float gapA, float3 b)
+        {
+            [loop]
+            for (int r = 0; r < UNDERWATER_CROSS_REFINE_ITERS; r++)
+            {
+                float3 m = 0.5 * (a + b);
+                float gapM = SurfaceSignedGap(m);
+                if (gapA * gapM <= 0.0) { b = m; }
+                else { a = m; gapA = gapM; }
+            }
+            return 0.5 * (a + b);
+        }
+
+        // In-water length of the camera->scene ray against the WAVY ocean surface (per-pixel displaced
+        // height), plus the deepest submerged Y and the surface height above that deepest point (the
+        // depth-darkening reference). The crossing follows crests/troughs, so the fog waterline is a real
+        // meniscus: no fog over a trough, fog under a crest.
+        void OceanWavyPath(float3 sceneWorld, float3 cam,
+                           out float pathLen, out float deepestY, out float surfaceRefY)
+        {
+            float camSurf = SurfaceHeightAtXZ(cam.xz);
+            float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
+            bool camUnder = cam.y <= camSurf;
+            bool sceneUnder = sceneWorld.y <= sceneSurf;
+
+            // Whole segment on one side of the surface: no crossing to search for.
+            if (camUnder && sceneUnder)
+            {
+                pathLen = length(sceneWorld - cam);
+                deepestY = min(cam.y, sceneWorld.y);
+                surfaceRefY = (cam.y <= sceneWorld.y) ? camSurf : sceneSurf;
+                return;
+            }
+            if (!camUnder && !sceneUnder)
+            {
+                pathLen = 0.0;
+                deepestY = _VolumeCenter.y;
+                surfaceRefY = camSurf;
+                return;
+            }
+
+            // Mixed: bracket the FIRST sign change from the camera outward with a constant-step scan.
+            float3 ray = sceneWorld - cam;
+            float dt = 1.0 / (float)UNDERWATER_CROSS_COARSE_STEPS;
+            float3 prev = cam;
+            float gapPrev = cam.y - camSurf;
+            float3 hit = sceneWorld; // fallback: treat the crossing as the scene end if none is bracketed
+            [loop]
+            for (int s = 1; s <= UNDERWATER_CROSS_COARSE_STEPS; s++)
+            {
+                float3 p = cam + ray * (s * dt);
+                float gap = SurfaceSignedGap(p);
+                if (gapPrev * gap <= 0.0) { hit = RefineSurfaceCrossing(prev, gapPrev, p); break; }
+                prev = p; gapPrev = gap;
+            }
+
+            float3 underEnd = sceneUnder ? sceneWorld : cam;
+            pathLen = length(underEnd - hit);
+            deepestY = min(hit.y, underEnd.y);
+            surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
+        }
+
+        // Pull a pond segment's ENTRY down to the wavy surface when it starts in AIR: the pool box top is
+        // the flat rest plane (pool y = 0), so a wave trough sitting below it would otherwise fog the air
+        // in the trough. Returns the surface crossing when the entry is above water; else keeps the entry.
+        float3 ClampEntryToSurface(float3 enterWorld, float3 exitWorld)
+        {
+            float gapEnter = SurfaceSignedGap(enterWorld);
+            if (gapEnter <= 0.0) return enterWorld;                   // entry already underwater: keep it
+            if (SurfaceSignedGap(exitWorld) > 0.0) return exitWorld;  // whole segment in air: no water (len 0)
+            return RefineSurfaceCrossing(enterWorld, gapEnter, exitWorld);
+        }
+
+        // World-space length of the in-water part of the camera->scene ray, the deepest submerged point's
+        // world Y (for downwelling), and the displaced surface height above it (the depth reference).
+        // pathLen 0 = this pixel's ray never enters the water.
+        void UnderwaterSegment(float3 sceneWorld, out float pathLen, out float deepestY, out float surfaceRefY)
         {
             float3 cam = _WorldSpaceCameraPos;
 
             if (_UnderwaterUnbounded > 0.5)
             {
-                // Ocean: the whole below-surface span of the camera->scene segment.
-                pathLen = WaterPathLength(sceneWorld, cam, _UnderwaterSurfaceY);
-                deepestY = min(cam.y, sceneWorld.y);
+                // Ocean: the below-surface span, measured against the per-pixel WAVY surface.
+                OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY);
                 return;
             }
 
@@ -75,14 +190,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             {
                 pathLen = 0.0;
                 deepestY = _UnderwaterSurfaceY;
+                surfaceRefY = _UnderwaterSurfaceY;
                 return;
             }
 
-            // Convert the entry/exit back to world for a correct length (pool axes are scaled by extent).
+            // Convert the entry/exit back to world for a correct length (pool axes are scaled by extent),
+            // then pull the entry down to the wavy surface so a trough no longer fogs the air above it.
             float3 enterWorld = PoolToWorld(originPool + rayPool * tEnter);
             float3 exitWorld = PoolToWorld(originPool + rayPool * tExit);
+            enterWorld = ClampEntryToSurface(enterWorld, exitWorld);
+
             pathLen = length(exitWorld - enterWorld);
             deepestY = min(enterWorld.y, exitWorld.y);
+            surfaceRefY = SurfaceHeightAtXZ(enterWorld.xz); // wavy surface above the entry, for downwelling
         }
 
         // Per-channel path transmittance for this pixel; also returns the depth-darkening term.
@@ -91,8 +211,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float3 sceneWorld = SceneWorldPos(uv);
             float pathLen;
             float deepestY;
-            UnderwaterSegment(sceneWorld, pathLen, deepestY);
-            depthAttenuation = DownwellingAttenuation(deepestY, _UnderwaterSurfaceY);
+            float surfaceRefY;
+            UnderwaterSegment(sceneWorld, pathLen, deepestY, surfaceRefY);
+            depthAttenuation = DownwellingAttenuation(deepestY, surfaceRefY);
             return exp(-_WaterExtinction.rgb * (_WaterFogDensity * pathLen));
         }
         ENDHLSL

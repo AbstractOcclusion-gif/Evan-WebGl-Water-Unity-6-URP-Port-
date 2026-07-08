@@ -10355,7 +10355,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.01
-  far clip plane: 100
+  far clip plane: 10000
   field of view: 45
   orthographic: 0
   orthographic size: 5
@@ -10713,7 +10713,7 @@ GameObject:
   - component: {fileID: 2025508450}
   - component: {fileID: 2025508452}
   - component: {fileID: 2025508451}
-  m_Layer: 0
+  m_Layer: 4
   m_Name: Frame (WaterVolume)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -10795,10 +10795,10 @@ MonoBehaviour:
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
-    largeWaveAmplitude: 1
-    largeWaveChoppiness: 0
-    swellHeight: 0
-    swellWavelength: 140
+    largeWaveAmplitude: 2
+    largeWaveChoppiness: 0.3
+    swellHeight: 0.5
+    swellWavelength: 80
     unboundedOcean: 1
     clipmapRings: 48
     clipmapSegments: 96
@@ -10883,10 +10883,10 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
-    waterFog: 0
+    waterFog: 1
     fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 2
+    fogDensity: 0.5
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -10924,7 +10924,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 3
     windFromDegrees: 0
-    poolHalfExtentMeters: 10
+    poolHalfExtentMeters: 2
     waveCount: 12
     waveAmplitudeScale: 4
     waveDirectionSpread: 2

@@ -18,6 +18,7 @@
 //   - light points toward the light source; default normalize(2, 2, -1).
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.Serialization;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -1301,6 +1302,9 @@ namespace AbstractOcclusion.WebGpuWater
 
         void OnEnable()
         {
+            // Refresh the underwater fog gate at RENDER time (see OnBeginCameraRender), not in
+            // Update, so it can't lag the camera by a frame on entry.
+            RenderPipelineManager.beginCameraRendering += OnBeginCameraRender;
             TryInitialize();
         }
 
@@ -1403,6 +1407,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void OnDisable()
         {
+            RenderPipelineManager.beginCameraRendering -= OnBeginCameraRender;
             if (!_initialized) return; // never initialized (missing wiring / capability guard)
 
             _initialized = false;
@@ -1757,7 +1762,11 @@ namespace AbstractOcclusion.WebGpuWater
             // Primary bridge: mirror this body's data to globals as the fallback for objects
             // without a WaterMembership (those resolve their own containing body instead).
             if (isPrimary) Publisher.PublishBodyGlobals();
-            if (isPrimary) UpdateUnderwaterState(); // camera-submerged flag + globals for the underwater fog pass
+            // The camera-submerged fog gate is refreshed in OnBeginCameraRender, NOT here: this body
+            // updates at DefaultExecutionOrder -50, before the OrbitCamera moves the camera in
+            // LateUpdate, so an Update-time read used the pre-move position and lagged the fog one
+            // frame on entry (out->in). beginCameraRendering runs after LateUpdate, just before the
+            // fog feature's AddRenderPasses, so the gate is current the same frame the camera crosses.
 
             // Tier-amortised readback: buoyancy already tolerates async latency, so weak
             // devices can trade a few frames of it for GPU->CPU bandwidth.
@@ -2380,6 +2389,18 @@ namespace AbstractOcclusion.WebGpuWater
         /// Water Fog is on (circle the pond and see the murk inside). The feature reads this to gate.</summary>
         internal static bool UnderwaterFogActive { get; private set; }
 
+        // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not
+        // in Update: Update runs at DefaultExecutionOrder -50, before the OrbitCamera moves the camera
+        // in LateUpdate, so an Update-time read lagged the fog one frame on entry. This fires after
+        // LateUpdate, just before the fog feature's AddRenderPasses. Gated to the primary body's own
+        // target camera so the reflection and scene-view cameras never drive the gate.
+        void OnBeginCameraRender(ScriptableRenderContext context, Camera cam)
+        {
+            if (!isPrimary || !_initialized) return;
+            if (cam != targetCamera) return;
+            UpdateUnderwaterState();
+        }
+
         // Detect whether the camera is submerged in THIS (primary) body and publish the globals the
         // underwater fog shader needs. U1 uses the flat surface plane (VolumeCenter.y); a wave-accurate
         // waterline is a later step. Bounded bodies require the camera inside their footprint; an ocean
@@ -2403,12 +2424,14 @@ namespace AbstractOcclusion.WebGpuWater
         // Water intersects the view as soon as the camera's NEAR PLANE dips below the surface (partial
         // submersion, KWS-style), not only when the whole camera is under - otherwise a shallow pond
         // never triggers. Sample the four near-plane corners (plus the eye) and run on the lowest.
+        // The surface height is WAVE-AWARE at the camera's xz (not the flat rest plane), so the
+        // waterline tracks the swell and the fog stops toggling frame-to-frame at a bobbing crest.
         bool ComputeCameraSubmerged(out float surfaceY)
         {
-            surfaceY = VolumeCenter.y;
-            if (!waterFog) return false; // one Water Fog toggle drives both looking-in and submerged fog
+            surfaceY = SurfaceHeightAtCamera();
+            if (!waterFog) { _wasCameraSubmerged = false; return false; } // one Water Fog toggle drives both looks
             Camera cam = targetCamera;
-            if (cam == null) return false;
+            if (cam == null) { _wasCameraSubmerged = false; return false; }
 
             float near = cam.nearClipPlane;
             float lowestY = cam.transform.position.y;
@@ -2416,12 +2439,40 @@ namespace AbstractOcclusion.WebGpuWater
             lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(1f, 0f, near)).y);
             lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(0f, 1f, near)).y);
             lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(1f, 1f, near)).y);
-            if (lowestY >= surfaceY) return false; // the near plane is entirely above the surface
 
-            if (IsOceanClipmap) return true; // the ocean spans everywhere
-            Vector3 pool = WorldToPool(cam.transform.position);
-            return Mathf.Abs(pool.x) <= UnderwaterFootprintMargin && Mathf.Abs(pool.z) <= UnderwaterFootprintMargin;
+            // Hysteresis around the surface: once submerged, the near plane must rise a little ABOVE
+            // the surface to flip back (and vice versa), so a crest bobbing across the near plane at
+            // the waterline can't toggle the whole fog on and off every frame.
+            float threshold = _wasCameraSubmerged ? surfaceY + SubmergeHysteresis : surfaceY - SubmergeHysteresis;
+            if (lowestY >= threshold) { _wasCameraSubmerged = false; return false; }
+
+            bool submerged = IsOceanClipmap; // the ocean spans everywhere
+            if (!submerged)
+            {
+                Vector3 pool = WorldToPool(cam.transform.position);
+                submerged = Mathf.Abs(pool.x) <= UnderwaterFootprintMargin
+                         && Mathf.Abs(pool.z) <= UnderwaterFootprintMargin;
+            }
+            _wasCameraSubmerged = submerged;
+            return submerged;
         }
+
+        // World-space surface height at the camera's xz. Open water bobs with the large swell (analytic
+        // + FFT), the dominant partial-submersion motion; pools / bounded bodies use the rest plane
+        // (their wind-wave detail is small and the pond fog is box-clipped anyway).
+        float SurfaceHeightAtCamera()
+        {
+            Camera cam = targetCamera;
+            if (cam == null) return VolumeCenter.y;
+            Vector3 p = cam.transform.position;
+            float y = VolumeCenter.y;
+            if (openWater) y += SampleLargeWaveField(p.x, p.z).x;
+            return y;
+        }
+
+        // Hysteresis half-band (world units) around the surface for the camera-submerged flag.
+        const float SubmergeHysteresis = 0.05f;
+        bool _wasCameraSubmerged;
 
         // ---- large-water sim window frame ----------------------------------
         // Half-size (world) of the window: simWindowMeters horizontally, the body's depth
