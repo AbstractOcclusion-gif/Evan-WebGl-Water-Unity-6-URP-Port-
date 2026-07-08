@@ -79,6 +79,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         Texture _poolTexture;
         bool _unboundedOcean;
 
+        WaterVolume.RippleQuality _rippleQuality = WaterVolume.RippleQuality.High;
         bool _reflections = true;
         WaterVolume.ReflectionMode _reflectionMode = WaterVolume.ReflectionMode.SSR;
         bool _foam;
@@ -190,6 +191,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             WaterEditorUI.SubHeading("Options (applied to any type)");
 
+            _rippleQuality = (WaterVolume.RippleQuality)EditorGUILayout.EnumPopup(
+                new GUIContent("Ripple quality", "Sim grid density + matched surface mesh for interactive " +
+                                                 "ripples. Higher = rounder ripples at more GPU cost."),
+                _rippleQuality);
+
             _reflections = EditorGUILayout.Toggle(
                 new GUIContent("Reflection", "Rich reflection on top of the sky base."), _reflections);
             using (new EditorGUI.DisabledScope(!_reflections))
@@ -249,6 +255,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                        primary: true, withPool: withPool, withGodRays: _godRays,
                                        withFoamParticles: _foam);
 
+            body.rippleQuality = _rippleQuality;
             ApplyBaseType(body);
             ApplyCustomPoolTexture(body, withPool);
             ApplyReflection(body);

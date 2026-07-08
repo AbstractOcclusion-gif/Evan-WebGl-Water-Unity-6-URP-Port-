@@ -384,6 +384,7 @@ MonoBehaviour:
   sun: {fileID: 313699295}
   tiles: {fileID: 2800000, guid: 6e5b4f466b44cc24c8fb709a1ff8ef8b, type: 3}
   sky: {fileID: 8900000, guid: 033b051978c8f2e4d8c9fd4b88a9aeb4, type: 2}
+  rippleQuality: 2
   volumeExtent: {x: 10, y: 100, z: 10}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -457,25 +458,15 @@ MonoBehaviour:
     usePlanarReflection: 0
     reflectUrpProbe: 0
     realRefraction: 0
-    above:
-      reflectionStrength: 1
-      reflectionDistortion: 0.05
-      ssrStrength: 1
-      ssrStepSize: 0.03
-      ssrMaxSteps: 24
-      ssrThickness: 0.2
-      refractionDistortion: 0.05
-    under:
-      reflectionStrength: 1
-      reflectionDistortion: 0.05
-      ssrStrength: 1
-      ssrStepSize: 0.03
-      ssrMaxSteps: 24
-      ssrThickness: 0.2
-      refractionDistortion: 0.05
+    reflectionStrength: 1
+    reflectionDistortion: 0.05
+    ssrStrength: 1
+    ssrStepSize: 0.03
+    ssrMaxSteps: 24
+    ssrThickness: 0.2
+    refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
-  _reflectionLookSeeded: 0
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -899,7 +890,8 @@ MonoBehaviour:
   sun: {fileID: 822572158}
   tiles: {fileID: 2800000, guid: 6e5b4f466b44cc24c8fb709a1ff8ef8b, type: 3}
   sky: {fileID: 8900000, guid: 033b051978c8f2e4d8c9fd4b88a9aeb4, type: 2}
-  volumeExtent: {x: 41, y: 1, z: 41}
+  rippleQuality: 2
+  volumeExtent: {x: 30, y: 1, z: 30}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 40
   simWindowMeters: 30
@@ -907,8 +899,8 @@ MonoBehaviour:
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
-    largeWaveAmplitude: 0.5
-    largeWaveChoppiness: 0.3
+    largeWaveAmplitude: 0
+    largeWaveChoppiness: 0
     swellHeight: 0.8
     swellWavelength: 80
     unboundedOcean: 1
@@ -972,25 +964,15 @@ MonoBehaviour:
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
-    above:
-      reflectionStrength: 1
-      reflectionDistortion: 0.05
-      ssrStrength: 0.5
-      ssrStepSize: 0.03
-      ssrMaxSteps: 24
-      ssrThickness: 0.2
-      refractionDistortion: 0.05
-    under:
-      reflectionStrength: 1
-      reflectionDistortion: 0.05
-      ssrStrength: 1
-      ssrStepSize: 0.03
-      ssrMaxSteps: 24
-      ssrThickness: 0.2
-      refractionDistortion: 0.05
+    reflectionStrength: 1
+    reflectionDistortion: 0.05
+    ssrStrength: 1
+    ssrStepSize: 0.03
+    ssrMaxSteps: 24
+    ssrThickness: 0.2
+    refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
-  _reflectionLookSeeded: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -1008,7 +990,7 @@ MonoBehaviour:
     waterFog: 1
     fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 1
+    fogDensity: 0.2
     waterOpacity: 0
   _legacyWaterFog: 1
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -1044,7 +1026,7 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 1
-    windSpeed: 4.46
+    windSpeed: 1.4
     windFromDegrees: 0
     poolHalfExtentMeters: 10
     waveCount: 12
@@ -1504,7 +1486,7 @@ MonoBehaviour:
   samplesPerAxis: 2
   floatRadiusScale: 1.5
   waveDriftStrength: 1
-  verticalSettleDamping: 1
+  verticalSettleDamping: 1.5
 --- !u!114 &691165968
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1512,7 +1494,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 691165964}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
@@ -1529,7 +1511,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 691165964}
   serializedVersion: 5
-  m_Mass: 1
+  m_Mass: 0.3
   m_LinearDamping: 0
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -16748,6 +16730,7 @@ MonoBehaviour:
   sun: {fileID: 67237744}
   tiles: {fileID: 2800000, guid: 6e5b4f466b44cc24c8fb709a1ff8ef8b, type: 3}
   sky: {fileID: 8900000, guid: 033b051978c8f2e4d8c9fd4b88a9aeb4, type: 2}
+  rippleQuality: 2
   volumeExtent: {x: 2, y: 1, z: 2}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -16821,25 +16804,15 @@ MonoBehaviour:
     usePlanarReflection: 0
     reflectUrpProbe: 0
     realRefraction: 0
-    above:
-      reflectionStrength: 1
-      reflectionDistortion: 0.05
-      ssrStrength: 1
-      ssrStepSize: 0.03
-      ssrMaxSteps: 24
-      ssrThickness: 0.2
-      refractionDistortion: 0.05
-    under:
-      reflectionStrength: 1
-      reflectionDistortion: 0.05
-      ssrStrength: 1
-      ssrStepSize: 0.03
-      ssrMaxSteps: 24
-      ssrThickness: 0.2
-      refractionDistortion: 0.05
+    reflectionStrength: 1
+    reflectionDistortion: 0.05
+    ssrStrength: 1
+    ssrStepSize: 0.03
+    ssrMaxSteps: 24
+    ssrThickness: 0.2
+    refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
-  _reflectionLookSeeded: 0
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -22455,7 +22428,7 @@ MonoBehaviour:
   samplesPerAxis: 2
   floatRadiusScale: 1.5
   waveDriftStrength: 1
-  verticalSettleDamping: 1
+  verticalSettleDamping: 1.5
 --- !u!114 &1606713145
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -22463,7 +22436,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1606713141}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
@@ -22480,7 +22453,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1606713141}
   serializedVersion: 5
-  m_Mass: 1
+  m_Mass: 0.3
   m_LinearDamping: 0
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -28095,7 +28068,7 @@ GameObject:
   - component: {fileID: 1978089425}
   - component: {fileID: 1978089427}
   - component: {fileID: 1978089426}
-  m_Layer: 0
+  m_Layer: 4
   m_Name: Water (above)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -28244,7 +28217,7 @@ MonoBehaviour:
   samplesPerAxis: 2
   floatRadiusScale: 1.5
   waveDriftStrength: 1
-  verticalSettleDamping: 1
+  verticalSettleDamping: 1.5
 --- !u!114 &1992110709
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -28252,7 +28225,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1992110705}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
@@ -28269,7 +28242,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1992110705}
   serializedVersion: 5
-  m_Mass: 1
+  m_Mass: 0.3
   m_LinearDamping: 0
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -28482,7 +28455,7 @@ GameObject:
   - component: {fileID: 2009765919}
   - component: {fileID: 2009765921}
   - component: {fileID: 2009765920}
-  m_Layer: 0
+  m_Layer: 4
   m_Name: Water (under)
   m_TagString: Untagged
   m_Icon: {fileID: 0}

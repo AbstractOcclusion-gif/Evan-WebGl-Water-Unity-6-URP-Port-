@@ -232,7 +232,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             {
                 fade = 1.0;
                 if (_SimWindowed < 0.5)
-                    return SampleWaterBilinear(poolPos.xz * 0.5 + 0.5);
+                    return SampleWaterBicubic(poolPos.xz * 0.5 + 0.5);
 
                 float2 uv = WorldToSim(worldPos).xz * 0.5 + 0.5;
                 if (any(uv < 0.0) || any(uv > 1.0)) { fade = 0.0; return (float4)0.0; }
@@ -241,7 +241,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 float2 d = min(uv, 1.0 - uv);
                 fade = saturate(min(d.x, d.y) / max(band, 1e-5));
 
-                float4 info = SampleWaterBilinear(uv);
+                float4 info = SampleWaterBicubic(uv);
                 info.r  *= fade; // fade ripple height
                 info.ba *= fade; // fade normal tilt back to flat
                 return info;

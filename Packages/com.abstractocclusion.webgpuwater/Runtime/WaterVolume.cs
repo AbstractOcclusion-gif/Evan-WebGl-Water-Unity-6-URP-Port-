@@ -37,6 +37,11 @@ namespace AbstractOcclusion.WebGpuWater
             FootprintDelta
         }
 
+        /// <summary>Interactive-ripple detail for a bounded body: sets the sim grid density (texels per
+        /// metre + a cap) and matches the surface mesh to it, so higher levels render rounder ripples at
+        /// more GPU cost. Windowed oceans are unaffected (they keep the quality-tier resolution).</summary>
+        public enum RippleQuality { Low, Medium, High, Ultra }
+
         [Header("Assigned by the scene builder")]
         [SerializeField] internal ComputeShader simCompute;
         // Optional, ocean-only: the FFT-cascade wave compute. Unassigned, or on non-ocean bodies, the
@@ -53,6 +58,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Header("Look / surfaces")]
         [SerializeField] internal Texture tiles;         // pool tile albedo sampled by the water reflection (assign your own)
         [SerializeField] internal Cubemap sky;           // sky cubemap for above-water reflections
+
+        [Tooltip("Interactive-ripple detail on a bounded body: higher = a denser sim grid (crisper, " +
+                 "rounder ripples) with a matched surface mesh, at more GPU cost. No effect on windowed oceans.")]
+        [SerializeField] internal RippleQuality rippleQuality = RippleQuality.High;
 
         [Header("Water volume (placement)")]
         [Tooltip("World half-size per pool unit, per axis: X = half width, Y = depth to the " +
@@ -1261,6 +1270,36 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultLargeBodyThreshold = 48f;
         const float DefaultSimWindowMeters = 32f;
 
+        // Interactive-ripple density (bounded bodies): the ripple sim is a grid stretched over the
+        // footprint, so a fixed resolution blurs as the plane grows (fine at ~5 m, coarse by ~40 m).
+        // Scale the grid with the footprint at a per-quality texel density, clamped between a per-quality
+        // floor and cap. The floor keeps SMALL pools dense (High/Ultra hold the pre-scaling 256 grid so a
+        // small pool stays crisp); the cap bounds the cost on big planes. Both are multiples of the
+        // compute thread-group size. The surface mesh is matched to the result (see SurfaceMeshDetail)
+        // so displaced ripples are round.
+        readonly struct RippleQualitySetting
+        {
+            public readonly float TexelsPerMeter;
+            public readonly int MinResolution; // small-pool floor; multiple of WaterSimulation.ThreadGroupSize
+            public readonly int MaxResolution; // big-plane cap; multiple of WaterSimulation.ThreadGroupSize
+
+            public RippleQualitySetting(float texelsPerMeter, int minResolution, int maxResolution)
+            {
+                TexelsPerMeter = texelsPerMeter;
+                MinResolution = minResolution;
+                MaxResolution = maxResolution;
+            }
+        }
+
+        static readonly System.Collections.Generic.Dictionary<RippleQuality, RippleQualitySetting> RippleQualityTable =
+            new System.Collections.Generic.Dictionary<RippleQuality, RippleQualitySetting>
+            {
+                { RippleQuality.Low,    new RippleQualitySetting(8f, 128, 192) },
+                { RippleQuality.Medium, new RippleQualitySetting(12f, 192, 256) },
+                { RippleQuality.High,   new RippleQualitySetting(16f, 256, 320) },
+                { RippleQuality.Ultra,  new RippleQualitySetting(24f, 256, 384) },
+            };
+
         // Upper bound on fog density; high enough that (with extinction) water can read fully
         // opaque even on short view paths.
         const float MaxFogDensity = 50f;
@@ -1342,6 +1381,12 @@ namespace AbstractOcclusion.WebGpuWater
             _stepDebt = 0f;
             _foamTimeDebt = 0f;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
+
+            // Bounded bodies: set the grid resolution from the footprint + ripple quality so ripple
+            // detail holds at scale. A windowed body already keeps constant density via its fixed-size
+            // scrolling window, so it keeps the quality-tier resolution.
+            if (!_windowed)
+                _simRes = ResolveDensitySimResolution();
 
             // Construct the eagerly-owned collaborators through the module registry. Ordered here (after
             // _windowed, which the ocean-FFT module gates on; before ApplySimAnisotropy, which needs the
@@ -1466,13 +1511,22 @@ namespace AbstractOcclusion.WebGpuWater
         // material-instance pattern: originals restored on disable.
         void ApplyMeshDetail()
         {
-            if (!Application.isPlaying || _meshDetail <= 0) return;
+            if (!Application.isPlaying) return;
 
-            _lowDetailGrid = WaterMeshBuilder.BuildGrid(_meshDetail);
+            int detail = SurfaceMeshDetail();
+            if (detail <= 0) return; // keep the authored mesh
+
+            _lowDetailGrid = WaterMeshBuilder.BuildGrid(detail);
             _lowDetailGrid.hideFlags = HideFlags.HideAndDontSave;
             SwapRendererMesh(surfaceAbove, _lowDetailGrid, ref _surfaceAboveOriginalMesh);
             SwapRendererMesh(surfaceUnder, _lowDetailGrid, ref _surfaceUnderOriginalMesh);
         }
+
+        // Bounded bodies match the surface grid to the sim grid (one vertex per texel) so displaced
+        // ripples are round rather than faceted triangles; the vertex count follows the ripple quality.
+        // Windowed bodies keep the tier's mesh-detail override (their dense near-field is the separate
+        // sim-window patch, so their main plane needs no matching).
+        int SurfaceMeshDetail() => _windowed ? _meshDetail : _simRes;
 
         void RestoreMeshDetail()
         {
@@ -1639,6 +1693,20 @@ namespace AbstractOcclusion.WebGpuWater
                       $"mesh {(_meshDetail > 0 ? _meshDetail.ToString() : "authored")}, renderScale {_renderScale:0.##}, " +
                       $"realRefraction {_realRefractionAllowed}, godRays {_godRaysAllowed} ({_godRaySteps} steps), " +
                       $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}", this);
+        }
+
+        // Scale the interactive-sim grid to the body's footprint at the chosen ripple quality so
+        // world-metres-per-texel stays roughly constant, keeping ripples crisp on larger planes. Rounded
+        // up to the compute thread-group size (the sim requires a multiple), then clamped to the
+        // quality's floor/cap.
+        int ResolveDensitySimResolution()
+        {
+            RippleQualitySetting setting = RippleQualityTable[rippleQuality];
+            float fullWidth = 2f * Mathf.Max(VolumeExtentSafe.x, VolumeExtentSafe.z);
+            int group = WaterSimulation.ThreadGroupSize;
+            int target = Mathf.CeilToInt(fullWidth * setting.TexelsPerMeter);
+            target = Mathf.CeilToInt(target / (float)group) * group;
+            return Mathf.Clamp(target, setting.MinResolution, setting.MaxResolution);
         }
 
         // Give the surface renderers per-body material instances and set their reflection

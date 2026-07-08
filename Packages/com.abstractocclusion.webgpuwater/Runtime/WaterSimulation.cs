@@ -11,6 +11,12 @@ namespace AbstractOcclusion.WebGpuWater
         // multiple of this. Must match [numthreads(...)] in WaterSim.compute.
         public const int ThreadGroupSize = 8;
 
+        // Interactive ripples are authored in WORLD radius, converted to a grid fraction by the caller.
+        // On a large plane that fraction can fall below one texel and inject an aliased spike, so floor
+        // it to a few texels: every drop stays a smooth bump regardless of body size. _Radius is a
+        // fraction of the grid side, so N texels correspond to N / Resolution.
+        const float MinDropTexelRadius = 2.5f;
+
         // Compute kernel names (must match WaterSim.compute).
         const string KernelDrop = "Drop";
         const string KernelUpdate = "Update";
@@ -192,6 +198,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         public void AddDrop(float x, float y, float radius, float strength)
         {
+            radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
             _cs.SetVector(ID_Center, new Vector4(x, y, 0, 0));
             _cs.SetFloat(ID_Radius, radius);
             _cs.SetFloat(ID_Strength, strength);

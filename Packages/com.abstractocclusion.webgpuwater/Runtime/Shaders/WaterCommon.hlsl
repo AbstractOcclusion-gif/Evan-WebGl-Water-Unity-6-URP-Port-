@@ -39,6 +39,51 @@ float4 SampleWaterBilinear(float2 uv)
     return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
 }
 
+// Cubic B-spline weights for one axis (fractional position v in [0,1]). B-spline rather than
+// Catmull-Rom because it SMOOTHS the field (its taps are all positive and blur slightly), which is
+// what turns the faceted per-texel ripple steps into gentle swells.
+float4 CubicBSplineWeights(float v)
+{
+    float4 n = float4(1.0, 2.0, 3.0, 4.0) - v;
+    float4 s = n * n * n;
+    float x = s.x;
+    float y = s.y - 4.0 * s.x;
+    float z = s.z - 4.0 * s.y + 6.0 * s.x;
+    float w = 6.0 - x - y - z;
+    return float4(x, y, z, w) * (1.0 / 6.0);
+}
+
+// Bicubic B-spline sample of the sim state, assembled from four SampleWaterBilinear taps (the classic
+// fast-bicubic decomposition). WebGPU can't hardware-filter the RGBAFloat sim texture, so this reuses
+// the manual bilinear instead of a hardware sampler. Smooths ripple height + normal so a coarse grid
+// reads as soft swells rather than the faceted steps a plain bilinear leaves.
+float4 SampleWaterBicubic(float2 uv)
+{
+    float2 texSize = _WaterTexel.zw;
+    float2 invTexSize = _WaterTexel.xy;
+
+    float2 coord = uv * texSize - 0.5;
+    float2 fxy = frac(coord);
+    coord -= fxy;
+
+    float4 xWeights = CubicBSplineWeights(fxy.x);
+    float4 yWeights = CubicBSplineWeights(fxy.y);
+
+    float4 c = coord.xxyy + float4(-0.5, 1.5, -0.5, 1.5);
+    float4 s = float4(xWeights.xz + xWeights.yw, yWeights.xz + yWeights.yw);
+    float4 offset = c + float4(xWeights.yw, yWeights.yw) / s;
+    offset *= invTexSize.xxyy;
+
+    float4 s0 = SampleWaterBilinear(offset.xz);
+    float4 s1 = SampleWaterBilinear(offset.yz);
+    float4 s2 = SampleWaterBilinear(offset.xw);
+    float4 s3 = SampleWaterBilinear(offset.yw);
+
+    float sx = s.x / (s.x + s.y);
+    float sy = s.z / (s.z + s.w);
+    return lerp(lerp(s3, s2, sx), lerp(s1, s0, sx), sy);
+}
+
 // Pick the pool face a POOL-space point lies on: the tile UV, the flat face normal, and a
 // tangent frame that matches the UV axes (for optional normal mapping). Shared by GetWallColor
 // (the analytic look) and the PoolWall geometry pass (which supplies its own texture/normal).
