@@ -4,7 +4,7 @@
 // Keeps the original analytic look (GetWallColor: refracted-light diffuse, projected
 // caustics, rim shadow) but is now a proper URP forward pass, so it also RECEIVES
 // real shadows cast by interactable objects from the scene's directional light.
-Shader "WebGLWater/PoolWall"
+Shader "AbstractOcclusion/WebGpuWater/PoolWall"
 {
     Properties
     {

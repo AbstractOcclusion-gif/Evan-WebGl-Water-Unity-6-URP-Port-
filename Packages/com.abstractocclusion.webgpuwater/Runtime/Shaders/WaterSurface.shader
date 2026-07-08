@@ -5,27 +5,27 @@
 // One material is instanced twice by the scene builder: an "above water" object
 // (_Underwater = 0, Cull Front) and an "under water" object (_Underwater = 1,
 // Cull Back), sharing the same displaced grid mesh.
-Shader "WebGLWater/WaterSurface"
+Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 {
     Properties
     {
         _Underwater ("Underwater (0/1)", Float) = 0
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 1 // Front
-        _ReflectionStrength ("Reflection Strength", Range(0,1)) = 1.0
-
-        [Header(Hybrid Reflections)]
-        [Toggle(_USE_PLANAR)] _UsePlanar ("Use Planar Reflection", Float) = 0
-        [Toggle(_USE_SSR)]    _UseSSR    ("Use Screen Space Reflection", Float) = 0
-        [Toggle(_USE_URP_PROBE)] _UseUrpProbe ("Reflect URP Environment Probe (else procedural sky)", Float) = 0
-        _ReflectionDistortion ("Reflection Distortion", Range(0,0.2)) = 0.05
-        _SSRStrength  ("SSR Strength", Range(0,1)) = 1.0
-        _SSRStepSize  ("SSR Step Size (world units)", Range(0.005,0.2)) = 0.03
-        _SSRMaxSteps  ("SSR Max Steps", Range(8,64)) = 24
-        _SSRThickness ("SSR Thickness", Range(0.01,1.0)) = 0.2
-
-        [Header(Real Transparency)]
-        [Toggle(_REAL_REFRACTION)] _RealRefraction ("Real (Screen-Space) Refraction", Float) = 0
-        _RefractionDistortion ("Refraction Distortion", Range(0,0.2)) = 0.05
+        // Reflection + refraction are driven by the WaterVolume component (Reflections foldout) -
+        // the single place to configure them. Kept as [HideInInspector] so the shader keeps their
+        // defaults + variants and the component can seed from / publish to them, without cluttering
+        // the material inspector.
+        [HideInInspector] _ReflectionStrength ("Reflection Strength", Range(0,1)) = 1.0
+        [HideInInspector] _UsePlanar ("Use Planar Reflection", Float) = 0
+        [HideInInspector] _UseSSR ("Use Screen Space Reflection", Float) = 0
+        [HideInInspector] _UseUrpProbe ("Reflect URP Environment Probe (else procedural sky)", Float) = 0
+        [HideInInspector] _ReflectionDistortion ("Reflection Distortion", Range(0,0.2)) = 0.05
+        [HideInInspector] _SSRStrength ("SSR Strength", Range(0,1)) = 1.0
+        [HideInInspector] _SSRStepSize ("SSR Step Size (world units)", Range(0.005,0.2)) = 0.03
+        [HideInInspector] _SSRMaxSteps ("SSR Max Steps", Range(8,64)) = 24
+        [HideInInspector] _SSRThickness ("SSR Thickness", Range(0.01,1.0)) = 0.2
+        [HideInInspector] _RealRefraction ("Real (Screen-Space) Refraction", Float) = 0
+        [HideInInspector] _RefractionDistortion ("Refraction Distortion", Range(0,0.2)) = 0.05
         // Water fog is global now (driven by WaterController), shared with the
         // object/pool shaders so it's consistent however you view the water.
 
@@ -53,14 +53,9 @@ Shader "WebGLWater/WaterSurface"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
-            // multi_compile (not shader_feature) so the build ships ALL variants: the reflection
-            // mode is toggled at runtime per body (WaterVolume.ApplyReflectionKeywords), and
-            // shader_feature would strip the runtime keyword combo that no material baked, making
-            // the surface fall back to the flat analytic look in a build.
-            #pragma multi_compile_local _ _USE_PLANAR
-            #pragma multi_compile_local _ _USE_SSR
-            #pragma multi_compile_local _ _USE_URP_PROBE
-            #pragma multi_compile_local _ _REAL_REFRACTION
+            // Reflection mode (planar / SSR / URP-probe base / real refraction) is UNIFORM-driven,
+            // published per body every frame via the MaterialPropertyBlock (WaterUniformPublisher),
+            // so it updates live in the editor and needs no shader variants.
             #include "UnityCG.cginc"
             #include "WaterCommon.hlsl"
             #include "WaterFog.hlsl"
@@ -151,6 +146,8 @@ Shader "WebGLWater/WaterSurface"
 
             float _SSRStrength, _SSRStepSize, _SSRMaxSteps, _SSRThickness;
             float _RefractionDistortion;
+            // Reflection mode flags (0/1), driven per body via the property block.
+            float _UsePlanar, _UseSSR, _UseUrpProbe, _RealRefraction;
 
             // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
             sampler2D _BedTex;
@@ -437,14 +434,17 @@ Shader "WebGLWater/WaterSurface"
             float3 SampleEnvironment(float3 worldRay)
             {
                 float3 color;
-            #if defined(_USE_URP_PROBE)
-                // The scene's active reflection probe / skybox (URP binds it to unity_SpecCube0),
-                // so the water matches the user's lit environment. Mip 0 keeps it mirror-sharp.
-                half4 encodedProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, worldRay, 0);
-                color = DecodeHDR(encodedProbe, unity_SpecCube0_HDR).rgb;
-            #else
-                color = texCUBE(_Sky, worldRay).rgb;
-            #endif
+                if (_UseUrpProbe > 0.5)
+                {
+                    // The scene's active reflection probe / skybox (URP binds it to unity_SpecCube0),
+                    // so the water matches the user's lit environment. Mip 0 keeps it mirror-sharp.
+                    half4 encodedProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, worldRay, 0);
+                    color = DecodeHDR(encodedProbe, unity_SpecCube0_HDR).rgb;
+                }
+                else
+                {
+                    color = texCUBE(_Sky, worldRay).rgb;
+                }
                 // sun glint - direction from _LightDir, tint/brightness from the Unity sun
                 color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
                 return color;
@@ -529,10 +529,11 @@ Shader "WebGLWater/WaterSurface"
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
 
                     // Real transparency from below: sample the live scene above the surface.
-                #if defined(_REAL_REFRACTION)
-                    float2 ruvU = i.screenPos.xy / max(i.screenPos.w, 1e-5) + normal.xz * _RefractionDistortion;
-                    refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
-                #endif
+                    if (_RealRefraction > 0.5)
+                    {
+                        float2 ruvU = i.screenPos.xy / max(i.screenPos.w, 1e-5) + normal.xz * _RefractionDistortion;
+                        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
+                    }
 
                     refractedColor = ApplyWaterOpacity(refractedColor); // turbidity from below too
 
@@ -588,50 +589,43 @@ Shader "WebGLWater/WaterSurface"
                     float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, ABOVEWATER_COLOR);
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
 
-                    // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits) ----
-                #if defined(_USE_PLANAR)
-                    reflectedColor = SamplePlanarReflection(i.screenPos, normal);
-                #endif
-                #if defined(_USE_SSR)
-                    float ssrHit;
-                    float3 ssr = MarchSSR(i.worldPos, reflectedRay, ssrHit); // SSR marches in world space
-                    reflectedColor = lerp(reflectedColor, ssr, ssrHit * _SSRStrength);
-                #endif
-
-                    // ---- Real transparency: sample the actual scene behind the surface,
-                    // instead of the analytic pool. Depth fog is applied just below. ----
-                #if defined(_REAL_REFRACTION)
-                    float2 ruv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
-                    ruv += normal.xz * _RefractionDistortion;
-                    refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb * ABOVEWATER_COLOR;
-
-                    // Fog the transmitted view by the water thickness behind the surface
-                    // (scene eye-depth - surface eye-depth). The analytic path fogs itself
-                    // below; this brings depth fog to the real-refraction path it used to skip,
-                    // so heavy fog reads through the surface too.
-                    float sceneEyeR = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(ruv), 0, 0)));
-                    float surfEyeR  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
-                    refractedColor = ApplyWaterFog(refractedColor, max(0.0, sceneEyeR - surfEyeR));
-                #endif
-
-                    // ---- Water fog. With REAL refraction the sampled scene is already
-                    // fogged by the geometry shaders, so we only fog the ANALYTIC pool
-                    // here - avoids double-fogging what's seen through the surface. ----
-                #if !defined(_REAL_REFRACTION)
-                    // Open water carries no pool box to measure a chord against; the refracted
-                    // colour is already the deep-water colour (see getSurfaceRayColor), so the
-                    // pool-chord fog is skipped entirely for the large-body path.
-                    if (_LargeBody < 0.5)
+                    // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles
+                    // are uniform-driven (published per body via the property block), so they are live. ----
+                    if (_UsePlanar > 0.5)
+                        reflectedColor = SamplePlanarReflection(i.screenPos, normal);
+                    if (_UseSSR > 0.5)
                     {
-                        // Fog distance is the WORLD length of the refracted segment through the
-                        // pool, found by intersecting the unit box in pool space then measuring
-                        // the world chord (correct under non-uniform extent / rotation).
+                        float ssrHit;
+                        float3 ssr = MarchSSR(i.worldPos, reflectedRay, ssrHit); // SSR marches in world space
+                        reflectedColor = lerp(reflectedColor, ssr, ssrHit * _SSRStrength);
+                    }
+
+                    // ---- Real transparency: sample the actual scene behind the surface, instead of
+                    // the analytic pool; else fog the ANALYTIC pool by the refracted chord. Only one
+                    // path runs, so the real-refraction view is never double-fogged. ----
+                    if (_RealRefraction > 0.5)
+                    {
+                        float2 ruv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
+                        ruv += normal.xz * _RefractionDistortion;
+                        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb * ABOVEWATER_COLOR;
+
+                        // Fog the transmitted view by the water thickness behind the surface
+                        // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
+                        float sceneEyeR = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(ruv), 0, 0)));
+                        float surfEyeR  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
+                        refractedColor = ApplyWaterFog(refractedColor, max(0.0, sceneEyeR - surfEyeR));
+                    }
+                    else if (_LargeBody < 0.5)
+                    {
+                        // Analytic pool fog: WORLD length of the refracted segment through the pool,
+                        // by intersecting the unit box in pool space then measuring the world chord
+                        // (correct under non-uniform extent / rotation). Open water has no pool box
+                        // and its refracted colour is already the deep-water colour, so it is skipped.
                         float3 pdFog = WorldDirToPool(refractedRay);
                         float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
                         float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
                         refractedColor = ApplyWaterFog(refractedColor, length(exitWorld - i.worldPos));
                     }
-                #endif
 
                     refractedColor = ApplyWaterOpacity(refractedColor); // art-directed turbidity floor
 

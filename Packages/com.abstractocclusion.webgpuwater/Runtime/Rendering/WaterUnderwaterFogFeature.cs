@@ -15,7 +15,7 @@ namespace AbstractOcclusion.WebGpuWater
 {
     public sealed class WaterUnderwaterFogFeature : ScriptableRendererFeature
     {
-        [Tooltip("The WebGpuWater/WaterUnderwaterFog shader. Assign the shader asset of that name.")]
+        [Tooltip("The AbstractOcclusion/WebGpuWater/WaterUnderwaterFog shader. Assign the shader asset of that name.")]
         [SerializeField] Shader underwaterFogShader;
 
         WaterUnderwaterFogPass _pass;

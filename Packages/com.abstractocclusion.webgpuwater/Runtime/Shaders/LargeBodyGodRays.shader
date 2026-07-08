@@ -13,7 +13,7 @@
 // globals); 1 = additive composite of that target (global _LargeGodRayTex) over the camera colour.
 // Runs only when the camera is submerged (the shader early-outs on _CameraUnderwater). Requires the
 // URP asset's Depth Texture ON and main-light shadows enabled. All tuning comes from published globals.
-Shader "WebGpuWater/LargeBodyGodRays"
+Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 {
     SubShader
     {

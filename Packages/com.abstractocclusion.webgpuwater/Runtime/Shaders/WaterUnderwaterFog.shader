@@ -10,7 +10,7 @@
 //   1 Inscatter: scene += fog * (1 - pathTransmittance) * depthAttenuation   (Blend One One)
 // Driven by WaterUnderwaterFogFeature (gated on WaterVolume.UnderwaterFogActive: ocean = submerged
 // only, pond = whenever Water Fog is on). U2: camera-origin waterline (KWS half-line is later polish).
-Shader "WebGpuWater/WaterUnderwaterFog"
+Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 {
     SubShader
     {

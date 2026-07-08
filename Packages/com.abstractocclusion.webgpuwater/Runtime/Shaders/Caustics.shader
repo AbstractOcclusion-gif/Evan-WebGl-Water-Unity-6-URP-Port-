@@ -6,7 +6,7 @@
 // channel is left at 1.0 (no occluder shadow).
 //
 // Drawn manually from C# via CommandBuffer.DrawMesh with an identity matrix.
-Shader "WebGLWater/Caustics"
+Shader "AbstractOcclusion/WebGpuWater/Caustics"
 {
     SubShader
     {

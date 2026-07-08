@@ -3,7 +3,7 @@
 // receives the projected caustics where it sits below the water surface. Driven by
 // the same directional light as everything else (its direction also reaches the
 // analytic water via the _LightDir global), so there is no separate fake light.
-Shader "WebGLWater/WaterReceiver"
+Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
 {
     Properties
     {

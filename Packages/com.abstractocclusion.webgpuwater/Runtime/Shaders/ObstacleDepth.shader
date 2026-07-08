@@ -7,7 +7,7 @@
 // encodes the object's submerged THICKNESS and tapers smoothly to zero where a rounded
 // hull meets the surface - no hard silhouette edge to stamp drop-like ripples, and the
 // generated wave matches the object's underwater profile.
-Shader "WebGLWater/ObstacleDepth"
+Shader "AbstractOcclusion/WebGpuWater/ObstacleDepth"
 {
     Properties
     {

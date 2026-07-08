@@ -8,7 +8,7 @@
 //
 // Works with standard Shuriken vertex data (position/color/uv), including the crown's
 // Texture Sheet Animation - no custom vertex streams required.
-Shader "WebGLWater/SplashParticles"
+Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
 {
     Properties
     {

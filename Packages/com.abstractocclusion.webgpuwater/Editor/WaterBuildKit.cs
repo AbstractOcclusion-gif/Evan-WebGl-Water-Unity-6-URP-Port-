@@ -70,12 +70,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string WaterQualityAssetPath = Gen + "/WaterQuality.asset";
 
         // Shader names (keep in sync with the Shader "..." declarations in Shaders/).
-        internal const string ShaderWaterSurface = "WebGLWater/WaterSurface";
-        internal const string ShaderPoolWall = "WebGLWater/PoolWall";
-        internal const string ShaderCaustics = "WebGLWater/Caustics";
-        internal const string ShaderObstacle = "WebGLWater/ObstacleDepth";
-        internal const string ShaderReceiver = "WebGLWater/WaterReceiver";
-        internal const string ShaderGodRays = "WebGLWater/GodRays";
+        internal const string ShaderWaterSurface = "AbstractOcclusion/WebGpuWater/WaterSurface";
+        internal const string ShaderPoolWall = "AbstractOcclusion/WebGpuWater/PoolWall";
+        internal const string ShaderCaustics = "AbstractOcclusion/WebGpuWater/Caustics";
+        internal const string ShaderObstacle = "AbstractOcclusion/WebGpuWater/ObstacleDepth";
+        internal const string ShaderReceiver = "AbstractOcclusion/WebGpuWater/WaterReceiver";
+        internal const string ShaderGodRays = "AbstractOcclusion/WebGpuWater/GodRays";
 
         // Material property names (keep in sync with the shader Properties blocks).
         internal const string PropUnderwater = "_Underwater";
@@ -90,12 +90,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropParticleTex = "_ParticleTex";
 
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
-        internal const string ShaderFoamParticles = "WebGLWater/FoamParticles";
+        internal const string ShaderFoamParticles = "AbstractOcclusion/WebGpuWater/FoamParticles";
         internal const string FoamParticleComputePath = PackageShadersRoot + "/WaterFoamParticles.compute";
         internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
 
         // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
-        internal const string ShaderSplashParticles = "WebGLWater/SplashParticles";
+        internal const string ShaderSplashParticles = "AbstractOcclusion/WebGpuWater/SplashParticles";
         internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
         internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
         internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
@@ -210,7 +210,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.causticsShader = ctx.Shaders.Caustics;
             // Optional (oceans only): near-field caustics in the sim-window frame. Non-fatal if absent,
             // so bounded/pool builds don't require it - Shader.Find just leaves the field null.
-            volume.largeBodyCausticsShader = Shader.Find("WebGpuWater/LargeBodyCaustics");
+            volume.largeBodyCausticsShader = Shader.Find("AbstractOcclusion/WebGpuWater/LargeBodyCaustics");
             volume.obstacleShader = ctx.Shaders.Obstacle;
             volume.waterMesh = ctx.Grid;
             volume.targetCamera = ctx.Camera;

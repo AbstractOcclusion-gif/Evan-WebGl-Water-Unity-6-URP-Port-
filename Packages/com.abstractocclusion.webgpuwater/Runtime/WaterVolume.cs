@@ -43,8 +43,8 @@ namespace AbstractOcclusion.WebGpuWater
         // HasRequiredWiring - a body must run without it so pools/bounded bodies are unaffected.
         [SerializeField] internal ComputeShader oceanFftCompute;
         [SerializeField] internal Shader causticsShader;
-        [SerializeField] internal Shader largeBodyCausticsShader; // WebGpuWater/LargeBodyCaustics - near-field ocean caustics in the sim-window frame (optional; oceans only)
-        [SerializeField] internal Shader obstacleShader; // WebGLWater/ObstacleDepth - footprint of interactable objects
+        [SerializeField] internal Shader largeBodyCausticsShader; // AbstractOcclusion/WebGpuWater/LargeBodyCaustics - near-field ocean caustics in the sim-window frame (optional; oceans only)
+        [SerializeField] internal Shader obstacleShader; // AbstractOcclusion/WebGpuWater/ObstacleDepth - footprint of interactable objects
         [SerializeField] internal Mesh waterMesh;        // XY grid plane, [-1,1], shared with the water surface renderers
         [SerializeField] internal Camera targetCamera;
         [SerializeField] internal Light sun;             // directional light: drives water, caustics AND real shadows
@@ -387,25 +387,52 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class ReflectionSettings
         {
-            [Tooltip("How THIS body reflects. SSR (screen-space over the procedural sky) scales to many " +
-                     "bodies. Planar is a full extra scene render across this body's plane - use it for at " +
-                     "most ONE 'hero' body. SkyOnly is cheapest (procedural sky only). SSR needs Depth + " +
-                     "Opaque Texture enabled on the active URP asset.")]
-            public ReflectionMode reflectionMode = ReflectionMode.SSR;
-            [Tooltip("Reflection base environment. ProceduralSky uses the generated sky cubemap (the demo " +
-                     "look). UrpProbe reflects the scene's active reflection probe / skybox so the water " +
-                     "matches your lit environment. Orthogonal to the mode above and unaffected by the tier.")]
-            public EnvironmentSource environmentSource = EnvironmentSource.ProceduralSky;
+            [Tooltip("Screen-space reflection: reflect the on-screen scene. Scales to many bodies; needs " +
+                     "Depth + Opaque Texture on the active URP asset. Mixable with Planar (layered).")]
+            public bool useScreenSpaceReflection = true;
+            [Tooltip("Planar reflection: a full extra scene render across this body's plane. Use for at " +
+                     "most ONE 'hero' body. Mixable with SSR (planar layers under SSR).")]
+            public bool usePlanarReflection = false;
+            [Tooltip("Reflect the scene's active URP reflection probe / skybox instead of the built-in " +
+                     "procedural sky. The reflection BASE that SSR and Planar layer over.")]
+            public bool reflectUrpProbe = false;
+            [Tooltip("Real (screen-space) refraction: see the actual scene through the water instead of " +
+                     "the analytic approximation. Needs the URP opaque texture; a tier may force it off.")]
+            public bool realRefraction = false;
+
+            // Look (drives the above-water surface; the under-water surface uses the same strength /
+            // distortion for its total-internal-reflection view). Ranges mirror the shader.
+            [Tooltip("Overall strength of the reflected term (0 = none, 1 = full).")]
+            [Range(0f, 1f)] public float reflectionStrength = 1f;
+            [Tooltip("Wave-normal distortion of the reflection.")]
+            [Range(0f, 0.2f)] public float reflectionDistortion = 0.05f;
+            [Tooltip("Screen-space reflection strength (used when SSR is on).")]
+            [Range(0f, 1f)] public float ssrStrength = 1f;
+            [Tooltip("SSR ray-march step size, world units.")]
+            [Range(0.005f, 0.2f)] public float ssrStepSize = 0.03f;
+            [Tooltip("SSR maximum ray-march steps.")]
+            [Range(8, 64)] public int ssrMaxSteps = 24;
+            [Tooltip("SSR depth thickness tolerance for a hit.")]
+            [Range(0.01f, 1f)] public float ssrThickness = 0.2f;
+            [Tooltip("Wave-normal distortion of the screen-space refraction (Real Refraction).")]
+            [Range(0f, 0.2f)] public float refractionDistortion = 0.05f;
         }
 
-        // Same-named forwarding accessors keep every reader unchanged. Reflections stays a public get/set
-        // (sample scripting API) targeting the settings; the two enums are read by ApplyReflections.
-        ReflectionMode reflectionMode => reflectionSettings.reflectionMode;
-        internal EnvironmentSource environmentSource => reflectionSettings.environmentSource;
-
-        /// <summary>How this body reflects (SkyOnly, SSR or Planar). Named 'Reflections'
-        /// because the nested <see cref="ReflectionMode"/> enum owns that identifier.</summary>
-        public ReflectionMode Reflections { get => reflectionSettings.reflectionMode; set => reflectionSettings.reflectionMode = value; }
+        // Tier-capped effective reflection toggles + look, published per body every frame by
+        // WaterUniformPublisher (uniform-driven, so they update live). SSR / Planar / real refraction
+        // are the priciest paths, so a tier that disallows them (Low) forces them off; the URP-probe
+        // base is never capped.
+        internal bool EffectiveUseSSR => _richReflectionsAllowed && reflectionSettings.useScreenSpaceReflection;
+        internal bool EffectiveUsePlanar => _richReflectionsAllowed && reflectionSettings.usePlanarReflection;
+        internal bool EffectiveRealRefraction => _realRefractionAllowed && reflectionSettings.realRefraction;
+        internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
+        internal float ReflectionStrength => reflectionSettings.reflectionStrength;
+        internal float ReflectionDistortion => reflectionSettings.reflectionDistortion;
+        internal float SSRStrength => reflectionSettings.ssrStrength;
+        internal float SSRStepSize => reflectionSettings.ssrStepSize;
+        internal float SSRMaxSteps => reflectionSettings.ssrMaxSteps;
+        internal float SSRThickness => reflectionSettings.ssrThickness;
+        internal float RefractionDistortion => reflectionSettings.refractionDistortion;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateReflectionsV7. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("reflectionMode")] ReflectionMode _legacyReflectionMode = ReflectionMode.SSR;
@@ -468,8 +495,8 @@ namespace AbstractOcclusion.WebGpuWater
         // scan can spot a loose crate/pool that uses one and give it a WaterMembership.
         static readonly string[] WaterMaterialShaderNames =
         {
-            "WebGLWater/WaterReceiver",
-            "WebGLWater/PoolWall",
+            "AbstractOcclusion/WebGpuWater/WaterReceiver",
+            "AbstractOcclusion/WebGpuWater/PoolWall",
         };
 
         /// <summary>One-time play-mode scan (primary body only): give every scene renderer that
@@ -805,8 +832,10 @@ namespace AbstractOcclusion.WebGpuWater
         // v7: the "Reflections" fields (reflection mode + base environment) moved into ReflectionSettings.
         void MigrateReflectionsV7()
         {
-            reflectionSettings.reflectionMode = _legacyReflectionMode;
-            reflectionSettings.environmentSource = _legacyEnvironmentSource;
+            // Map the retired SkyOnly/SSR/Planar enum onto the independent toggles.
+            reflectionSettings.useScreenSpaceReflection = _legacyReflectionMode == ReflectionMode.SSR;
+            reflectionSettings.usePlanarReflection = _legacyReflectionMode == ReflectionMode.Planar;
+            reflectionSettings.reflectUrpProbe = _legacyEnvironmentSource == EnvironmentSource.UrpProbe;
         }
 
         // v8: the "Bed depth (real terrain depth)" fields moved into BedDepthSettings.
@@ -1200,10 +1229,6 @@ namespace AbstractOcclusion.WebGpuWater
         // enable/disable cycle never leaves a renderer pointing at a destroyed instance.
         Material _surfaceAboveInstance, _surfaceUnderInstance;
         Material _surfaceAboveOriginal, _surfaceUnderOriginal;
-        const string KW_SSR = "_USE_SSR";
-        const string KW_PLANAR = "_USE_PLANAR";
-        const string KW_URP_PROBE = "_USE_URP_PROBE";
-        const string KW_REAL_REFRACTION = "_REAL_REFRACTION";
         // Low-tier coarse grid swapped onto the surface renderers at init (play mode only);
         // the originals are restored on disable, mirroring the material-instance pattern.
         Mesh _lowDetailGrid;
@@ -1357,6 +1382,7 @@ namespace AbstractOcclusion.WebGpuWater
             }
             if (!Bodies.Contains(this)) Bodies.Add(this);
             _mpb = new MaterialPropertyBlock();
+            AssignSurfaceLayers(); // water on the "Water" layer so the planar reflection excludes it
             ApplyReflections();
             ApplyMeshDetail();   // Low tier: coarse surface grid (play mode only)
             ApplyPipelineTier(); // Low tier: render scale / opaque-copy release (primary, play mode only)
@@ -1611,29 +1637,45 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Give the surface renderers per-body material instances and set their reflection
-        // keywords from the tier-capped EffectiveReflectionMode, so bodies in different modes
-        // don't fight over one shared material. A Planar body also binds the scene's single
-        // planar reflection.
+        // keywords + look floats from the tier-capped toggles, so bodies with different reflection
+        // settings don't fight over one shared material. A planar body also binds the scene's
+        // single planar reflection.
         void ApplyReflections()
         {
-            // Edit-mode preview leaves the authored shared materials untouched: an instance
-            // assigned to sharedMaterial could be saved into the scene as a dead reference.
-            // Preview reflections therefore follow the material's authored keywords.
+            // Play-mode only: an instance assigned to sharedMaterial in edit mode could be saved
+            // into the scene as a dead reference. Reflection is uniform-driven and published every
+            // frame by WaterUniformPublisher (edit + play), so no keywords are baked here.
             if (!Application.isPlaying) return;
 
+            // Per-body material instances so the ocean clipmap / patch renderers and the low-tier
+            // mesh swap share this body's surface material.
             _surfaceAboveInstance = InstanceSurfaceMaterial(surfaceAbove, out _surfaceAboveOriginal);
             _surfaceUnderInstance = InstanceSurfaceMaterial(surfaceUnder, out _surfaceUnderOriginal);
-            ApplyReflectionKeywords(_surfaceAboveInstance);
-            ApplyReflectionKeywords(_surfaceUnderInstance);
 
-            if (EffectiveReflectionMode == ReflectionMode.Planar) BindHeroPlanar();
+            if (EffectiveUsePlanar) WaterReflections.BindHeroPlanar(targetCamera, transform.position.y);
         }
 
-        // The authored reflectionMode capped by the active quality tier: SSR/Planar collapse to
-        // SkyOnly when the tier disallows rich reflections (e.g. Low). Keeps the field's intent
-        // intact so raising the tier restores the authored mode without re-editing the body.
-        ReflectionMode EffectiveReflectionMode =>
-            _richReflectionsAllowed ? reflectionMode : ReflectionMode.SkyOnly;
+        // Put water surfaces on the built-in "Water" layer so the planar reflection - configured to
+        // exclude that layer - never mirrors the water into itself (which reads as a second, independently
+        // waving surface). The scene camera still renders the layer, so the water itself is unaffected.
+        const string WaterLayerName = "Water";
+
+        void AssignSurfaceLayers()
+        {
+            ApplyWaterLayer(surfaceAbove);
+            ApplyWaterLayer(surfaceUnder);
+        }
+
+        static void ApplyWaterLayer(Renderer r)
+        {
+            if (r != null) ApplyWaterLayer(r.gameObject);
+        }
+
+        static void ApplyWaterLayer(GameObject go)
+        {
+            int layer = LayerMask.NameToLayer(WaterLayerName);
+            if (go != null && layer >= 0 && go.layer != layer) go.layer = layer;
+        }
 
         // Replace the renderer's shared material with a per-body instance (play-mode only, so
         // the scene asset is untouched). The original is captured so OnDisable can restore it
@@ -1646,36 +1688,6 @@ namespace AbstractOcclusion.WebGpuWater
             var instance = new Material(original) { hideFlags = HideFlags.HideAndDontSave };
             r.sharedMaterial = instance;
             return instance;
-        }
-
-        void ApplyReflectionKeywords(Material m)
-        {
-            if (m == null) return;
-            SetKeyword(m, KW_SSR, EffectiveReflectionMode == ReflectionMode.SSR);
-            SetKeyword(m, KW_PLANAR, EffectiveReflectionMode == ReflectionMode.Planar);
-            // Base environment is independent of the mode above and of the tier: a single cube
-            // sample either way, so it is not capped on Low.
-            SetKeyword(m, KW_URP_PROBE, environmentSource == EnvironmentSource.UrpProbe);
-            // A tier can DISABLE real refraction (it needs the URP opaque-texture copy, a big
-            // bandwidth cost on mobile tilers) but never force it on over the authored material.
-            if (!_realRefractionAllowed) SetKeyword(m, KW_REAL_REFRACTION, false);
-        }
-
-        static void SetKeyword(Material m, string keyword, bool on)
-        {
-            if (on) m.EnableKeyword(keyword); else m.DisableKeyword(keyword);
-        }
-
-        // Point the scene's planar reflection at THIS body's plane and turn it on. The planar
-        // texture is a single global plane, so only one hero body should use Planar mode; with
-        // several, the last to enable at OnEnable wins.
-        void BindHeroPlanar()
-        {
-            if (targetCamera == null) return;
-            var planar = targetCamera.GetComponent<PlanarReflection>();
-            if (planar == null) return;
-            planar.enableReflection = true;
-            planar.waterHeight = transform.position.y;
         }
 
         void Update()
@@ -1828,6 +1840,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
             go.transform.SetParent(surfaceAbove.transform.parent, false);
+            ApplyWaterLayer(go);
             go.AddComponent<MeshFilter>().sharedMesh = _patchGrid;
             var mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterial = material;
@@ -1929,6 +1942,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
             go.transform.SetParent(surfaceAbove.transform.parent, false);
+            ApplyWaterLayer(go);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterial = material;

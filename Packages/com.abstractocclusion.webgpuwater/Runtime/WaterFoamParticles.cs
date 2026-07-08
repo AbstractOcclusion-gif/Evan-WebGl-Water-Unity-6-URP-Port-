@@ -81,7 +81,7 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal WaterVolume volume;
         [Tooltip("WaterFoamParticles.compute (spawn/update kernels). Required.")]
         [SerializeField] internal ComputeShader particleCompute;
-        [Tooltip("Material using the WebGLWater/FoamParticles shader. Required; the Water " +
+        [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamParticles shader. Required; the Water " +
                  "Wizard (Window > AbstractOcclusion > WebGpuWater > Water Wizard) saves a tweakable " +
                  "material asset and assigns it here.")]
         [SerializeField] internal Material particleMaterial;

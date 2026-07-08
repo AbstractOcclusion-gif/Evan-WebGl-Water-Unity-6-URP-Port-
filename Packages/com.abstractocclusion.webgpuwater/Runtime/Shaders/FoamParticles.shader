@@ -8,7 +8,7 @@
 // Surface foam lies IN the water plane (tilted by the local ripple normal, glued to
 // the ripple + wind-wave height like the surface mesh), so it never criss-crosses
 // the waterline. Spray is a camera-facing billboard stretched along its velocity.
-Shader "WebGLWater/FoamParticles"
+Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 {
     Properties
     {

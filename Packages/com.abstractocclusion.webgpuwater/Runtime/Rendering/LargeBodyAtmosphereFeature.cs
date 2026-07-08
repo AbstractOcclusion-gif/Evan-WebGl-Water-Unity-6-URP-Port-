@@ -14,7 +14,7 @@ namespace AbstractOcclusion.WebGpuWater
 {
     public sealed class LargeBodyAtmosphereFeature : ScriptableRendererFeature
     {
-        [Tooltip("The WebGpuWater/LargeBodyGodRays shader. Assign the shader asset of that name.")]
+        [Tooltip("The AbstractOcclusion/WebGpuWater/LargeBodyGodRays shader. Assign the shader asset of that name.")]
         [SerializeField] Shader godRayShader;
 
         LargeBodyAtmospherePass _pass;

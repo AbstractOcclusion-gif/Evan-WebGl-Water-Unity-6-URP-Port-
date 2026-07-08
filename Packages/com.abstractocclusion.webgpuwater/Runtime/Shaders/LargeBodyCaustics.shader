@@ -12,7 +12,7 @@
 //
 // Drawn manually from C# via CommandBuffer.DrawMesh with an identity matrix (the vertex shader
 // outputs clip space directly), exactly like the pool caustic pass.
-Shader "WebGpuWater/LargeBodyCaustics"
+Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
 {
     SubShader
     {

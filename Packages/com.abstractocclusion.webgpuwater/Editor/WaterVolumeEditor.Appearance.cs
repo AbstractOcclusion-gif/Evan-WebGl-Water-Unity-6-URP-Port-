@@ -12,9 +12,22 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawReflectionsSection()
         {
             _showReflections = WaterEditorUI.Section("Reflections", _showReflections, () =>
+            {
                 DrawFields(
-                    "reflectionSettings.reflectionMode",
-                    "reflectionSettings.environmentSource"));
+                    "reflectionSettings.useScreenSpaceReflection",
+                    "reflectionSettings.usePlanarReflection",
+                    "reflectionSettings.reflectUrpProbe",
+                    "reflectionSettings.realRefraction");
+                WaterEditorUI.SubHeading("Look");
+                DrawFields(
+                    "reflectionSettings.reflectionStrength",
+                    "reflectionSettings.reflectionDistortion",
+                    "reflectionSettings.ssrStrength",
+                    "reflectionSettings.ssrStepSize",
+                    "reflectionSettings.ssrMaxSteps",
+                    "reflectionSettings.ssrThickness",
+                    "reflectionSettings.refractionDistortion");
+            });
         }
 
         void DrawWaterFogSection()

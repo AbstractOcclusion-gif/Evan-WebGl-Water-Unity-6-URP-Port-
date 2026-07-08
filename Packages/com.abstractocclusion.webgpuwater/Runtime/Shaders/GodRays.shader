@@ -18,7 +18,7 @@
 // Renders after the water (Transparent+100), additively, ignoring the water surface
 // depth; occlusion against solid geometry is done per-step against the camera depth
 // texture (opaque geometry only).
-Shader "WebGLWater/GodRays"
+Shader "AbstractOcclusion/WebGpuWater/GodRays"
 {
     Properties
     {

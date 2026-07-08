@@ -81,6 +81,17 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
+        static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
+        static readonly int ID_UseSSR = Shader.PropertyToID("_UseSSR");
+        static readonly int ID_UseUrpProbe = Shader.PropertyToID("_UseUrpProbe");
+        static readonly int ID_RealRefraction = Shader.PropertyToID("_RealRefraction");
+        static readonly int ID_ReflectionStrength = Shader.PropertyToID("_ReflectionStrength");
+        static readonly int ID_ReflectionDistortion = Shader.PropertyToID("_ReflectionDistortion");
+        static readonly int ID_SSRStrength = Shader.PropertyToID("_SSRStrength");
+        static readonly int ID_SSRStepSize = Shader.PropertyToID("_SSRStepSize");
+        static readonly int ID_SSRMaxSteps = Shader.PropertyToID("_SSRMaxSteps");
+        static readonly int ID_SSRThickness = Shader.PropertyToID("_SSRThickness");
+        static readonly int ID_RefractionDistortion = Shader.PropertyToID("_RefractionDistortion");
 
         readonly WaterVolume _body;
         // Two sinks over the SAME derivations; cached to avoid per-frame allocation.
@@ -202,6 +213,19 @@ namespace AbstractOcclusion.WebGpuWater
             // fight over a shared material (and the editor asset is never dirtied).
             sink.SetFloat(ID_GodRaySteps, _body.GodRaySteps);
             sink.SetFloat(ID_PeakedRefine, _body.PeakedRefineSteps);
+
+            // Reflection: uniform-driven and live. Tier-capped toggles + the look, per body per frame.
+            sink.SetFloat(ID_UsePlanar, _body.EffectiveUsePlanar ? 1f : 0f);
+            sink.SetFloat(ID_UseSSR, _body.EffectiveUseSSR ? 1f : 0f);
+            sink.SetFloat(ID_UseUrpProbe, _body.ReflectUrpProbe ? 1f : 0f);
+            sink.SetFloat(ID_RealRefraction, _body.EffectiveRealRefraction ? 1f : 0f);
+            sink.SetFloat(ID_ReflectionStrength, _body.ReflectionStrength);
+            sink.SetFloat(ID_ReflectionDistortion, _body.ReflectionDistortion);
+            sink.SetFloat(ID_SSRStrength, _body.SSRStrength);
+            sink.SetFloat(ID_SSRStepSize, _body.SSRStepSize);
+            sink.SetFloat(ID_SSRMaxSteps, _body.SSRMaxSteps);
+            sink.SetFloat(ID_SSRThickness, _body.SSRThickness);
+            sink.SetFloat(ID_RefractionDistortion, _body.RefractionDistortion);
 
             if (_body.BedTexture != null) sink.SetTexture(ID_BedTex, _body.BedTexture);
             sink.SetFloat(ID_BedValid, _body.IsBedBaked ? 1f : 0f);
