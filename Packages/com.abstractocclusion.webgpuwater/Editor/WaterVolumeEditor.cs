@@ -8,7 +8,7 @@ using UnityEngine;
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
     [CustomEditor(typeof(WaterVolume))]
-    public class WaterVolumeEditor : UnityEditor.Editor
+    public partial class WaterVolumeEditor : UnityEditor.Editor
     {
         // The volume in POOL space (matches WaterVolume.PoolToWorld): x,z span [-1, 1] and y
         // spans [-1, 0] (floor to surface). As a box that is center (0, -0.5, 0), size (2, 1, 2),

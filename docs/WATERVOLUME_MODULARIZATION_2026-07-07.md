@@ -1,9 +1,10 @@
-# WaterVolume modularization — Phase 1 shipped, Phase 2 recipe
+# WaterVolume modularization — Phase 1 + Phase 2 COMPLETE
 
-Date: 2026-07-07. Branch: `main`. Package: `Packages/com.abstractocclusion.webgpuwater`.
-Author note: done autonomously while Bert was away ("go all-in"). Every change below is meant to be
-**byte-for-byte behaviour-preserving**. Nothing was pixel-verified (I can't run Unity) — compile + Play
-check still required.
+Date: 2026-07-07 (Phase 1 + recipe); **Phase 2 completed 2026-07-08**. Branch: `main`.
+Package: `Packages/com.abstractocclusion.webgpuwater`.
+Status: **Phase 1 (module lifecycle) and Phase 2 (all 9 feature settings blocks migrated) shipped and
+editor-verified green by Bert, compiling and pushed after each increment.** Every change is meant to be
+**byte-for-byte behaviour-preserving**; Bert's compile-and-look on each increment is the source of truth.
 
 ---
 
@@ -15,14 +16,31 @@ own logic and its own settings, toggleable independently.
 
 The work splits in two:
 
-- **Phase 1 (DONE this session): formalise the lifecycle.** The 6 collaborators the master already
-  constructed by hand are now `IWaterModule`s driven through a registry. No serialized field moved, so
-  **scenes/prefabs and the custom editor are untouched**. This is the "formalise these first" step.
-- **Phase 2 (NOT done — recipe below): migrate the ~80 settings off `WaterVolume`** into per-module
-  nested `Settings` blocks. This is the part that actually breaks the god-class. I did **not** do it
-  blind because it re-serialises your scene (a silent-data-loss failure mode git does not cleanly
-  cover — see the `FormerlySerializedAs` trap below). It's mechanical with the recipe; best done with
-  the editor open so we can confirm values survived.
+- **Phase 1 (DONE): formalise the lifecycle.** The 6 collaborators the master already constructed by hand
+  are now `IWaterModule`s driven through a registry. No serialized field moved. This is "formalise first".
+- **Phase 2 (DONE): migrate the settings off `WaterVolume`** into per-feature nested `Settings` blocks.
+  All 9 feature `[Header]` groups are now `[Serializable]` foldouts; only base/master/wiring fields stay
+  flat on the master. Done as 8 version-gated increments, each compiled + editor-verified + pushed. The
+  `FormerlySerializedAs`-into-nested-class trap (silent data loss) was avoided with the legacy-field +
+  version-gated `ISerializationCallbackReceiver` copy recipe below.
+
+### Phase 2 increments shipped (CurrentSettingsVersion = 8)
+
+| v  | block(s) → nested Settings                          | notes |
+|----|-----------------------------------------------------|-------|
+| v1 | Depth attenuation → `DepthAttenuationSettings`      | read-only accessors |
+| v2 | Ocean (open water/clipmap/god rays/whitecaps, 26) → `OceanSettings` | consts + derived helpers stay on master |
+| v3 | Water fog → `WaterFogSettings`                      | `WaterFog` write-through; `waterFog` private read |
+| v4 | Wind waves → `WindWaveSettings`                     | `WindWaves` write-through; feeds buoyancy/wave bank/ocean swell |
+| v5 | Foam → `FoamSettings`                               | `Foam` write-through; **`foamBorderWidth` get/set** (Water Wizard writes it via `InternalsVisibleTo`) |
+| v6 | Object interaction + Ripple tuning → `ObjectInteractionSettings` + `RippleSettings` | `RippleStrength`/`RippleRadius` write-through |
+| v7 | Reflections → `ReflectionSettings`                  | `Reflections` write-through; 2 nested enums |
+| v8 | Bed depth → `BedDepthSettings`                      | incl. `Terrain` reference; read-only |
+
+Still flat on the master (correct — base/identity/wiring): scene-builder refs (shaders/mesh/camera/sun),
+`tiles`/`sky`, `volumeExtent`, the Large-water sim-window controls (the custom editor reads them), the
+multi-instance renderers + `isPrimary`/`autoLinkReceivers`, `quality`/`enableCulling`/`activationDistance`,
+`lightDir`/`causticResolution`, `orbit`/`configureCamera`, `splashEmitter`.
 
 ---
 
@@ -72,7 +90,12 @@ anything looks off after you "save the project", ping me.
 
 ---
 
-## Phase 2 — settings migration (recipe, NOT yet applied)
+## Phase 2 — settings migration (recipe — APPLIED across v1–v8)
+
+> This recipe was followed for all 8 increments above. Kept here as the reference for future settings
+> moves and for the Phase-3 work. Per-feature rule learned: an accessor is **read-only** unless a public
+> setter or the Water Wizard writes the field, in which case it's **get/set** (e.g. `foamBorderWidth`,
+> `WaterFog`, `WindWaves`, `RippleStrength`/`RippleRadius`, `Reflections`).
 
 ### The trap (why we can't just move fields + `[FormerlySerializedAs]`)
 `[FormerlySerializedAs]` only renames a field **within the same serialized container**. Moving
@@ -143,6 +166,22 @@ owning the multi-collaborator orchestration (`Step`, `RenderCausticsForThisBody`
 ---
 
 ## TL;DR
-Phase 1 (framework + collaborator lifecycle) is in and should be behaviour-identical — please compile +
-Play to confirm. Phase 2 (the field migration that truly slims the class) is recipe-ready; let's run it
-together with the editor open so we can watch your tuned values survive each feature.
+**Phase 1 + Phase 2 are DONE and green.** The `WaterVolume` god-class went from ~80 flat serialized fields
+to 9 nested-Settings foldouts (Depth Attenuation, Ocean, Water Fog, Wind Waves, Foam, Object Interaction,
+Ripple, Reflections, Bed Depth), values preserved via the versioned migration, on top of the Phase-1 module
+lifecycle registry. Only base/wiring/placement fields remain flat on the master. Behaviour is meant to be
+byte-identical — Bert's per-increment compile-and-look is the source of truth.
+
+---
+
+## Next session (2026-07-08+) — planned with Bert
+1. **Deep test everything** — full pass across all demo scenes; save each so the migrated (v8) values bake in.
+2. **Editor script** — a proper custom inspector for `WaterVolume` (the settings are auto-foldouts now; a
+   dedicated editor can group/label them, hide the legacy fields explicitly, add per-module enable toggles).
+3. **Cleanup** — small details: redundant `[Header]` above auto-named foldouts, any leftover doc/comment drift.
+4. **Fix flagged issues / edge cases / workflow flaws** — Bert has a list to walk through (capture them here
+   as we go). Candidates to keep in mind: the `Reset()`/new-object migration edge, prefab-override migration,
+   whether `causticResolution`/`lightDir` should become module settings, legacy-field pruning once all scenes
+   are re-saved past v8.
+5. **Phase 3 (later)** — per-frame `Tick` + uniform publishing onto `IWaterModule` (see section above),
+   editor-in-the-loop.
