@@ -10634,12 +10634,15 @@ MonoBehaviour:
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
     oceanFoamWindThreshold: 4
-    oceanFoamCoverage: 0.81
-    oceanFoamStrength: 0.4
-    oceanFoamFadeRate: 0.3
+    oceanFoamCoverage: 0.8
+    oceanFoamStrength: 2
+    oceanFoamFadeRate: 2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
-    oceanFoamTileSize: 4
-    oceanFoamFeather: 0.551
+    oceanFoamTileSize: 7
+    oceanFoamFeather: 0.6
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -10672,8 +10675,8 @@ MonoBehaviour:
   godRayRenderer: {fileID: 0}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 11400000, guid: f154c8a0d423d964d829fa66c201f64c, type: 2}
-  enableCulling: 1
+  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
+  enableCulling: 0
   activationDistance: 100
   reflectionSettings:
     useScreenSpaceReflection: 0
@@ -10708,8 +10711,8 @@ MonoBehaviour:
     waterFog: 1
     fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 0.2
-    waterOpacity: 0.5
+    fogDensity: 2.6
+    waterOpacity: 0.102
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}

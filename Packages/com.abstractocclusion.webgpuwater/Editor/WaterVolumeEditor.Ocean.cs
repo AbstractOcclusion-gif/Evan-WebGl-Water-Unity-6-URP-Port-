@@ -71,7 +71,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "ocean.oceanFoamFadeRate",
                     "ocean.oceanFoamColor",
                     "ocean.oceanFoamTileSize",
-                    "ocean.oceanFoamFeather")));
+                    "ocean.oceanFoamFeather",
+                    "ocean.oceanFoamDeposit",
+                    "ocean.oceanFoamDrift",
+                    "ocean.oceanFoamMaxBuildup")));
         }
 
         // Ocean sub-features do nothing on a body that isn't open water; grey them to say so.

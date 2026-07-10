@@ -22,6 +22,7 @@ namespace AbstractOcclusion.WebGpuWater
         const string KernelUpdate = "Update";
         const string KernelNormal = "Normal";
         const string KernelObstacle = "Obstacle";
+        const string KernelObstacleSmooth = "ObstacleSmooth";
         const string KernelFoam = "Foam";
         const string KernelReduceMean = "ReduceMean";
         const string KernelReduceMeanFinal = "ReduceMeanFinal";
@@ -48,6 +49,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ObstacleReflect = Shader.PropertyToID("_ObstacleReflect");
         static readonly int ID_ObstacleSolidThreshold = Shader.PropertyToID("_ObstacleSolidThreshold");
         static readonly int ID_ObstacleRestDip = Shader.PropertyToID("_ObstacleRestDip");
+        static readonly int ID_ObstacleSmoothPrev = Shader.PropertyToID("ObstacleSmoothPrev");
+        static readonly int ID_ObstacleSmoothRaw = Shader.PropertyToID("ObstacleSmoothRaw");
+        static readonly int ID_ObstacleSmoothDst = Shader.PropertyToID("ObstacleSmoothDst");
+        static readonly int ID_ObstacleTemporalBlend = Shader.PropertyToID("_ObstacleTemporalBlend");
         static readonly int ID_WaveSpeed = Shader.PropertyToID("_WaveSpeed");
         static readonly int ID_Damping = Shader.PropertyToID("_Damping");
         static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
@@ -76,7 +81,7 @@ namespace AbstractOcclusion.WebGpuWater
         public int Resolution { get; }
 
         readonly ComputeShader _cs;
-        readonly int _kDrop, _kUpdate, _kNormal, _kObstacle, _kFoam, _kConserve, _kScroll, _kScrollFoam;
+        readonly int _kDrop, _kUpdate, _kNormal, _kObstacle, _kObstacleSmooth, _kFoam, _kConserve, _kScroll, _kScrollFoam;
         readonly int _kReduceMean, _kReduceMeanFinal;
         readonly int _groups;
         readonly Vector4 _delta; // (1/Resolution, 1/Resolution, 0, 0), precomputed once
@@ -133,6 +138,7 @@ namespace AbstractOcclusion.WebGpuWater
             _kUpdate = cs.FindKernel(KernelUpdate);
             _kNormal = cs.FindKernel(KernelNormal);
             _kObstacle = cs.FindKernel(KernelObstacle);
+            _kObstacleSmooth = cs.FindKernel(KernelObstacleSmooth);
             _kFoam = cs.FindKernel(KernelFoam);
             _kReduceMean = cs.FindKernel(KernelReduceMean);
             _kReduceMeanFinal = cs.FindKernel(KernelReduceMeanFinal);
@@ -293,6 +299,23 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_ObstacleFlipY, flipY ? 1f : 0f);
             _cs.SetFloat(ID_ObstacleDeadband, deadband);
             Dispatch(_kObstacle);
+        }
+
+        /// <summary>Temporal EMA of the obstacle footprint: writes <paramref name="curr"/> =
+        /// lerp(<paramref name="prev"/>, <paramref name="raw"/>, <paramref name="blend"/>). Low-passes the
+        /// footprint so moving objects emit clean waves instead of tight-ring packets. Runs as a compute
+        /// kernel (the fullscreen material equivalent failed on WebGPU); <paramref name="curr"/> must be an
+        /// r32 (RFloat) render texture with random write, the only RW storage format WebGPU guarantees.</summary>
+        public void SmoothObstacleFootprint(Texture prev, Texture raw, RenderTexture curr, float blend)
+        {
+            _cs.SetTexture(_kObstacleSmooth, ID_ObstacleSmoothPrev, prev);
+            _cs.SetTexture(_kObstacleSmooth, ID_ObstacleSmoothRaw, raw);
+            _cs.SetTexture(_kObstacleSmooth, ID_ObstacleSmoothDst, curr);
+            _cs.SetFloat(ID_ObstacleTemporalBlend, blend);
+            // Dispatch directly, NOT via Dispatch(): this kernel operates on the obstacle textures, not
+            // the height-field ping-pong, so it must not bind Src/Dst or swap _a/_b (which would corrupt
+            // the sim state). Grid is the same size as the sim, so _groups covers it exactly.
+            _cs.Dispatch(_kObstacleSmooth, _groups, _groups, 1);
         }
 
         public void StepSimulation(float waveSpeed, float damping)

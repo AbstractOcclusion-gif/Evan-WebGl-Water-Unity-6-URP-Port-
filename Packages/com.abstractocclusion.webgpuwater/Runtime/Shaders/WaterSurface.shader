@@ -36,6 +36,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
         _FoamNormalTex ("Foam Normal Map (same flipbook grid)", 2D) = "bump" {}
         _FoamNormalStrength ("Foam Normal Strength", Range(0, 3)) = 1
+
+        [Header(Ocean Wave Foam)]
+        _OceanWhitecapTex ("Ocean Whitecap (single tiling texture)", 2D) = "white" {}
+        _OceanWhitecapNormalTex ("Ocean Whitecap Normal (raw RGB, linear)", 2D) = "bump" {}
     }
     SubShader
     {
@@ -110,6 +114,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // while thin lace scatters a faint sunlit glow through.
             #define FOAM_UNDERSIDE_DARKEN 0.6
             #define FOAM_UNDERSIDE_GLOW   0.4
+            // Ocean whitecap anti-tiling: a second, rotated, differently-scaled octave of the foam pattern
+            // is combined with the first so no single texture tile is resolvable toward the horizon. This is
+            // continuous (unlike a hashed triangle grid it has no cell seams), so it is safe on every
+            // backend. Contrast then sharpens the dissolve so crests read as crisp whitecaps, not round blobs.
+            #define OCEAN_WHITECAP_OCTAVE2_SCALE     2.37       // 2nd octave world scale vs the 1st (non-integer so the grids rarely realign)
+            #define OCEAN_WHITECAP_OCTAVE2_ROT_COS   0.8660254  // cos(30 deg): rotate the 2nd octave so its axes don't line up with the 1st
+            #define OCEAN_WHITECAP_OCTAVE2_ROT_SIN   0.5        // sin(30 deg)
+            #define OCEAN_WHITECAP_OCTAVE_BLEND_DIST 60.0       // metres over which the 2nd octave fades in (near water keeps one crisp tile)
+            #define OCEAN_WHITECAP_CONTRAST          1.6        // >1 sharpens the pattern so foam breaks into crisper shapes, less round
 
             float _Underwater;
             // Camera-following high-detail patch (windowed large bodies): a dense [-1,1] grid
@@ -182,7 +195,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             sampler2D _FoamMask;
             sampler2D _FoamTex;
             sampler2D _FoamNormalTex; // relief matching _FoamTex frame-for-frame (raw RGB encode)
+            // Dedicated ocean wave-foam (whitecap) slots: a single seamless TILING texture (not a flipbook
+            // atlas) + its raw-RGB relief normal, sampled only by the FFT-ocean whitecap path. Defaults
+            // (white / bump) keep the look unchanged when unassigned. Decoupled from _FoamTex so the ocean
+            // whitecap and the interactive/shoreline foam can be art-directed independently.
+            sampler2D _OceanWhitecapTex;
+            sampler2D _OceanWhitecapNormalTex;
             float4 _FoamTex_ST;
+            // Auto-populated by Unity as (1/w, 1/h, w, h). Drives the flipbook half-texel inset that
+            // stops bilinear filtering bleeding across cell/tile edges.
+            float4 _FoamTex_TexelSize;
+            float4 _FoamNormalTex_TexelSize;
             float4 _FoamTexFrames; // (cols, rows) of the flipbook grid; (1,1) = plain texture
             float  _FoamTexFPS;
             float  _FoamNormalStrength;
@@ -289,15 +312,30 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 cellB = float2(fmod(frameB, grid.x), grid.y - 1.0 - floor(frameB / grid.x));
             }
 
+            // Seamless flipbook-cell sample. frac(uv) tiles the pattern but spikes ddx/ddy at every tile
+            // boundary, which snaps the GPU to a coarse mip there - a visible stitch line on the seam - and
+            // lets bilinear filtering bleed into the neighbouring frame. Fix both: choose the mip from the
+            // CONTINUOUS pre-frac gradients via tex2Dgrad, and inset the tile by half a texel so a filtered
+            // tap can't leave the cell. Explicit grads are also valid in divergent control flow, unlike tex2D.
+            float4 SampleFlipbookCell(sampler2D tex, float2 uv, float2 cell, float2 grid, float2 invSize)
+            {
+                float2 gradX = ddx(uv) / grid;
+                float2 gradY = ddy(uv) / grid;
+                // Half a texel in tile space, capped so the 1x1 white-fallback texture (no foam assigned,
+                // invSize = 1) can't invert the clamp below; a white tap stays white either way.
+                float2 inset = min(invSize * 0.5 * grid, 0.49);
+                float2 tiled = clamp(frac(uv), inset, 1.0 - inset);
+                return tex2Dgrad(tex, (tiled + cell) / grid, gradX, gradY);
+            }
+
             // Foam pattern with frame advance + crossfade: the foam churns internally
             // even where the mask is static.
             float3 SampleFoamPattern(float2 uv)
             {
                 float2 cellA, cellB, grid; float blend;
                 FoamFlipbookFrames(cellA, cellB, grid, blend);
-                float2 tiled = frac(uv);
-                float3 a = tex2D(_FoamTex, (tiled + cellA) / grid).rgb;
-                float3 b = tex2D(_FoamTex, (tiled + cellB) / grid).rgb;
+                float3 a = SampleFlipbookCell(_FoamTex, uv, cellA, grid, _FoamTex_TexelSize.xy).rgb;
+                float3 b = SampleFlipbookCell(_FoamTex, uv, cellB, grid, _FoamTex_TexelSize.xy).rgb;
                 return lerp(a, b, blend);
             }
 
@@ -309,9 +347,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             {
                 float2 cellA, cellB, grid; float blend;
                 FoamFlipbookFrames(cellA, cellB, grid, blend);
-                float2 tiled = frac(uv);
-                float2 a = tex2D(_FoamNormalTex, (tiled + cellA) / grid).rg * 2.0 - 1.0;
-                float2 b = tex2D(_FoamNormalTex, (tiled + cellB) / grid).rg * 2.0 - 1.0;
+                float2 a = SampleFlipbookCell(_FoamNormalTex, uv, cellA, grid, _FoamNormalTex_TexelSize.xy).rg * 2.0 - 1.0;
+                float2 b = SampleFlipbookCell(_FoamNormalTex, uv, cellB, grid, _FoamNormalTex_TexelSize.xy).rg * 2.0 - 1.0;
                 return lerp(a, b, blend);
             }
 
@@ -354,6 +391,35 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 tilt = lerp(SampleFoamNormalTilt(fuv - flowDir * phaseA),
                             SampleFoamNormalTilt(fuv - flowDir * phaseB), seesaw)
                      * (_FoamNormalStrength * mask);
+            }
+
+            // Ocean whitecap pattern with distance anti-tiling. Combines the base foam tile with a rotated,
+            // differently-scaled second octave that fades in with distance, so the texture's repeat stops
+            // reading as a grid toward the horizon. min() of the two octaves as they blend keeps foam only
+            // where BOTH agree, which also breaks the round patches into more whitecap-like shapes. Returns
+            // the pattern rgb; .r drives the coverage dissolve.
+            float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist)
+            {
+                // Dedicated whitecap: a single seamless tiling texture sampled with hardware Repeat wrap -
+                // no frac/flipbook cell, so no atlas mip-bleed and no tile-edge seam. The rotated second
+                // octave still hides the texture's own repeat toward the horizon.
+                float2 uv0 = worldXZ / max(_OceanFoamTileSize, 1e-3);
+                float3 octave0 = tex2D(_OceanWhitecapTex, uv0).rgb;
+
+                float2 rotated = float2(
+                    worldXZ.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - worldXZ.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
+                    worldXZ.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + worldXZ.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS);
+                float3 octave1 = tex2D(_OceanWhitecapTex, rotated / max(_OceanFoamTileSize * OCEAN_WHITECAP_OCTAVE2_SCALE, 1e-3)).rgb;
+
+                float blend = saturate(camDist / OCEAN_WHITECAP_OCTAVE_BLEND_DIST);
+                return lerp(octave0, min(octave0, octave1), blend);
+            }
+
+            // Relief tilt (xy) of the dedicated whitecap normal, raw-RGB encoded like the foam normal.
+            // Single tiling texture, so a plain wrapped sample - no flipbook seam handling needed.
+            float2 SampleOceanWhitecapTilt(float2 worldXZ)
+            {
+                return tex2D(_OceanWhitecapNormalTex, worldXZ / max(_OceanFoamTileSize, 1e-3)).rg * 2.0 - 1.0;
             }
 
             struct appdata { float4 vertex : POSITION; };
@@ -730,10 +796,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         if (coverage > FOAM_MASK_EPSILON)
                         {
                             // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
-                            // foam texture dissolves in as lace. frac() inside SampleFoamPattern does the tile.
-                            oceanFoamPattern = SampleFoamPattern(i.largeWaveSourceXZ / max(_OceanFoamTileSize, 1e-3));
+                            // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
+                            // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
+                            float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
+                            oceanFoamPattern = SampleOceanWhitecapPattern(i.largeWaveSourceXZ, foamCamDist);
+                            float sharpened = pow(saturate(oceanFoamPattern.r), OCEAN_WHITECAP_CONTRAST);
                             float threshold = 1.0 - coverage;
-                            oceanFoam = smoothstep(threshold, threshold + max(_OceanFoamFeather, 1e-3), oceanFoamPattern.r);
+                            oceanFoam = smoothstep(threshold, threshold + max(_OceanFoamFeather, 1e-3), sharpened);
                         }
                     }
                     float3 outColor = lerp(refractedColor, reflectedColor,
@@ -767,7 +836,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         // frame-synced to the pattern) so the lace shades three-dimensionally and its specular
                         // breakup matches the texture. Built as a LOCAL normal - the base wave normal that the
                         // pond foam / haze below rely on is left untouched. Default "bump" map = zero tilt. ----
-                        float2 oceanFoamTilt = SampleFoamNormalTilt(i.largeWaveSourceXZ / max(_OceanFoamTileSize, 1e-3))
+                        float2 oceanFoamTilt = SampleOceanWhitecapTilt(i.largeWaveSourceXZ)
                                              * (_FoamNormalStrength * oceanFoam);
                         float3 oceanFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
                         float3 oceanFoamBitangent = cross(normal, oceanFoamTangent);

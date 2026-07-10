@@ -199,6 +199,16 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("How softly the foam texture dissolves in as coverage rises. 0 = hard edges; higher = a " +
                      "gentle feathered fade from water to foam.")]
             [Range(0f, 1f)] public float oceanFoamFeather = DefaultOceanFoamFeather;
+            [Tooltip("How much foam is left behind (deposited) after a crest passes. Higher = dense whitecaps " +
+                     "linger and streak into trails; 0 = foam fades as fast as it forms. This is the main " +
+                     "'deposit' control.")]
+            [Range(0f, 1f)] public float oceanFoamDeposit = DefaultOceanFoamDeposit;
+            [Tooltip("How fast deposited foam rolls downwind, streaking into windrows (as a fraction of wind " +
+                     "speed). 0 = foam stays where it formed.")]
+            [Range(0f, OceanFoamDriftMax)] public float oceanFoamDrift = DefaultOceanFoamDrift;
+            [Tooltip("Ceiling on how dense foam can pile up before accumulation stops. Higher = thicker, " +
+                     "longer-lasting deposits (1 = the original ceiling).")]
+            [Range(OceanFoamMaxBuildupMin, OceanFoamMaxBuildupMax)] public float oceanFoamMaxBuildup = DefaultOceanFoamMaxBuildup;
         }
 
         // Same-named forwarding accessors so every reader (WaterUniformPublisher, the derived helpers
@@ -230,6 +240,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color oceanFoamColor => ocean.oceanFoamColor;
         internal float oceanFoamTileSize => ocean.oceanFoamTileSize;
         internal float oceanFoamFeather => ocean.oceanFoamFeather;
+        internal float oceanFoamDeposit => ocean.oceanFoamDeposit;
+        internal float oceanFoamDrift => ocean.oceanFoamDrift;
+        internal float oceanFoamMaxBuildup => ocean.oceanFoamMaxBuildup;
 
         // Legacy capture (scenes/prefabs from before this migration) -> copied once by MigrateOceanV2.
         // Hidden; do not edit.
@@ -278,6 +291,14 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultOceanFoamTileSize = 8f;      // metres per foam-pattern tile on the surface
         const float OceanFoamTileSizeMin = 0.5f;        // guard the divide + keep the pattern from collapsing
         const float DefaultOceanFoamFeather = 0.25f;    // dissolve softness of the foam texture black point
+        // Deposit knobs (promoted from OceanFft.compute #defines so they're art-tweakable). Defaults lean
+        // toward MORE deposit than the old constants (slow-fade 0.25 -> deposit 0.85 = slow-fade 0.15).
+        const float DefaultOceanFoamDeposit = 0.85f;    // dense-foam persistence; slowFadeFraction = 1 - this
+        const float DefaultOceanFoamDrift = 0.08f;      // downwind roll speed as a fraction of wind speed
+        const float OceanFoamDriftMax = 0.3f;           // fastest useful roll before foam smears across the tile
+        const float DefaultOceanFoamMaxBuildup = 1f;    // accumulation ceiling (1 = the original FoamMax)
+        const float OceanFoamMaxBuildupMin = 0.25f;
+        const float OceanFoamMaxBuildupMax = 3f;
         internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
         internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
         internal float LargeWaveChoppiness => largeWaveChoppiness;
@@ -290,6 +311,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color OceanFoamColor => oceanFoamColor;
         internal float OceanFoamTileSize => oceanFoamTileSize;
         internal float OceanFoamFeather => oceanFoamFeather;
+        internal float OceanFoamDeposit => oceanFoamDeposit;
+        internal float OceanFoamDrift => oceanFoamDrift;
+        internal float OceanFoamMaxBuildup => oceanFoamMaxBuildup;
         const float DefaultSwellWavelength = 140f;
         // Default horizon haze target: pale sky-blue, but alpha 0 so out of the box the far ocean
         // dissolves into the REAL reflected sky (seamless). The rgb only matters once alpha is raised.
@@ -1879,8 +1903,11 @@ namespace AbstractOcclusion.WebGpuWater
                 Vector2 camXZ = targetCamera != null
                     ? new Vector2(targetCamera.transform.position.x, targetCamera.transform.position.z)
                     : new Vector2(VolumeCenter.x, VolumeCenter.z);
+                // Deposit knob maps to the compute's slow-fade fraction inverted (more deposit = slower dense
+                // fade). Drift and max buildup pass straight through.
                 var foam = new WaterOceanFft.FoamParams(OceanFoamWindThreshold, OceanFoamCoverage,
-                                                        OceanFoamStrength, OceanFoamFadeRate);
+                                                        OceanFoamStrength, OceanFoamFadeRate,
+                                                        1f - OceanFoamDeposit, OceanFoamDrift, OceanFoamMaxBuildup);
                 _oceanFft?.Dispatch(_waveTime, windSpeed, LargeWaveHeadingRad, LargeWaveAmplitudeEffective,
                                     SwellWavelength, SwellHeight, camXZ, foam);
             }
@@ -2417,7 +2444,11 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 // Windowed bodies re-frame the footprint onto the scrolling window each frame.
                 if (_windowed) _obstacle.SetFrame(SimWindowCenter, VolumeRotation, SimHalfExtent);
-                _obstacle.Render(VolumeCenter.y, 1f - obstacleSmoothing);
+                _obstacle.Render(VolumeCenter.y);
+                // Temporal EMA (compute): Curr = lerp(Prev, Raw, blend). blend = 1 - obstacleSmoothing,
+                // so smoothing 0 = no low-pass (Curr = Raw), higher = heavier anti-flicker smoothing.
+                _water.SmoothObstacleFootprint(_obstacle.Prev, _obstacle.Raw, _obstacle.Curr,
+                                               1f - obstacleSmoothing);
                 // Compensate for extent.y so an object's displacement is a fixed world height
                 // regardless of pool depth (PoolToWorld scales surface height by extent.y).
                 _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr,
@@ -2665,18 +2696,27 @@ namespace AbstractOcclusion.WebGpuWater
             Camera cam = targetCamera;
             if (cam == null) { _wasCameraSubmerged = false; return false; }
 
-            float near = cam.nearClipPlane;
-            float lowestY = cam.transform.position.y;
-            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(0f, 0f, near)).y);
-            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(1f, 0f, near)).y);
-            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(0f, 1f, near)).y);
-            lowestY = Mathf.Min(lowestY, cam.ViewportToWorldPoint(new Vector3(1f, 1f, near)).y);
+            // Reference height for the submerge test. Oceans use the EYE, so the fullscreen ocean fog arms
+            // when the eye actually goes under - testing the near-plane CORNERS armed it ~near-plane-extent
+            // (~0.2 m) early, which (now the fog reads the real surface depth) fogged the surface-seen-from-
+            // above and read as the fog popping a touch early on entry. Ponds keep PARTIAL (near-plane)
+            // submersion so a shallow pool whose surface never reaches the eye still shows its box-clipped
+            // fog volume.
+            float referenceY = cam.transform.position.y;
+            if (!IsOceanClipmap)
+            {
+                float near = cam.nearClipPlane;
+                referenceY = Mathf.Min(referenceY, cam.ViewportToWorldPoint(new Vector3(0f, 0f, near)).y);
+                referenceY = Mathf.Min(referenceY, cam.ViewportToWorldPoint(new Vector3(1f, 0f, near)).y);
+                referenceY = Mathf.Min(referenceY, cam.ViewportToWorldPoint(new Vector3(0f, 1f, near)).y);
+                referenceY = Mathf.Min(referenceY, cam.ViewportToWorldPoint(new Vector3(1f, 1f, near)).y);
+            }
 
-            // Hysteresis around the surface: once submerged, the near plane must rise a little ABOVE
-            // the surface to flip back (and vice versa), so a crest bobbing across the near plane at
-            // the waterline can't toggle the whole fog on and off every frame.
+            // Hysteresis around the surface: once submerged, the reference must rise a little ABOVE the
+            // surface to flip back (and vice versa), so a crest bobbing across the waterline can't toggle
+            // the whole fog on and off every frame.
             float threshold = _wasCameraSubmerged ? surfaceY + SubmergeHysteresis : surfaceY - SubmergeHysteresis;
-            if (lowestY >= threshold) { _wasCameraSubmerged = false; return false; }
+            if (referenceY >= threshold) { _wasCameraSubmerged = false; return false; }
 
             bool submerged = IsOceanClipmap; // the ocean spans everywhere
             if (!submerged)
@@ -2698,7 +2738,16 @@ namespace AbstractOcclusion.WebGpuWater
             if (cam == null) return VolumeCenter.y;
             Vector3 p = cam.transform.position;
             float y = VolumeCenter.y;
-            if (openWater) y += SampleLargeWaveField(p.x, p.z).x;
+            if (!openWater) return y;
+            // Fog gate: advance the FFT height readback to the CURRENT wave time so the submerge/emerge
+            // transition isn't 1-2 frames late (the fog shader's per-pixel waterline is already current, and
+            // reads the same FFT surface - so the gate must too, not the analytic mirror). Falls back to the
+            // plain field / analytic sample when extrapolation isn't available (non-FFT body, first frames,
+            // or the camera outside the readback region).
+            if (OceanFftActive && _oceanFft.TrySampleHeightExtrapolated(p.x, p.z, _waveTime, out float fftHeight))
+                y += fftHeight;
+            else
+                y += SampleLargeWaveField(p.x, p.z).x;
             return y;
         }
 

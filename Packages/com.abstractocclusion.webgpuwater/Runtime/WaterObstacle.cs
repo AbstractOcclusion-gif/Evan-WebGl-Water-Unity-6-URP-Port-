@@ -11,6 +11,8 @@ namespace AbstractOcclusion.WebGpuWater
     {
         public RenderTexture Prev => _prev;
         public RenderTexture Curr => _curr;
+        // This frame's box-filtered footprint, before the temporal EMA writes Curr from it.
+        public RenderTexture Raw => _raw;
         // Submerged footprint of REFLECTOR-flagged objects only (passive reflection solid mask).
         public RenderTexture Solid => _solid;
 
@@ -66,12 +68,14 @@ namespace AbstractOcclusion.WebGpuWater
             _mat = new Material(obstacleShader) { hideFlags = HideFlags.HideAndDontSave };
             _cb = new CommandBuffer { name = "WebGLWater.Obstacle" };
             _mpb = new MaterialPropertyBlock();
-            _prev = Create(_resolution);
-            _curr = Create(_resolution);
-            _raw = Create(_resolution);
-            _solid = Create(_resolution);
-            _hiRes = Create(_resolution * SupersampleFactor);
-            _midRes = Create(_resolution * SupersampleFactor / 2);
+            // prev/curr/raw: RFloat (RW-capable, so the ObstacleSmooth compute kernel writes curr).
+            _prev = Create(_resolution, RenderTextureFormat.RFloat);
+            _curr = Create(_resolution, RenderTextureFormat.RFloat);
+            _raw = Create(_resolution, RenderTextureFormat.RFloat);
+            // solid + the additive supersample chain: RHalf (blended into; not a compute target).
+            _solid = Create(_resolution, RenderTextureFormat.RHalf);
+            _hiRes = Create(_resolution * SupersampleFactor, RenderTextureFormat.RHalf);
+            _midRes = Create(_resolution * SupersampleFactor / 2, RenderTextureFormat.RHalf);
 
             SetFrame(volumeCenter, volumeRotation, volumeExtent);
         }
@@ -99,14 +103,16 @@ namespace AbstractOcclusion.WebGpuWater
             _gpuProj = GL.GetGPUProjectionMatrix(proj, true); // renderIntoTexture = true
         }
 
-        RenderTexture Create(int resolution)
+        RenderTexture Create(int resolution, RenderTextureFormat format)
         {
-            // RHalf, not RFloat: the footprint pass blends additively (Blend One One) and base
-            // WebGPU cannot blend into float32 targets (that needs the optional
-            // 'float32-blendable' feature, absent on many mobile GPUs). Half precision is
-            // ample for a submerged-depth coverage mask.
-            var rt = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.RHalf)
+            // Format is per-texture: the additive draw chain (hiRes/midRes) MUST be RHalf because base
+            // WebGPU cannot blend into float32 targets (the 'float32-blendable' feature is absent on many
+            // mobile GPUs). The smoothing targets (prev/curr/raw) are RFloat so the ObstacleSmooth compute
+            // kernel can write curr as a read-write storage texture - WebGPU only allows r32 formats as RW.
+            bool randomWrite = format == RenderTextureFormat.RFloat; // curr is a compute RWTexture2D
+            var rt = new RenderTexture(resolution, resolution, 0, format)
             {
+                enableRandomWrite = randomWrite,
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,
                 name = "WaterObstacle",
@@ -116,14 +122,12 @@ namespace AbstractOcclusion.WebGpuWater
             return rt;
         }
 
-        /// <summary>Render the current submerged footprint of all interactables at the
-        /// supersampled resolution, box-filter it down to the sim grid, and ping-pong so Prev
-        /// holds last frame's footprint and Curr holds this frame's (the sim diffs the two).
-        /// <paramref name="temporalBlend"/> is currently unused: the temporal-EMA smoothing pass
-        /// is disabled because its custom-material blit doesn't run on this URP/WebGPU backend
-        /// (see the plain-copy note below). Kept in the signature for the planned compute-based
-        /// EMA re-add.</summary>
-        public void Render(float waterY, float temporalBlend)
+        /// <summary>Render the current submerged footprint of all interactables at the supersampled
+        /// resolution, box-filter it down to the sim grid into <see cref="Raw"/>, and ping-pong so Prev
+        /// holds last frame's smoothed footprint. Producing Curr is a SEPARATE step: the caller runs the
+        /// temporal EMA (curr = lerp(prev, raw, blend)) via WaterSimulation's ObstacleSmooth compute kernel
+        /// - a fullscreen material pass for it silently failed on this URP/WebGPU backend.</summary>
+        public void Render(float waterY)
         {
             (_prev, _curr) = (_curr, _prev);
 
@@ -157,17 +161,8 @@ namespace AbstractOcclusion.WebGpuWater
             _cb.Blit(_hiRes, _midRes);
             _cb.Blit(_midRes, _raw);
 
-            // Copy the fresh footprint into _curr with a PLAIN blit. The previous temporal-EMA
-            // used a custom-material blit (ObstacleDepth Pass 1, a CG vert_img/tex2D fullscreen
-            // pass); on this URP/WebGPU backend that pass never runs, so _curr stayed frozen at
-            // its initial value and every footprint read back as a uniform constant - the real
-            // "FootprintDelta works weird" bug. A plain Blit (the same call the downsamples use,
-            // proven to work here) actually lands _raw in _curr. Trade-off: temporal anti-flicker
-            // smoothing is disabled; re-add it as a COMPUTE kernel (the codebase's WebGPU-proven
-            // path) if moving-object flicker returns. 'temporalBlend' is unused until then.
-            _cb.Blit(_raw, _curr);
-
             Graphics.ExecuteCommandBuffer(_cb);
+            // Curr is written by the caller's ObstacleSmooth compute pass (temporal EMA over Prev/Raw).
         }
 
         /// <summary>Rasterize the submerged footprint of ONLY the reflector-flagged interactables into

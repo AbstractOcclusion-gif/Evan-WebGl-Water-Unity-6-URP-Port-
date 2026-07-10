@@ -28,6 +28,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #include "WaterWaves.hlsl"      // WaveHeight: wind-wave layer for the per-pixel waterline
         #include "WaterLargeWaves.hlsl" // LargeBodyWaveHeight: open-water swell/FFT; needs _WaveTime (above)
 
+        // LIVE post-transparent depth (includes the ZWrite-On water surface), handed over as a global by
+        // WaterUnderwaterFogPass. Sampling this instead of the opaque _CameraDepthTexture (captured BEFORE
+        // transparents, so no water) is what makes the underwater waterline follow the real waves.
+        TEXTURE2D_X(_WaterFogSceneDepth);
+
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
         float _OceanWorldWaves;     // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
@@ -54,9 +59,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of
         // (rayY - SurfaceHeightAtXZ) with a constant-step coarse scan and refine by bisection. Constant
         // step/iteration counts keep this fullscreen pass cheap and allocation-free.
-        #define UNDERWATER_CROSS_COARSE_STEPS 16
         #define UNDERWATER_CROSS_REFINE_ITERS 5
         #define WAVE_METERS_MIN 1e-3 // matches WindWaveSampleXZ's guard in WaterSurface.shader
+        // Crossing search: march the surface band with a FIXED WORLD STEP (constant, wave-scale resolution
+        // so a crest is never skipped or aliased) up to a step cap; beyond the cap - the far horizon, where
+        // waves are sub-pixel - fall back to the flat rest-plane waterline. Band = BAND_AMPS * swell
+        // amplitude + BAND_PAD metres (generous, to bracket crests + wind-wave chop).
+        #define UNDERWATER_CROSS_STEP_METRES 1.5
+        #define UNDERWATER_CROSS_MAX_STEPS   24
+        #define UNDERWATER_SURFACE_BAND_AMPS 3.0
+        #define UNDERWATER_SURFACE_BAND_PAD  2.0
 
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -71,7 +83,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
         float3 SceneWorldPos(float2 uv)
         {
-            float rawDepth = SampleSceneDepth(uv);
+            // Point-LOAD the live depth (no sampler needed, and depth must not interpolate across edges).
+            float rawDepth = LOAD_TEXTURE2D_X(_WaterFogSceneDepth, uint2(uv * _ScreenParams.xy)).r;
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
         }
 
@@ -148,16 +161,30 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 return;
             }
 
-            // Mixed: bracket the FIRST sign change from the camera outward with a constant-step scan.
+            // Mixed: the ray crosses the surface. March the SURFACE BAND (where the wavy surface can sit,
+            // [restY +- band]) from the camera side with a FIXED WORLD STEP, so the coarse resolution is
+            // constant and wave-scale regardless of ray length. A fractional whole-ray (or windowed) scan
+            // made each step tens of metres on grazing/horizon rays, which SKIPPED near crests (fog drawn
+            // ABOVE the waves) and aliased the crossing (dense-fog "lines"). Beyond the step cap - the far
+            // horizon, where waves are sub-pixel - fall back to the flat rest-plane waterline.
             float3 ray = sceneWorld - cam;
-            float dt = 1.0 / (float)UNDERWATER_CROSS_COARSE_STEPS;
-            float3 prev = cam;
-            float gapPrev = cam.y - camSurf;
-            float3 hit = sceneWorld; // fallback: treat the crossing as the scene end if none is bracketed
+            float rayLen = max(length(ray), 1e-4);
+            float3 dir = ray / rayLen;
+            float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4); // guard near-horizontal rays
+            float restY = _VolumeCenter.y;
+            float band = abs(_LargeWaveAmplitude) * UNDERWATER_SURFACE_BAND_AMPS + UNDERWATER_SURFACE_BAND_PAD;
+            float tFlat = (restY - cam.y) / dySafe;              // flat rest-plane crossing (ray parameter)
+            float tBand = band / max(abs(ray.y), 1e-4);          // half-band in ray-parameter units
+            float startDist = saturate(tFlat - tBand) * rayLen;  // skip the deep water below the band
+            float3 prev = cam + dir * startDist;
+            float gapPrev = SurfaceSignedGap(prev);
+            float3 hit = cam + ray * saturate(tFlat);            // fallback: flat waterline (far horizon)
             [loop]
-            for (int s = 1; s <= UNDERWATER_CROSS_COARSE_STEPS; s++)
+            for (int s = 1; s <= UNDERWATER_CROSS_MAX_STEPS; s++)
             {
-                float3 p = cam + ray * (s * dt);
+                float d = startDist + s * UNDERWATER_CROSS_STEP_METRES;
+                if (d >= rayLen) break;                          // reached the scene end
+                float3 p = cam + dir * d;
                 float gap = SurfaceSignedGap(p);
                 if (gapPrev * gap <= 0.0) { hit = RefineSurfaceCrossing(prev, gapPrev, p); break; }
                 prev = p; gapPrev = gap;
@@ -235,6 +262,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             depthAttenuation = DownwellingAttenuation(deepestY, surfaceRefY);
             return exp(-_WaterExtinction.rgb * (_WaterFogDensity * pathLen));
         }
+
+        // Interleaved-gradient dither (~+-0.5/255) added to the fog output to break the residual 8-bit
+        // banding dense fog shows on smooth gradients (the target is usually LDR on the mobile/WebGPU URP
+        // asset). Uses the screen pixel coordinate (SV_POSITION.xy).
+        float3 FogDither(float2 pixel)
+        {
+            float n = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+            return ((n - 0.5) / 255.0).xxx;
+        }
         ENDHLSL
 
         // ---- Pass 0: absorption + depth darkening (dst *= pathTrans * depthAtten) ----
@@ -252,7 +288,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             {
                 float3 depthAttenuation;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation);
-                return half4(pathTransmittance * depthAttenuation, 1.0);
+                return half4(pathTransmittance * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
         }
@@ -273,7 +309,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float3 depthAttenuation;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation);
                 float3 inscatter = _WaterFogColor.rgb * (1.0 - pathTransmittance);
-                return half4(inscatter * depthAttenuation, 1.0);
+                return half4(inscatter * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
         }

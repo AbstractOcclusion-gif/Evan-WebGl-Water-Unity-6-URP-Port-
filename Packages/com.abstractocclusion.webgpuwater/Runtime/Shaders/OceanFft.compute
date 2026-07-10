@@ -52,7 +52,9 @@ float  OceanFoamMinWind;      // m/s; no whitecaps below this wind speed
 float  OceanFoamCoverage;     // fold threshold: fresh = saturate(coverage - jacobian)
 float  OceanFoamStrength;     // accumulation gain per unit fold
 float  OceanFoamFadeRate;     // exponential decay rate per second (foam lingers, then fades)
-float  OceanFoamMax;          // soft ceiling on accumulated foam
+float  OceanFoamMax;          // soft ceiling on accumulated foam (Foam Max Buildup slider)
+float  OceanFoamSlowFadeFraction; // dense-foam decay as a fraction of the fade rate (Deposit slider: lower = more deposit)
+float  OceanFoamDriftFraction;    // downwind foam-drift speed as a fraction of wind speed (Drift slider)
 
 // --- CPU buoyancy height-field bake (increment 4) ---
 RWTexture2D<float> OceanHeightField; // camera-centred summed height (metres) for async CPU readback
@@ -75,6 +77,11 @@ float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveA
 #define OCEAN_SWELL_GAIN      2.0   // maps the swell-height knob to spectral energy (rough calibration)
 #define OCEAN_FOAM_ACCUM_RATE     5.0   // foam gained per second at full fold * strength (Crest-calibrated)
 #define OCEAN_FOAM_CASCADE1_DAMP  0.25  // cascade 1 carries only a little breaking detail (KWS quarters it)
+// Split decay (foam "deposit"): dense deposited foam lingers as windrows while thin lace fades fast. The
+// art fade-rate knob is the FAST (thin) rate; OceanFoamSlowFadeFraction (the Deposit slider) sets how
+// slowly dense foam decays relative to it, and OceanFoamDriftFraction rolls it downwind. DENSE_REFERENCE
+// is the accumulated-foam value treated as "fully dense" for the fast/slow blend.
+#define OCEAN_FOAM_DENSE_REFERENCE    0.6
 
 float2 OceanCMul(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 float2 OceanConj(float2 a) { return float2(a.x, -a.y); }
@@ -232,6 +239,25 @@ void FftVertical(uint3 id : SV_DispatchThreadID)
     OceanDisplacement[p] = float4(disp, 0.0);
 }
 
+// Manual bilinear read of the persistent foam history at a fractional tile-texel position, wrapping at
+// the cascade edge. The cascade tiles (periodic FFT), so the foam field is periodic and the back-trace
+// wraps seamlessly. Manual (not Sample) because the history is an r32f target - NOT hardware-filterable
+// on WebGPU - so a hardware sample would point-snap and make the advection blocky.
+float OceanFoamHistoryBilinear(float2 texelPos, uint slice, int N)
+{
+    float2 baseF = floor(texelPos);
+    float2 frac2 = texelPos - baseF;
+    int x0 = ((int)baseF.x % N + N) % N;
+    int y0 = ((int)baseF.y % N + N) % N;
+    int x1 = (x0 + 1) % N;
+    int y1 = (y0 + 1) % N;
+    float c00 = OceanFoamPrev[uint3(x0, y0, slice)];
+    float c10 = OceanFoamPrev[uint3(x1, y0, slice)];
+    float c01 = OceanFoamPrev[uint3(x0, y1, slice)];
+    float c11 = OceanFoamPrev[uint3(x1, y1, slice)];
+    return lerp(lerp(c00, c10, frac2.x), lerp(c01, c11, frac2.x), frac2.y);
+}
+
 // Surface normal + Jacobian foam from central differences of the spatial displacement (cascades tile,
 // so neighbour taps wrap). Decoupling the normal into its own cascade is what lets the fragment shader
 // sample crisp ripple detail per pixel later, independent of mesh tessellation.
@@ -271,11 +297,23 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)
     fresh *= (slice == 0u) ? 0.0 : ((slice == 1u) ? OCEAN_FOAM_CASCADE1_DAMP : 1.0);
     fresh *= (OceanWindSpeed > OceanFoamMinWind) ? 1.0 : 0.0;
 
-    // Temporal accumulation (framerate-independent, Crest-style): fade the previous foam exponentially,
-    // then add the fresh fold so whitecaps linger and decay instead of flickering per frame. Ping-ponged
-    // targets keep this WebGPU-safe - a half-float storage texture can't be read AND written in one pass.
-    float prevFoam = OceanFoamPrev[id] * OceanFoamHistoryValid;
-    float foam = prevFoam * saturate(1.0 - OceanFoamFadeRate * OceanFoamDeltaTime)
+    // Advection ("roll and deposit"): carry the persistent foam downwind and resample it, instead of
+    // pinning foam to the texel where the fold was born. Back-trace this texel by the wind-drift velocity
+    // (metres -> texels via 'step', the cascade's metres-per-texel) and bilinearly read last frame's foam
+    // there. The cascade tiles, so the periodic back-trace wraps seamlessly. Ping-ponged targets keep this
+    // WebGPU-safe - a storage texture can't be read AND written in one pass.
+    float driftSpeed = OceanWindSpeed * OceanFoamDriftFraction;                  // m/s downwind
+    float2 driftTexels = OceanWindDir * (driftSpeed * OceanFoamDeltaTime / step); // metres -> texels
+    float advectedFoam = OceanFoamHistoryBilinear(float2(id.xy) - driftTexels, slice, (int)N)
+                       * OceanFoamHistoryValid;
+
+    // Split decay + accumulation (framerate-independent, Crest-style): dense deposited foam lingers as
+    // windrows while thin lace fades fast, then add the fresh fold so whitecaps build up and streak
+    // instead of flickering per frame.
+    float slowFade = OceanFoamFadeRate * OceanFoamSlowFadeFraction;
+    float density = saturate(advectedFoam / OCEAN_FOAM_DENSE_REFERENCE);
+    float fadeRate = lerp(OceanFoamFadeRate, slowFade, density);
+    float foam = advectedFoam * saturate(1.0 - fadeRate * OceanFoamDeltaTime)
                + OCEAN_FOAM_ACCUM_RATE * OceanFoamStrength * OceanFoamDeltaTime * fresh;
     foam = min(foam, OceanFoamMax);
 

@@ -23,9 +23,14 @@ namespace AbstractOcclusion.WebGpuWater
             internal readonly float Coverage;      // fold threshold: fresh = saturate(coverage - jacobian)
             internal readonly float Strength;      // accumulation gain per unit fold
             internal readonly float FadeRate;      // exponential decay per second (lower = foam lingers)
-            internal FoamParams(float windThreshold, float coverage, float strength, float fadeRate)
+            internal readonly float SlowFadeFraction; // dense-foam decay as a fraction of FadeRate (deposit persistence)
+            internal readonly float DriftFraction;    // downwind roll speed as a fraction of wind speed
+            internal readonly float Max;              // accumulation ceiling (how dense deposits can pile up)
+            internal FoamParams(float windThreshold, float coverage, float strength, float fadeRate,
+                                float slowFadeFraction, float driftFraction, float max)
             {
                 WindThreshold = windThreshold; Coverage = coverage; Strength = strength; FadeRate = fadeRate;
+                SlowFadeFraction = slowFadeFraction; DriftFraction = driftFraction; Max = max;
             }
         }
 
@@ -50,13 +55,23 @@ namespace AbstractOcclusion.WebGpuWater
         const float PreviewGain = 8f; // TEMP (1c) debug-view display gain
         // Ocean whitecap foam internal calibration (NOT art knobs - the coverage/strength/fade/threshold
         // sliders live on the ocean WaterVolume and arrive via FoamParams). Named so there are no magic numbers.
-        const float FoamMax = 1f;            // soft ceiling on accumulated foam
         const float MaxFoamDeltaTime = 0.1f; // clamp dt so a frame hitch or pause can't over-accumulate foam
         // Camera-centred buoyancy height field: a small readback covering the near ocean where floaters
         // live. 256 m / 128 texels = 2 m per texel, enough for swell + medium waves under a boat.
         const int HeightFieldRes = 128;
         const float HeightFieldSize = 256f;
         const int MaxReadbackErrors = 8; // give up on async readback after this many consecutive errors
+        // Fog-gate extrapolation: the height readback is 1-2 frames stale, which lagged the underwater-fog
+        // on/off. Advance it to "now" using the FFT surface's own temporal velocity. Clamps keep a frame
+        // hitch or a noisy readback from spiking the gate height.
+        const float ReadbackExtrapolationMaxSeconds = 0.1f;     // clamp the forward window (seconds of wave time)
+        const float ReadbackExtrapolationMaxCorrection = 0.75f; // clamp |velocity * dt| in metres
+        // Forward-prediction of the submerge-gate height. OFF by default (0): now the fog waterline is
+        // per-pixel exact (live depth in WaterUnderwaterFog), the GATE no longer controls the boundary, so
+        // anticipating only arms the pass EARLY (linear extrapolation overshoots at crests = the "fog pops
+        // early" on entry). At 0 the gate uses the raw FFT readback (~1-2 frame stale) so it arms a touch
+        // LATE instead - far less noticeable. Raise toward 1 only to trade early-pop for less activation lag.
+        const float ReadbackExtrapolationGain = 0f;
 
         const string KernelSpectrumInit = "SpectrumInit";
         const string KernelSpectrumUpdate = "SpectrumUpdate";
@@ -106,6 +121,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamStrength = Shader.PropertyToID("OceanFoamStrength");
         static readonly int ID_FoamFadeRate = Shader.PropertyToID("OceanFoamFadeRate");
         static readonly int ID_FoamMax = Shader.PropertyToID("OceanFoamMax");
+        static readonly int ID_FoamSlowFade = Shader.PropertyToID("OceanFoamSlowFadeFraction");
+        static readonly int ID_FoamDrift = Shader.PropertyToID("OceanFoamDriftFraction");
 
         readonly ComputeShader _cs;
         readonly int _kInit, _kUpdate, _kFftH, _kFftV, _kNormal, _kBake, _kPreview;
@@ -134,6 +151,13 @@ namespace AbstractOcclusion.WebGpuWater
         int _readbackErrorStreak;
         Vector2 _bakedCenter, _pendingCenter, _sampledCenter; // region centre at bake / in-flight / landed
         float _bakedSize, _pendingSize, _sampledSize;
+        // Previous landed field + wave-time stamps, so the fog gate can extrapolate the stale readback
+        // forward using the surface's own temporal velocity (finite difference of the last two landings).
+        float[] _heightCpuPrev;
+        Vector2 _sampledCenterPrev;
+        float _sampledSizePrev;
+        float _bakedWaveTime, _pendingWaveTime, _sampledWaveTime, _prevWaveTime;
+        bool _hasPrevField;
 
         // The debug view shows the readable preview, not the raw signed displacement.
         internal RenderTexture DisplacementTexture => _preview;
@@ -382,7 +406,9 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FoamCoverage, foam.Coverage);
             _cs.SetFloat(ID_FoamStrength, foam.Strength);
             _cs.SetFloat(ID_FoamFadeRate, foam.FadeRate);
-            _cs.SetFloat(ID_FoamMax, FoamMax);
+            _cs.SetFloat(ID_FoamSlowFade, foam.SlowFadeFraction);
+            _cs.SetFloat(ID_FoamDrift, foam.DriftFraction);
+            _cs.SetFloat(ID_FoamMax, foam.Max);
 
             _cs.SetTexture(_kNormal, ID_Displacement, _displacement);
             _cs.SetTexture(_kNormal, ID_Normal, _normal);
@@ -395,6 +421,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Bake the camera-centred height field for CPU buoyancy readback.
             _bakedCenter = cameraXZ;
             _bakedSize = HeightFieldSize;
+            _bakedWaveTime = waveTime; // stamp so the fog gate can extrapolate the landed readback to "now"
             _cs.SetVector(ID_FieldCenter, new Vector4(cameraXZ.x, cameraXZ.y, 0f, 0f));
             _cs.SetFloat(ID_FieldSize, HeightFieldSize);
             _cs.SetInt(ID_FieldRes, HeightFieldRes);
@@ -427,6 +454,7 @@ namespace AbstractOcclusion.WebGpuWater
             _readbackInFlight = true;
             _pendingCenter = _bakedCenter;
             _pendingSize = _bakedSize;
+            _pendingWaveTime = _bakedWaveTime;
             AsyncGPUReadback.Request(_heightField, 0, TextureFormat.RFloat, _onHeightReadback);
         }
 
@@ -440,10 +468,21 @@ namespace AbstractOcclusion.WebGpuWater
             }
             _readbackErrorStreak = 0;
             var data = req.GetData<float>();
+            // Shift the current field to 'prev' (for the fog-gate velocity extrapolation) before overwriting.
+            // Swapping buffers reuses the arrays instead of allocating each landing.
+            if (_heightReady)
+            {
+                (_heightCpu, _heightCpuPrev) = (_heightCpuPrev, _heightCpu);
+                _sampledCenterPrev = _sampledCenter;
+                _sampledSizePrev = _sampledSize;
+                _prevWaveTime = _sampledWaveTime;
+                _hasPrevField = true;
+            }
             if (_heightCpu == null || _heightCpu.Length != data.Length) _heightCpu = new float[data.Length];
             data.CopyTo(_heightCpu);
             _sampledCenter = _pendingCenter;
             _sampledSize = _pendingSize;
+            _sampledWaveTime = _pendingWaveTime;
             _heightReady = true;
         }
 
@@ -476,7 +515,16 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
-        float SampleFieldBilinear(float u, float v)
+        float SampleFieldBilinear(float u, float v) => SampleFieldBilinearFrom(_heightCpu, u, v);
+
+        static bool TryFieldUV(Vector2 center, float size, float worldX, float worldZ, out float u, out float v)
+        {
+            u = (worldX - center.x) / size + 0.5f;
+            v = (worldZ - center.y) / size + 0.5f;
+            return u >= 0f && u <= 1f && v >= 0f && v <= 1f;
+        }
+
+        float SampleFieldBilinearFrom(float[] field, float u, float v)
         {
             int res = HeightFieldRes;
             float sx = Mathf.Clamp(u * res - 0.5f, 0f, res - 1f);
@@ -484,9 +532,35 @@ namespace AbstractOcclusion.WebGpuWater
             int x0 = (int)sx, z0 = (int)sz;
             int x1 = Mathf.Min(x0 + 1, res - 1), z1 = Mathf.Min(z0 + 1, res - 1);
             float tx = sx - x0, tz = sz - z0;
-            float b = Mathf.Lerp(_heightCpu[z0 * res + x0], _heightCpu[z0 * res + x1], tx);
-            float t = Mathf.Lerp(_heightCpu[z1 * res + x0], _heightCpu[z1 * res + x1], tx);
+            float b = Mathf.Lerp(field[z0 * res + x0], field[z0 * res + x1], tx);
+            float t = Mathf.Lerp(field[z1 * res + x0], field[z1 * res + x1], tx);
             return Mathf.Lerp(b, t, tz);
+        }
+
+        // Height at a world xz advanced from the 1-2 frame-stale readback to targetWaveTime using the FFT
+        // surface's OWN temporal velocity (finite difference of the last two landed fields, sampled at the
+        // same world point so camera motion doesn't leak in). Same surface the shader renders, so no
+        // analytic-vs-FFT mismatch that a CPU analytic height would introduce. Fog-gate only; buoyancy keeps
+        // the plain TrySampleField.
+        internal bool TrySampleHeightExtrapolated(float worldX, float worldZ, float targetWaveTime, out float height)
+        {
+            height = 0f;
+            if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
+            if (!TryFieldUV(_sampledCenter, _sampledSize, worldX, worldZ, out float u, out float v)) return false;
+            float hCurr = SampleFieldBilinearFrom(_heightCpu, u, v);
+            height = hCurr;
+
+            // No history yet, or the point is outside the previous region: return the plain (lagged) height.
+            if (!_hasPrevField || _heightCpuPrev == null || _sampledSizePrev <= 0f) return true;
+            if (!TryFieldUV(_sampledCenterPrev, _sampledSizePrev, worldX, worldZ, out float up, out float vp)) return true;
+
+            float dtField = _sampledWaveTime - _prevWaveTime;
+            if (dtField <= 1e-4f) return true; // identical stamps -> no reliable velocity
+            float velocity = (hCurr - SampleFieldBilinearFrom(_heightCpuPrev, up, vp)) / dtField;
+            float advance = Mathf.Clamp(targetWaveTime - _sampledWaveTime, 0f, ReadbackExtrapolationMaxSeconds);
+            float correction = velocity * advance * ReadbackExtrapolationGain;
+            height = hCurr + Mathf.Clamp(correction, -ReadbackExtrapolationMaxCorrection, ReadbackExtrapolationMaxCorrection);
+            return true;
         }
 
         void SetSharedUniforms(float windSpeed, float windHeadingRad, float swellWavelength, float swellHeight)
@@ -533,6 +607,8 @@ namespace AbstractOcclusion.WebGpuWater
             Release(ref _foamHistB);
             _hasLastDispatchTime = false;
             _heightReady = false;
+            _hasPrevField = false;
+            _heightCpuPrev = null;
             if (_butterfly != null)
             {
                 if (Application.isPlaying) Object.Destroy(_butterfly); else Object.DestroyImmediate(_butterfly);

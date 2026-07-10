@@ -8,6 +8,7 @@
 #pragma kernel Update
 #pragma kernel Normal
 #pragma kernel Obstacle
+#pragma kernel ObstacleSmooth
 #pragma kernel Foam
 #pragma kernel ReduceMean
 #pragma kernel ReduceMeanFinal
@@ -119,6 +120,15 @@ Texture2D<float4> ObstacleSolid;
 float _ObstacleReflect;         // 1 = reflection on
 float _ObstacleSolidThreshold;  // coverage above which a solid-mask cell reflects
 float _ObstacleRestDip;         // resting depression at solid cells (pool units); 0 = flat
+
+// Footprint temporal EMA (ObstacleSmooth kernel): curr = lerp(prev-smoothed, raw, blend). Low-passes
+// the frame-to-frame footprint so a moving object injects a few long clean waves instead of a dense
+// packet of tight rings. Done in compute because the equivalent fullscreen material pass did not run
+// on this URP/WebGPU backend. Dst is RFloat (r32) - the only RW storage format WebGPU guarantees.
+Texture2D<float4> ObstacleSmoothPrev;
+Texture2D<float4> ObstacleSmoothRaw;
+RWTexture2D<float> ObstacleSmoothDst;
+float _ObstacleTemporalBlend;   // EMA weight of the fresh footprint: 1 = no smoothing, ->0 = heavier
 
 // Foam buffer (R = foam amount per column). Advected/diffused, generated from
 // surface turbulence, and decayed over time. Separate ping-pong from the height.
@@ -327,6 +337,19 @@ void Obstacle(uint3 id : SV_DispatchThreadID)
     info.r += blurred * _ObstacleStrength;
 
     Dst[p] = info;
+}
+
+// Footprint temporal EMA: curr = lerp(prev-smoothed, raw, blend). Low-passes the footprint over time so
+// continuous bobbing/rotation noise becomes a few long clean waves rather than a dense packet of tight
+// rings. The wave equation is linear, so filtering the forcing's frequency content leaves the total
+// displaced volume intact. Runs in compute because the fullscreen material equivalent failed on WebGPU.
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ObstacleSmooth(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float prev = ObstacleSmoothPrev.Load(int3(p, 0)).r;
+    float raw  = ObstacleSmoothRaw.Load(int3(p, 0)).r;
+    ObstacleSmoothDst[p] = lerp(prev, raw, saturate(_ObstacleTemporalBlend));
 }
 
 // Advected foam: carried along the local surface flow (so it streaks with the
