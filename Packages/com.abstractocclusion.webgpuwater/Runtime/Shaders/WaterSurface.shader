@@ -31,11 +31,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // object/pool shaders so it's consistent however you view the water.
 
         [Header(Foam)]
-        _FoamTex ("Foam Pattern (optional, may be a flipbook)", 2D) = "white" {}
+        // Grid (1,1) = a single seamless TILING texture (hardware Repeat, like the ocean
+        // whitecap - assign any soft foam tile); a real grid = an animated flipbook whose
+        // cells are inset-sampled. Pattern world size comes from the WaterVolume's
+        // Foam Pattern Size (published as _FoamTileSize), not this texture's ST.
+        _FoamTex ("Foam Pattern (single tile or flipbook)", 2D) = "white" {}
         _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
         _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
-        _FoamNormalTex ("Foam Normal Map (same flipbook grid)", 2D) = "bump" {}
-        _FoamNormalStrength ("Foam Normal Strength", Range(0, 3)) = 1
+        // Relief is derived procedurally from the pattern (Crest-style finite differences,
+        // same as the ocean whitecap since its rework) - no foam normal map anymore;
+        // materials that still serialize _FoamNormalTex keep it as inert data.
+        _FoamNormalStrength ("Foam Relief Strength (procedural)", Range(0, 3)) = 1
 
         [Header(Ocean Wave Foam)]
         _OceanWhitecapTex ("Ocean Whitecap (single tiling texture)", 2D) = "white" {}
@@ -74,6 +80,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
             #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
+            #include "WaterHeroWave.hlsl"   // surfable breaking wave (base offset + overturning lip sheet)
             #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
 
             // Look constants local to this surface pass (single-use here).
@@ -103,13 +110,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #define FOAM_FLOW_RATE      0.5
             // Two-layer look: mask level where the dense core starts/saturates, softness
             // of the lace erosion edge, and how far the core is pushed toward plain white.
-            #define FOAM_CORE_START     0.55
+            // CORE_START sits high: the solid-white core is reserved for genuinely thick
+            // foam, so everyday ripple foam stays textured lace/flecks instead of big
+            // white patches (the sqrt-reach dissolve below carries the mid range).
+            #define FOAM_CORE_START     0.8
             #define FOAM_CORE_FULL      0.95
             #define FOAM_LACE_SOFTNESS  0.25
             #define FOAM_CORE_WHITEN    0.7
             // Pattern-erosion band for the core cut: wider than the lace band so the
             // core rim breaks into chunkier pieces than the thin filaments.
             #define FOAM_CORE_CUT_SOFTNESS 0.35
+            // Procedural foam relief (replaces the normal-map flipbook, like the whitecap):
+            // finite-difference tap offset in TILE-UV units (~4 texels of a 128px cell) and
+            // the gain mapping brightness gradient -> normal tilt.
+            #define FOAM_PROC_NORMAL_DELTA 0.03
+            #define FOAM_PROC_NORMAL_GAIN  2.0
+            // (Residual foam is controlled in the SIM: the Residual Foam slider blends the thin-
+            // foam survival rate toward the fresh rate, so leftovers decay away uniformly. A
+            // render-side slope gate was tried and rejected - modulating foam by live wave phase
+            // makes it pulse in rings, which reads as visually wrong.)
             // Foam lighting (FOAM_LIGHT_WRAP / FOAM_AMBIENT) lives in WaterFoamCommon.hlsl,
             // shared with FoamParticles/SplashParticles so every foam element shades alike.
             // Seen from BELOW, dense foam blocks the sky transmitted through the surface,
@@ -149,9 +168,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float2 _PatchPoolCenter;  // window centre in pool xz
             float2 _PatchPoolHalf;    // window half-size in pool units (per axis)
             float  _PatchDepthBias;   // view-space metres to pull the patch toward the camera so it wins over the coplanar far plane
-            // Unbounded-ocean clipmap: 1 = the camera-following radial mesh authored in WORLD metres
-            // (reaches the horizon), 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
+            // Unbounded-ocean clipmap: 1 = a camera-following world-locked geometry-clipmap LOD level
+            // (authored in INTEGER CELL UNITS, scaled to metres by the transform, reaching the horizon),
+            // 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
             float  _IsClipmap;
+            // Edge geomorph for a clipmap LOD level: in the outer band (Chebyshev cell distance from the
+            // level centre >= _ClipmapMorphStart) the vertex slides onto the next-coarser lattice (nearest
+            // EVEN cell) so it meets the coarser level vertex-for-vertex with no T-junction crack.
+            // _ClipmapMorphScale = 1 / band width (cells). Inert on the outermost level (start >= M/2).
+            float  _ClipmapMorphStart;
+            float  _ClipmapMorphScale;
+            // Hero-wave lip sheet: 1 = the dense strip mesh WaterHeroWave spawns (rides the clipmap
+            // world-metre mapping, adds the overturning curl, discards outside the curl region).
+            // Inert at the default (_IsHeroWave = 0).
+            float  _IsHeroWave;
             // 1 = sample the small wind-wave layer in WORLD metres (oceans), so its scale is independent
             // of the volume extent; 0 = pool space (bounded bodies, unchanged). Inert at the default.
             float  _OceanWorldWaves;
@@ -209,20 +239,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // is an optional per-material pattern (defaults white = flat foam).
             sampler2D _FoamMask;
             sampler2D _FoamTex;
-            sampler2D _FoamNormalTex; // relief matching _FoamTex frame-for-frame (raw RGB encode)
             // Dedicated ocean wave-foam (whitecap) slots: a single seamless TILING texture (not a flipbook
             // atlas) + its raw-RGB relief normal, sampled only by the FFT-ocean whitecap path. Defaults
             // (white / bump) keep the look unchanged when unassigned. Decoupled from _FoamTex so the ocean
             // whitecap and the interactive/shoreline foam can be art-directed independently.
             sampler2D _OceanWhitecapTex;
-            float4 _FoamTex_ST;
             // Auto-populated by Unity as (1/w, 1/h, w, h). Drives the flipbook half-texel inset that
             // stops bilinear filtering bleeding across cell/tile edges.
             float4 _FoamTex_TexelSize;
-            float4 _FoamNormalTex_TexelSize;
-            float4 _FoamTexFrames; // (cols, rows) of the flipbook grid; (1,1) = plain texture
+            float4 _FoamTexFrames; // (cols, rows) of the flipbook grid; (1,1) = plain tiling texture
             float  _FoamTexFPS;
             float  _FoamNormalStrength;
+            // WORLD metres per foam-pattern tile (published per body: Foam Pattern Size). The pattern
+            // is sampled in world space, so its scale is independent of the body extent (no more
+            // "pattern rides the pool size") and world-anchored on windowed bodies (no more pattern
+            // swimming with the camera window).
+            float  _FoamTileSize;
             float4 _FoamColor;
             float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
             // Mask level over which the foam layer fades in from nothing (edge
@@ -343,37 +375,32 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             }
 
             // Foam pattern with frame advance + crossfade: the foam churns internally
-            // even where the mask is static.
+            // even where the mask is static. Grid (1,1) = a single seamless TILING texture:
+            // plain hardware-wrap sample (like the ocean whitecap) - the flipbook cell inset
+            // would break a seamless tile's edges, and there are no frames to crossfade.
+            // Explicit gradients keep both paths valid in divergent control flow.
             float3 SampleFoamPattern(float2 uv)
             {
                 float2 cellA, cellB, grid; float blend;
                 FoamFlipbookFrames(cellA, cellB, grid, blend);
+                if (grid.x * grid.y <= 1.0)
+                    return tex2Dgrad(_FoamTex, uv, ddx(uv), ddy(uv)).rgb;
                 float3 a = SampleFlipbookCell(_FoamTex, uv, cellA, grid, _FoamTex_TexelSize.xy).rgb;
                 float3 b = SampleFlipbookCell(_FoamTex, uv, cellB, grid, _FoamTex_TexelSize.xy).rgb;
                 return lerp(a, b, blend);
             }
 
-            // Tangent-plane tilt (xy) of the foam relief. The map is raw-RGB encoded
-            // (n * 0.5 + 0.5) and imported LINEAR - deliberately NOT a Unity "Normal map"
-            // import, so the decode is identical on every backend. Default "bump" decodes
-            // to zero tilt, so materials without the map are unaffected.
-            float2 SampleFoamNormalTilt(float2 uv)
-            {
-                float2 cellA, cellB, grid; float blend;
-                FoamFlipbookFrames(cellA, cellB, grid, blend);
-                float2 a = SampleFlipbookCell(_FoamNormalTex, uv, cellA, grid, _FoamNormalTex_TexelSize.xy).rg * 2.0 - 1.0;
-                float2 b = SampleFlipbookCell(_FoamNormalTex, uv, cellB, grid, _FoamNormalTex_TexelSize.xy).rg * 2.0 - 1.0;
-                return lerp(a, b, blend);
-            }
-
             // Shared foam evaluation for BOTH sides of the surface. Pattern: tiled/flipbook
             // texture dragged along the local flow; two half-offset phases cross-faded by a
-            // seesaw weight give endless drift with no visible reset. Layers: dense white
-            // core where the mask is thick; as it thins the pattern's dark regions erode
-            // away first, so decaying foam breaks into filaments instead of ghosting out.
-            // Tilt: the relief normal, sampled at the SAME phases/frames, scaled by the
-            // mask so sparse foam doesn't dent the shading.
-            void EvaluateFoam(float2 fuv, float2 flowXZ, float mask,
+            // seesaw weight give endless drift with no visible reset. A rotated, rescaled
+            // second octave fades in with camera distance (the ocean whitecap's anti-tiling)
+            // so the pattern's repeat stops reading as a grid. Layers: dense white core
+            // where the mask is thick; as it thins the pattern's dark regions erode away
+            // first, so decaying foam breaks into filaments instead of ghosting out.
+            // Tilt: PROCEDURAL relief from finite differences of the pattern (Crest-style,
+            // matching the ocean whitecap - no normal map), scaled by the mask so sparse
+            // foam doesn't dent the shading.
+            void EvaluateFoam(float2 fuv, float2 flowXZ, float mask, float camDist,
                               out float3 pattern, out float core, out float lace,
                               out float alpha, out float2 tilt)
             {
@@ -381,18 +408,40 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 float phaseA = frac(_Time.y * FOAM_FLOW_RATE);
                 float phaseB = frac(phaseA + 0.5);
                 float seesaw = abs(phaseA * 2.0 - 1.0);
-                pattern = lerp(SampleFoamPattern(fuv - flowDir * phaseA),
-                               SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+                float2 uvA = fuv - flowDir * phaseA;
+                float3 baseA = SampleFoamPattern(uvA);
+                pattern = lerp(baseA, SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+
+                // Distance anti-tiling, same recipe as SampleOceanWhitecapPattern: min() of a
+                // rotated second octave keeps foam only where BOTH octaves agree, breaking the
+                // repeat into irregular shapes toward the distance.
+                float octaveBlend = saturate(camDist / OCEAN_WHITECAP_OCTAVE_BLEND_DIST);
+                if (octaveBlend > 0.0)
+                {
+                    float2 rotated = float2(
+                        fuv.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - fuv.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
+                        fuv.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + fuv.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS)
+                        / OCEAN_WHITECAP_OCTAVE2_SCALE;
+                    float3 octave1 = SampleFoamPattern(rotated - flowDir * phaseA);
+                    pattern = lerp(pattern, min(pattern, octave1), octaveBlend);
+                }
 
                 core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
-                lace = saturate((pattern.r - (1.0 - mask)) / FOAM_LACE_SOFTNESS);
+                // Dissolve threshold with sqrt REACH (the KWS law the whitecap path already
+                // uses): a THIN mask reaches high into the pattern, so light foam shows as a
+                // few bright FLECKS tracking the ripple crests instead of nothing-then-blob.
+                // (The old linear 1-mask threshold could exceed a midtone texture's maximum,
+                // so thin foam vanished entirely and moderate foam jumped to solid patches.)
+                float reach = sqrt(saturate(mask));
+                float laceThreshold = 1.0 - reach;
+                lace = saturate((pattern.r - laceThreshold) / FOAM_LACE_SOFTNESS);
 
                 // Core cut (user-tunable): erode the dense core's alpha by the pattern -
                 // same trick as the lace, wider band - so the core rim breaks into
                 // texture detail instead of ending in a smooth mask blob. 0 = solid core
                 // (original look). Even at full cut the lace term below keeps the
                 // saturated centre near-solid; only the darkest pattern texels open up.
-                float coreCut = saturate((pattern.r - (1.0 - mask)) / FOAM_CORE_CUT_SOFTNESS);
+                float coreCut = saturate((pattern.r - laceThreshold) / FOAM_CORE_CUT_SOFTNESS);
                 float coreAlpha = core * lerp(1.0, coreCut, _FoamCoreCut);
 
                 // Edge feathering (user-tunable): fade the layer out smoothly as the
@@ -400,10 +449,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // edge, the original look). Core is untouched by construction: it only
                 // exists above FOAM_CORE_START, well over any sensible feather band.
                 float feather = (_FoamFeather > 0.0) ? smoothstep(0.0, _FoamFeather, mask) : 1.0;
-                alpha = max(coreAlpha, lace * mask) * feather;
+                // The reach term doubles as the fleck weight: thin-mask flecks stay readable
+                // without linear dimming forcing the strength slider up into blob territory.
+                alpha = max(coreAlpha, lace * reach) * feather;
 
-                tilt = lerp(SampleFoamNormalTilt(fuv - flowDir * phaseA),
-                            SampleFoamNormalTilt(fuv - flowDir * phaseB), seesaw)
+                // Procedural relief (Crest MultiScaleFoamNormal): brightness reads as bubble
+                // height, so the negated finite-difference gradient tilts the shading normal
+                // away from raised foam. Taken at phase A of the base octave (relief slightly
+                // lagging the crossfade is imperceptible; the offsets stay consistent).
+                float rx = SampleFoamPattern(uvA + float2(FOAM_PROC_NORMAL_DELTA, 0.0)).r;
+                float rz = SampleFoamPattern(uvA + float2(0.0, FOAM_PROC_NORMAL_DELTA)).r;
+                tilt = -FOAM_PROC_NORMAL_GAIN * float2(rx - baseA.r, rz - baseA.r)
                      * (_FoamNormalStrength * mask);
             }
 
@@ -454,6 +510,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 float2 largeWaveSourceXZ : TEXCOORD3; // undisplaced world xz of the open-water wave,
                                                       // so the fragment normal reads the SOURCE point
                                                       // (not the chop-displaced worldPos)
+                float4 heroSheet : TEXCOORD4; // hero-wave lip sheet: xyz = geometric normal (world),
+                                              // w = curl weight (0 = discard: base surface owns it).
+                                              // Only meaningful when _IsHeroWave = 1.
             };
 
             // Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). Bounded bodies sample in
@@ -481,7 +540,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 float3 worldFlat;
                 if (_IsClipmap > 0.5)
                 {
-                    float3 worldOnPlane = mul(unity_ObjectToWorld, float4(v.vertex.xyz, 1.0)).xyz;
+                    // Edge geomorph: in the outer band, slide the vertex onto the next-coarser lattice
+                    // (nearest EVEN cell) so this LOD level meets the coarser one crack-free. v.vertex.xz
+                    // are this level's integer cell indices; the transform scales them to world metres.
+                    float2 cell = v.vertex.xz;
+                    float cheb = max(abs(cell.x), abs(cell.y));
+                    float morph = saturate((cheb - _ClipmapMorphStart) * _ClipmapMorphScale);
+                    float2 morphedCell = lerp(cell, round(cell * 0.5) * 2.0, morph);
+                    float3 worldOnPlane = mul(unity_ObjectToWorld, float4(morphedCell.x, 0.0, morphedCell.y, 1.0)).xyz;
                     worldFlat = float3(worldOnPlane.x, _VolumeCenter.y, worldOnPlane.z); // resting plane
                     poolFlat = WorldToPool(worldFlat);
                     poolFlat.y = 0.0;
@@ -523,6 +589,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // camera distance - no-op for bounded bodies (_LargeWaveDetailSlope = 0).
                     worldPos.y  += LargeBodyWaveHeight(sourceXZ) * swellAtten;
                     worldPos.xz += LargeBodyWaveDisplacement(sourceXZ) * swellAtten; // 0 when choppiness = 0
+                }
+                // Hero wave (surfable breaking wave). BASE offset on every open-water vertex, so the
+                // ocean itself rises/leans/collapses with the wave (one surface, no flat plane under
+                // it); the strip mesh (_IsHeroWave) evaluates the FULL curled surface instead and
+                // carries its geometric normal + curl weight to the fragment. NOT multiplied by the
+                // swell shoal factor - the hero wave IS the shoaling product. Inert when inactive.
+                o.heroSheet = float4(0.0, 1.0, 0.0, 0.0);
+                if (_HeroWaveActive > 0.5)
+                {
+                    float heroWeight;
+                    if (_IsHeroWave > 0.5)
+                    {
+                        worldPos += HeroWaveOffset(o.largeWaveSourceXZ, true, heroWeight);
+                        o.heroSheet = float4(HeroSheetNormal(o.largeWaveSourceXZ), heroWeight);
+                    }
+                    else
+                    {
+                        worldPos += HeroWaveOffset(o.largeWaveSourceXZ, false, heroWeight);
+                    }
                 }
                 o.worldPos = worldPos;
                 // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
@@ -570,7 +655,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // the analytic floor caustic (a soft multiply), NOT to draw crisp shadows. Returns 1 (lit)
             // when shadows are off/unsupported, so the caustic falls back to its legacy look. ----
 #if defined(_MAIN_LIGHT_SHADOWS) || defined(_MAIN_LIGHT_SHADOWS_CASCADE)
-            sampler2D _MainLightShadowmapTexture;
+            // The shadow map is a DEPTH texture; URP binds a COMPARISON sampler for it. This pass does its
+            // own hard depth compare (below), so it needs the raw depth, not hardware comparison. Declaring
+            // it as a plain sampler2D made WebGPU bind URP's comparison sampler to a non-comparison slot
+            // (validation error -> the whole WaterSurface bind group is invalid -> black screen in builds).
+            // Read it as a Texture2D with an explicit NON-comparison point sampler instead.
+            Texture2D _MainLightShadowmapTexture;
+            SamplerState sampler_PointClamp; // Unity inline sampler: point filter, clamp wrap (non-comparison)
             float4x4  _MainLightWorldToShadow[5];
             float4    _CascadeShadowSplitSpheres0;
             float4    _CascadeShadowSplitSpheres1;
@@ -595,7 +686,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 c.xyz /= c.w;
                 if (c.z <= 0.0 || c.z >= 1.0) return 1.0; // outside the atlas -> treat as lit
 
-                float occluder = tex2Dlod(_MainLightShadowmapTexture, float4(c.xy, 0.0, 0.0)).r;
+                float occluder = _MainLightShadowmapTexture.SampleLevel(sampler_PointClamp, c.xy, 0.0).r;
                 // In shadow when the fragment is FARTHER from the light than the stored occluder.
             #if defined(UNITY_REVERSED_Z)
                 float lit = c.z < occluder ? 0.0 : 1.0;
@@ -653,6 +744,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 frag(v2f i) : SV_Target
             {
+                // Hero-wave strip: only the overturning lip sheet survives; everywhere else the base
+                // ocean surface (patch/clipmap, carrying the hero BASE offset) already renders the
+                // wave, so the strip discards to avoid a coplanar double surface.
+                if (_IsHeroWave > 0.5 && i.heroSheet.w < HERO_SHEET_MIN_WEIGHT) discard;
+
                 float fade;
                 float4 info = SampleRipple(i.position, i.worldPos, fade);
 
@@ -683,6 +779,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
                 if (_LargeBody > 0.5)
                     normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
+                // Hero wave: tilt by the base wave slope everywhere (matches the base vertex offset);
+                // on the lip sheet, blend toward its interpolated geometric normal by curl weight so
+                // the overturned surface shades correctly while its foot inherits the detailed normal.
+                if (_HeroWaveActive > 0.5)
+                {
+                    normal = ApplyHeroWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
+                    if (_IsHeroWave > 0.5)
+                        normal = normalize(lerp(normal, i.heroSheet.xyz, saturate(i.heroSheet.w)));
+                }
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
 
                 if (_Underwater > 0.5)
@@ -735,9 +840,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                         if (mask > FOAM_MASK_EPSILON)
                         {
-                            float2 fuv = fcoord * _FoamTex_ST.xy + _FoamTex_ST.zw + normal.xz * FOAM_NORMAL_NUDGE;
+                            // Same world-space pattern UV as the above-water side.
+                            float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+                                       + normal.xz * FOAM_NORMAL_NUDGE;
+                            float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
                             float3 pattern; float core, lace, foamAlpha; float2 tilt;
-                            EvaluateFoam(fuv, nxz, mask, pattern, core, lace, foamAlpha, tilt);
+                            EvaluateFoam(fuv, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
 
                             // Applied BEFORE the downwelling dim below, so the silhouette
                             // and its glow fade with eye depth like the rest of the scene.
@@ -914,9 +1022,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // ---- Interactive/pond foam look: advected buffer + shoreline border + contact ----
                     if (_FoamEnabled > 0.5)
                     {
-                        // Windowed bodies read the foam buffer in the window frame too.
+                        // Windowed bodies read the foam buffer in the window frame too - at the
+                        // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
+                        // worldPos misses foam under horizontally-displaced geometry: the hero wave's
+                        // crest is thrown metres forward by lean + curl, so its fragments were reading
+                        // the buffer ahead of where the lip foam was injected (empty crest head). FFT
+                        // chop caused the same error at a smaller, invisible scale.
+                        float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
                         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
-                                                             : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
+                                                             : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
                         float advected = SampleFoamMaskBilinear(fcoord);
 
                         // shoreline foam against the pool walls (whole-body only; a window has no walls)
@@ -939,9 +1053,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                         if (mask > FOAM_MASK_EPSILON)
                         {
-                            float2 fuv = fcoord * _FoamTex_ST.xy + _FoamTex_ST.zw + normal.xz * FOAM_NORMAL_NUDGE;
+                            // WORLD-space pattern UV (like the ocean whitecap): scale set by the
+                            // body's Foam Pattern Size, independent of extent, anchored under a
+                            // scrolling window; nudged by the surface tilt so foam rides ripples.
+                            float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+                                       + normal.xz * FOAM_NORMAL_NUDGE;
+                            float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
                             float3 pattern; float core, lace, foamAlpha; float2 tilt;
-                            EvaluateFoam(fuv, nxz, mask, pattern, core, lace, foamAlpha, tilt);
+                            EvaluateFoam(fuv, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
 
                             // ---- Foam relief: tilt the lighting normal by the foam's own
                             // normal map so the lace shades three-dimensionally. ----
@@ -991,7 +1110,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
                         outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
                     }
-
                     // ---- Exclusive foam composite (looks evaluated above, before the reflection
                     // composite, so the combined coverage could matte the specular): ONE write into
                     // outColor, after the shoreline gradient so foam sits over it. Coverage is the max of the

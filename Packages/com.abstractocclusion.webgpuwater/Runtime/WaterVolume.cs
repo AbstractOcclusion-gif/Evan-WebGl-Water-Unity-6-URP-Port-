@@ -138,12 +138,11 @@ namespace AbstractOcclusion.WebGpuWater
             public bool unboundedOcean = false;
 
             [Header("Ocean clipmap (unbounded open water)")]
-            [Tooltip("Concentric rings in the radial clipmap mesh. More = denser far-field / smoother swell, " +
-                     "at more vertices.")]
-            [Min(ClipmapMinRings)] public int clipmapRings = DefaultClipmapRings;
-            [Tooltip("Vertices per ring. More = rounder rings, at more vertices.")]
-            [Min(ClipmapMinSegments)] public int clipmapSegments = DefaultClipmapSegments;
-            [Tooltip("Radius (metres) of the outermost ring: push near the camera far plane to reach the horizon.")]
+            [Tooltip("Cells per side of each geometry-clipmap LOD level (even). Higher = finer far-field " +
+                     "tessellation and less wave 'swim' when the camera moves, at more vertices.")]
+            [Min(ClipmapMinGridResolution)] public int clipmapGridResolution = DefaultClipmapGridResolution;
+            [Tooltip("Target horizon reach (metres) of the outermost LOD level: the number of levels is " +
+                     "derived so the ocean reaches at least this far. Drives the camera far plane too.")]
             [Min(ClipmapMinRadius)] public float clipmapOuterRadius = DefaultClipmapOuterRadius;
             [Tooltip("Far-field band-limit: how fast the shortest DRAWN wavelength grows with camera distance " +
                      "(metres of wavelength per metre of distance). Keeps the long rolling swell out to the " +
@@ -226,8 +225,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float swellHeight => ocean.swellHeight;
         internal float swellWavelength => ocean.swellWavelength;
         internal bool unboundedOcean => ocean.unboundedOcean;
-        internal int clipmapRings => ocean.clipmapRings;
-        internal int clipmapSegments => ocean.clipmapSegments;
+        internal int clipmapGridResolution => ocean.clipmapGridResolution;
         internal float clipmapOuterRadius => ocean.clipmapOuterRadius;
         internal float oceanDetailFalloff => ocean.oceanDetailFalloff;
         internal float horizonFadeDistance => ocean.horizonFadeDistance;
@@ -258,8 +256,6 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector, FormerlySerializedAs("swellHeight")] float _legacySwellHeight = 0f;
         [SerializeField, HideInInspector, FormerlySerializedAs("swellWavelength")] float _legacySwellWavelength = DefaultSwellWavelength;
         [SerializeField, HideInInspector, FormerlySerializedAs("unboundedOcean")] bool _legacyUnboundedOcean = false;
-        [SerializeField, HideInInspector, FormerlySerializedAs("clipmapRings")] int _legacyClipmapRings = DefaultClipmapRings;
-        [SerializeField, HideInInspector, FormerlySerializedAs("clipmapSegments")] int _legacyClipmapSegments = DefaultClipmapSegments;
         [SerializeField, HideInInspector, FormerlySerializedAs("clipmapOuterRadius")] float _legacyClipmapOuterRadius = DefaultClipmapOuterRadius;
         [SerializeField, HideInInspector, FormerlySerializedAs("oceanDetailFalloff")] float _legacyOceanDetailFalloff = DefaultOceanDetailFalloff;
         [SerializeField, HideInInspector, FormerlySerializedAs("horizonFadeDistance")] float _legacyHorizonFadeDistance = 0f;
@@ -333,15 +329,18 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultLargeGodRayAnisotropy = 0.6f;
         const float DefaultLargeGodRayCausticStrength = 4f;
 
-        // Ocean clipmap guard rails (mirror LargeWaterClipmap's) + defaults. Inner ring dense for
-        // near-field chop/ripples; outer ring near the far plane to reach the horizon.
-        const int DefaultClipmapRings = 48;
-        const int DefaultClipmapSegments = 96;
+        // Geometry-clipmap authoring + guard rails. Grid resolution = cells per side of each LOD level;
+        // the level count is derived so the outermost reaches clipmapOuterRadius (the horizon target).
+        const int DefaultClipmapGridResolution = 64;
+        const int ClipmapMinGridResolution = 8;
+        const int ClipmapMaxLevels = 12;
+        const int ClipmapMinLevels = 2;
+        const int ClipmapSnapCellMultiple = 2;    // each level snaps to 2*cell so its even cells align with the coarser level
+        const int ClipmapHoleMarginCells = 2;     // shrink each level's hole so it overlaps the finer level (no seam gap)
+        const float ClipmapMorphBandFraction = 0.5f; // fraction of the annulus half-width used for the edge geomorph
         const float DefaultClipmapOuterRadius = 10000f;
         const float DefaultOceanDetailFalloff = 0.03f; // low: the clipmap resolves waves far out, so the
                                                        // swell rolls near to the horizon before band-limiting
-        const int ClipmapMinRings = 2;
-        const int ClipmapMinSegments = 3;
         const float ClipmapMinRadius = 1e-3f;
         // The clipmap's central hole is set a little INSIDE the near-field patch so the patch (which
         // carries a depth bias) covers the seam; beyond the patch, only the clipmap draws.
@@ -354,6 +353,30 @@ namespace AbstractOcclusion.WebGpuWater
         // opt-in flag, AND the sim window (its ripple fade is what keeps the far field clean). Bounded
         // lakes / pools are always false, so their render path is untouched.
         internal bool IsOceanClipmap => openWater && unboundedOcean && _windowed;
+
+        // --- Derived geometry-clipmap dimensions (all pure functions of the two authored knobs:
+        //     clipmapGridResolution and clipmapOuterRadius, plus the shared patch extent). ---
+        // Cells per side, clamped and forced even (the annulus needs a symmetric hole).
+        int ClipmapGridRes { get { int m = Mathf.Max(ClipmapMinGridResolution, clipmapGridResolution); return m + (m & 1); } }
+        // Hole half-width in cells, shrunk by the overlap margin so each level overlaps the finer one.
+        int ClipmapHoleHalfCells => Mathf.Max(1, ClipmapGridRes / 4 - ClipmapHoleMarginCells);
+        // Finest cell size (metres) so the innermost level's hole sits just inside the near-field patch.
+        float ClipmapBaseCell => (ClipmapPatchOverlap * SimHorizontalExtent) / ClipmapHoleHalfCells;
+        // Level 0's outer reach (metres); each further level doubles it.
+        float ClipmapLevel0Reach => (ClipmapGridRes / 2f) * ClipmapBaseCell;
+        // Levels needed for the outermost to reach at least the horizon target.
+        int ClipmapLevelCount
+        {
+            get
+            {
+                float ratio = Mathf.Max(1f, clipmapOuterRadius / Mathf.Max(ClipmapLevel0Reach, 1e-3f));
+                int levels = 1 + Mathf.CeilToInt(Mathf.Log(ratio, 2f));
+                return Mathf.Clamp(levels, ClipmapMinLevels, ClipmapMaxLevels);
+            }
+        }
+        // World reach of the outermost level - drives the camera far plane so the horizon isn't clipped.
+        float ClipmapOuterReach => ClipmapLevel0Reach * Mathf.Pow(2f, ClipmapLevelCount - 1);
+
         // Band-limit slope for the shader. 0 for non-ocean bodies -> no band-limit -> the bounded
         // open-water surface keeps its full spectrum everywhere (unchanged).
         internal float OceanDetailSlope => IsOceanClipmap ? oceanDetailFalloff : 0f;
@@ -870,8 +893,6 @@ namespace AbstractOcclusion.WebGpuWater
             ocean.swellHeight = _legacySwellHeight;
             ocean.swellWavelength = _legacySwellWavelength;
             ocean.unboundedOcean = _legacyUnboundedOcean;
-            ocean.clipmapRings = _legacyClipmapRings;
-            ocean.clipmapSegments = _legacyClipmapSegments;
             ocean.clipmapOuterRadius = _legacyClipmapOuterRadius;
             ocean.oceanDetailFalloff = _legacyOceanDetailFalloff;
             ocean.horizonFadeDistance = _legacyHorizonFadeDistance;
@@ -921,7 +942,6 @@ namespace AbstractOcclusion.WebGpuWater
             foamSettings.foam = _legacyFoam;
             foamSettings.foamGenRate = _legacyFoamGenRate;
             foamSettings.foamDecay = _legacyFoamDecay;
-            foamSettings.foamDecayResidual = _legacyFoamDecayResidual;
             foamSettings.foamDecayRate = _legacyFoamDecayRate;
             foamSettings.foamSpread = _legacyFoamSpread;
             foamSettings.foamAdvect = _legacyFoamAdvect;
@@ -1127,12 +1147,26 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.05f, 4f)] public float foamDecayRate = 1f;
             [Tooltip("Diffusion of foam toward neighbours.")]
             [Range(0f, 1f)] public float foamSpread = 0.2f;
+            [Tooltip("Activity level below which NO foam forms: small waves are too weak to break, " +
+                     "so they pass without leaving foam. Raise until gentle ripples stay clean and " +
+                     "only wakes/splashes/breaking waves foam. 0 = every motion foams (old look).")]
+            [Range(0f, 1f)] public float foamGenThreshold = 0.15f;
+            [Tooltip("WORLD wave height (metres) below which NO foam forms. Kills the noise foam: " +
+                     "short interference wavelets between real wavefronts have high curvature but no " +
+                     "height, so without this gate they out-foam the actual waves. Raise until only " +
+                     "waves of real size foam.")]
+            [Range(0f, 0.2f)] public float foamMinWaveHeight = 0.01f;
             [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
             [Range(0f, 8f)] public float foamAdvect = 3f;
             public float foamFromSpeed = 6f;
             public float foamFromCurvature = 30f;
             [Space]
             public Color foamColor = Color.white;
+            [Tooltip("WORLD size (metres) of one foam-pattern tile. The pattern is sampled in world " +
+                     "space (like the ocean whitecap), so its scale no longer rides the body extent " +
+                     "and stays put on windowed bodies. A rotated second octave fades in with " +
+                     "distance to hide the repeat.")]
+            [Min(0.25f)] public float foamPatternSize = 2f;
             [Range(0f, 2f)] public float foamStrength = 1f;
             [Tooltip("Softness of the foam edges: mask level over which foam fades in from nothing. 0 = hard edges (no feathering).")]
             [Range(0f, 0.5f)] public float foamFeather = 0.15f;
@@ -1150,13 +1184,16 @@ namespace AbstractOcclusion.WebGpuWater
         bool foam => foamSettings.foam;
         internal float foamGenRate => foamSettings.foamGenRate;
         internal float foamDecay => foamSettings.foamDecay;
-        internal float foamDecayResidual => foamSettings.foamDecayResidual;
         internal float foamDecayRate => foamSettings.foamDecayRate;
+        internal float foamGenThreshold => foamSettings.foamGenThreshold;
+        internal float foamMinWaveHeight => foamSettings.foamMinWaveHeight;
+        internal float foamDecayResidual => foamSettings.foamDecayResidual;
         internal float foamSpread => foamSettings.foamSpread;
         internal float foamAdvect => foamSettings.foamAdvect;
         internal float foamFromSpeed => foamSettings.foamFromSpeed;
         internal float foamFromCurvature => foamSettings.foamFromCurvature;
         internal Color foamColor => foamSettings.foamColor;
+        internal float foamPatternSize => foamSettings.foamPatternSize;
         internal float foamStrength => foamSettings.foamStrength;
         internal float foamFeather => foamSettings.foamFeather;
         internal float foamCoreCut => foamSettings.foamCoreCut;
@@ -1170,7 +1207,6 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector, FormerlySerializedAs("foam")] bool _legacyFoam = false;
         [SerializeField, HideInInspector, FormerlySerializedAs("foamGenRate")] float _legacyFoamGenRate = 0.6f;
         [SerializeField, HideInInspector, FormerlySerializedAs("foamDecay")] float _legacyFoamDecay = 0.96f;
-        [SerializeField, HideInInspector, FormerlySerializedAs("foamDecayResidual")] float _legacyFoamDecayResidual = 0.993f;
         [SerializeField, HideInInspector, FormerlySerializedAs("foamDecayRate")] float _legacyFoamDecayRate = 1f;
         [SerializeField, HideInInspector, FormerlySerializedAs("foamSpread")] float _legacyFoamSpread = 0.2f;
         [SerializeField, HideInInspector, FormerlySerializedAs("foamAdvect")] float _legacyFoamAdvect = 3f;
@@ -1303,21 +1339,31 @@ namespace AbstractOcclusion.WebGpuWater
         MaterialPropertyBlock _patchUnderMpb;
         const string PatchUnderObjectName = "Sim Window Patch (under)";
 
-        // Camera-following clipmap surface for unbounded open-water (ocean) bodies: a radial ring mesh
-        // authored in world metres that reaches the horizon. Reuses THIS body's surface material; the
-        // _IsClipmap flag rides its own property block (so it never leaks onto the pool-grid renderers).
-        Renderer _clipmapRenderer;
-        Mesh _clipmapMesh;
-        MaterialPropertyBlock _clipmapMpb;
+        // Camera-following clipmap surface for unbounded open-water (ocean) bodies: a WORLD-LOCKED
+        // geometry clipmap (see LargeWaterClipmap). One shared uniform-grid template is drawn as N nested
+        // LOD levels; each level scales the template to its cell size and SNAPS its centre to that level's
+        // own world lattice, so its vertices never slide under the world-space waves as the camera follows
+        // (the "swim" the old radial mesh suffered). The _IsClipmap flag + per-level morph uniforms ride
+        // each level's property block, so nothing leaks onto the pool-grid renderers. An underside twin
+        // per level (opposite cull, same material family as the bounded under-surface) reaches the horizon
+        // for the submerged view; its centre hole is filled by the near-field under-patch.
+        struct ClipmapLevel
+        {
+            public MeshRenderer above;
+            public MeshRenderer under;                 // null when the body has no under-surface material
+            public MaterialPropertyBlock aboveBlock;
+            public MaterialPropertyBlock underBlock;
+            public float cellSize;                     // world metres per grid cell at this level
+            public float depthBias;                    // view-space nudge toward the camera; finer levels win an overlap
+            public float morphStart;                   // cheb cell distance where the edge geomorph begins (>= M/2 = off)
+            public float morphScale;                   // 1 / morph-band width in cells
+        }
+        ClipmapLevel[] _clipmapLevels;
+        Mesh _clipmapTemplate;                         // shared uniform square-annulus grid backing every level
         static readonly int ID_IsClipmap = Shader.PropertyToID("_IsClipmap");
+        static readonly int ID_ClipmapMorphStart = Shader.PropertyToID("_ClipmapMorphStart");
+        static readonly int ID_ClipmapMorphScale = Shader.PropertyToID("_ClipmapMorphScale");
         const string ClipmapObjectName = "Ocean Clipmap";
-        // Underside twin of the ocean clipmap: the same camera-following radial mesh (an annulus,
-        // identical to the above one) drawn with the under-water surface material, so the submerged
-        // view of the surface reaches the horizon too. Its centre hole is filled by the under-patch,
-        // exactly as the above clipmap's hole is filled by the near-field patch.
-        Renderer _clipmapUnderRenderer;
-        Mesh _clipmapUnderMesh;
-        MaterialPropertyBlock _clipmapUnderMpb;
         const string ClipmapUnderObjectName = "Ocean Clipmap (under)";
 
         // Lazy: the bed baker serves the context-menu RebakeBed even on an uninitialized
@@ -1565,10 +1611,10 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 targetCamera.fieldOfView = CameraFieldOfView;
                 targetCamera.nearClipPlane = CameraNearClip;
-                // An unbounded ocean's clipmap reaches clipmapOuterRadius; the 100 m pool far-plane would
-                // clip the horizon surface (and the fog that fills it), which reads as fog "popping" out
-                // there. Bounded bodies keep the pool default.
-                targetCamera.farClipPlane = IsOceanClipmap ? clipmapOuterRadius : CameraFarClip;
+                // An unbounded ocean's clipmap reaches ClipmapOuterReach (the outermost LOD level); the
+                // 100 m pool far-plane would clip the horizon surface (and the fog that fills it), which
+                // reads as fog "popping" out there. Bounded bodies keep the pool default.
+                targetCamera.farClipPlane = IsOceanClipmap ? ClipmapOuterReach : CameraFarClip;
             }
 
             if (isPrimary)
@@ -1882,25 +1928,13 @@ namespace AbstractOcclusion.WebGpuWater
             _simDensityRatio = Mathf.Min(1f, actualTexelsPerMeter / setting.TexelsPerMeter);
         }
 
-        // Energy-conserving strength compensation for the sim's minimum drop footprint. The sim floors
-        // every drop to MinDropTexelRadius texels so it stays a smooth bump; once the grid is
-        // cap-limited that floor is physically WIDER, and an uncompensated splash reads far stronger on
-        // a big body (same peak height over a much larger bump). Scale strength by the area ratio
-        // between the floor at tier density and the actual floor, so the injected VOLUME matches what
-        // the same call produces on a tier-density grid. Identity when the requested radius already
-        // exceeds the actual floor, or when the grid holds tier density. (Crest analog: interaction
-        // inputs are skipped/renormalised on LOD slices too coarse for the feature.)
-        float DropFloorEnergyScale(float worldRadius)
-        {
-            if (_simDensityRatio >= 1f) return 1f;
-            RippleQualitySetting setting = RippleQualityTable[rippleQuality];
-            float floorRefMetres = WaterSimulation.MinDropTexelRadius / setting.TexelsPerMeter;
-            float floorActualMetres = floorRefMetres / _simDensityRatio;
-            float refRadius = Mathf.Max(worldRadius, floorRefMetres);
-            float actualRadius = Mathf.Max(worldRadius, floorActualMetres);
-            float scale = refRadius / actualRadius;
-            return scale * scale;
-        }
+        // NOTE on the drop footprint floor: the sim floors every drop to MinDropTexelRadius texels,
+        // which is physically wider on a cap-limited grid. Strength compensation for that widening
+        // was tried in two flavours (volume-conserving ratio^2, then linear width ratio) and BOTH
+        // rejected: any peak reduction reads as "ripples are weaker on big ponds" - incoherent.
+        // With the wave speed and damping corrections above keeping the DYNAMICS world-consistent,
+        // an uncompensated equal world PEAK (guaranteed by the strength / extent.y division in
+        // AddRipple) is what actually looks coherent across sizes; only the bump footprint widens.
 
         // Give the surface renderers per-body material instances and set their reflection
         // keywords + look floats from the tier-capped toggles, so bodies with different reflection
@@ -2142,32 +2176,62 @@ namespace AbstractOcclusion.WebGpuWater
             _patchUnderMpb = null;
         }
 
-        // Feed the ocean clipmap the same per-body uniforms PLUS the _IsClipmap flag so its vertex path
-        // reads world-metre positions. Increment 1 parks it at the body centre (static); the camera
-        // follow + texel snap arrives in the next increment.
+        // Re-place every clipmap LOD level each frame (per-level world-lattice snap + per-level uniforms).
         void ApplyClipmapBlock()
         {
-            PositionClipmap(_clipmapRenderer, ref _clipmapMpb);
-            PositionClipmap(_clipmapUnderRenderer, ref _clipmapUnderMpb);
+            if (_clipmapLevels == null) return;
+            for (int i = 0; i < _clipmapLevels.Length; i++)
+                PositionClipmapLevel(_clipmapLevels[i]);
         }
 
-        // Feed one clipmap renderer this body's per-body uniforms plus the _IsClipmap flag, and ride the
-        // SAME camera-following, texel-snapped centre as the near-field patch so the meshes never slide
-        // against each other (the clipmap's hole stays locked over the patch). The ocean is unbounded, so
-        // the window is not clamped to the footprint. No depth bias: the far rings sit near the far plane
-        // and any push would clip them (the horizon would vanish); the near-field patch is nudged toward
-        // the camera instead (PatchDepthBiasMeters), and being always near it never clips.
-        void PositionClipmap(Renderer clipmap, ref MaterialPropertyBlock block)
+        // Place one LOD level: snap its centre to the level's own world lattice, scale the shared template
+        // to the level's cell size, and push its per-level uniforms (the _IsClipmap flag, the edge geomorph
+        // band, and a small toward-camera depth bias so a finer level wins where it overlaps a coarser one).
+        // The above and under twins share the centre + scale; only their material (and cull) differ.
+        void PositionClipmapLevel(ClipmapLevel level)
         {
-            if (clipmap == null) return;
-            if (block == null) block = new MaterialPropertyBlock();
+            Vector3 center = ClipmapLevelSnappedCenter(level.cellSize);
+            Vector3 scale = new Vector3(level.cellSize, 1f, level.cellSize); // template verts are in cell units
+            PlaceClipmapRenderer(level.above, level.aboveBlock, center, scale, level);
+            PlaceClipmapRenderer(level.under, level.underBlock, center, scale, level);
+        }
+
+        void PlaceClipmapRenderer(MeshRenderer renderer, MaterialPropertyBlock block,
+                                  Vector3 center, Vector3 scale, ClipmapLevel level)
+        {
+            if (renderer == null) return;
             WriteBodyProps(block);
             block.SetFloat(ID_IsClipmap, 1f);
-            clipmap.SetPropertyBlock(block);
+            block.SetFloat(ID_PatchDepthBias, level.depthBias);
+            block.SetFloat(ID_ClipmapMorphStart, level.morphStart);
+            block.SetFloat(ID_ClipmapMorphScale, level.morphScale);
+            renderer.SetPropertyBlock(block);
 
-            Transform t = clipmap.transform;
-            t.SetPositionAndRotation(SimWindowCenter, VolumeRotation);
-            t.localScale = Vector3.one; // verts are already in world metres
+            Transform t = renderer.transform;
+            t.SetPositionAndRotation(center, VolumeRotation);
+            t.localScale = scale;
+        }
+
+        // Snap the level's follow centre to its own world lattice (multiples of 2*cell in the volume-local
+        // frame about VolumeCenter). Because the shared template's vertices sit at integer-cell offsets,
+        // snapping to 2*cell keeps every vertex on the fixed world lattice VolumeCenter + cell*Z, so the
+        // wave field (a pure function of world XZ) is sampled at stable points as the camera follows - which
+        // is what removes the geometry swim. Follows the same target as the sim window (an explicit focus,
+        // else the camera); falls back to the window centre when neither exists.
+        Vector3 ClipmapLevelSnappedCenter(float cellSize)
+        {
+            Transform follow = simWindowFocus != null ? simWindowFocus
+                             : (targetCamera != null ? targetCamera.transform : null);
+            if (follow == null) return SimWindowCenter;
+
+            Vector3 up = VolumeUp;
+            Vector3 followPos = follow.position;
+            Vector3 onPlane = followPos - Vector3.Dot(followPos - VolumeCenter, up) * up;
+            Vector3 local = Quaternion.Inverse(VolumeRotation) * (onPlane - VolumeCenter);
+            float snap = ClipmapSnapCellMultiple * cellSize;
+            local.x = Mathf.Round(local.x / snap) * snap;
+            local.z = Mathf.Round(local.z / snap) * snap;
+            return VolumeCenter + VolumeRotation * new Vector3(local.x, 0f, local.z);
         }
 
         // Build the unbounded-ocean clipmap: a radial ring mesh in world metres, reusing THIS body's
@@ -2185,28 +2249,55 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
             if (!IsOceanClipmap) return;
-            if (_clipmapRenderer != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
+            if (_clipmapLevels != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
 
-            // Hollow the clipmap centre to sit just inside the near-field patch, so the dense patch owns
-            // the near field and the two meshes never overlap / z-fight (which showed as stitches + a
-            // colour seam once the swell was tall). The patch's depth bias covers the overlap ring.
-            float holeRadius = Mathf.Max(ClipmapMinRadius, SimHorizontalExtent * ClipmapPatchOverlap);
-            _clipmapMesh = LargeWaterClipmap.BuildRadialGrid(clipmapRings, clipmapSegments,
-                                                             holeRadius, clipmapOuterRadius, solidCenter: false);
-            _clipmapMesh.hideFlags = HideFlags.HideAndDontSave;
-            _clipmapRenderer = CreateClipmapRenderer(ClipmapObjectName, _clipmapMesh, surfaceAbove.sharedMaterial);
+            // One shared uniform square-annulus template (integer cell units); every LOD level scales and
+            // snaps it independently. The central hole sits just inside the near-field patch so the dense
+            // patch owns the near field (its depth bias covers the overlap ring), and each level's hole is
+            // shrunk by the overlap margin so consecutive levels overlap rather than crack at the seam.
+            _clipmapTemplate = LargeWaterClipmap.BuildAnnulusTemplate(ClipmapGridRes, ClipmapHoleHalfCells);
+            _clipmapTemplate.hideFlags = HideFlags.HideAndDontSave;
 
-            // Underside twin: the SAME annulus mesh drawn with the under-water material, so its ring
-            // region is byte-identical to the above clipmap (perfectly coincident, opposite cull - the
-            // proven bounded above/under pairing). Its centre hole is filled by the under-patch, exactly
-            // as the above clipmap's hole is filled by the near-field patch.
-            if (surfaceUnder != null && surfaceUnder.sharedMaterial != null)
+            int levelCount = ClipmapLevelCount;
+            float baseCell = ClipmapBaseCell;
+            float morphBandCells = Mathf.Max(1f, Mathf.Round((ClipmapGridRes / 4f) * ClipmapMorphBandFraction));
+            float biasStep = PatchDepthBiasMeters / (levelCount + 1);   // every level stays under the patch's bias
+            bool buildUnder = surfaceUnder != null && surfaceUnder.sharedMaterial != null;
+
+            _clipmapLevels = new ClipmapLevel[levelCount];
+            for (int level = 0; level < levelCount; level++)
             {
-                _clipmapUnderMesh = LargeWaterClipmap.BuildRadialGrid(clipmapRings, clipmapSegments,
-                                                                      holeRadius, clipmapOuterRadius, solidCenter: false);
-                _clipmapUnderMesh.hideFlags = HideFlags.HideAndDontSave;
-                _clipmapUnderRenderer = CreateClipmapRenderer(ClipmapUnderObjectName, _clipmapUnderMesh,
-                                                              surfaceUnder.sharedMaterial);
+                bool outermost = level == levelCount - 1;
+                var entry = new ClipmapLevel
+                {
+                    cellSize = baseCell * Mathf.Pow(2f, level),
+                    // Finer levels get a larger toward-camera nudge so they win where they overlap a coarser
+                    // one; all stay below the patch bias so the patch still owns the innermost overlap.
+                    depthBias = biasStep * (levelCount - 1 - level),
+                    // Outermost level has no coarser neighbour: disable its edge morph by pushing the start
+                    // past the outer edge.
+                    morphStart = outermost ? ClipmapGridRes : (ClipmapGridRes / 2f - morphBandCells),
+                    morphScale = 1f / morphBandCells,
+                    above = CreateClipmapRenderer(ClipmapObjectName, _clipmapTemplate, surfaceAbove.sharedMaterial),
+                    aboveBlock = new MaterialPropertyBlock(),
+                };
+                if (buildUnder)
+                {
+                    entry.under = CreateClipmapRenderer(ClipmapUnderObjectName, _clipmapTemplate, surfaceUnder.sharedMaterial);
+                    entry.underBlock = new MaterialPropertyBlock();
+                }
+                _clipmapLevels[level] = entry;
+            }
+        }
+
+        // Enable/disable every LOD level's above + under renderer together.
+        void SetClipmapRenderersEnabled(bool on)
+        {
+            if (_clipmapLevels == null) return;
+            for (int i = 0; i < _clipmapLevels.Length; i++)
+            {
+                SetRendererEnabled(_clipmapLevels[i].above, on);
+                SetRendererEnabled(_clipmapLevels[i].under, on);
             }
         }
 
@@ -2228,22 +2319,17 @@ namespace AbstractOcclusion.WebGpuWater
 
         void DestroyOceanClipmap()
         {
-            if (_clipmapRenderer != null)
+            if (_clipmapLevels != null)
             {
-                DestroyRuntimeObject(_clipmapRenderer.gameObject);
-                _clipmapRenderer = null;
+                for (int i = 0; i < _clipmapLevels.Length; i++)
+                {
+                    if (_clipmapLevels[i].above != null) DestroyRuntimeObject(_clipmapLevels[i].above.gameObject);
+                    if (_clipmapLevels[i].under != null) DestroyRuntimeObject(_clipmapLevels[i].under.gameObject);
+                }
+                _clipmapLevels = null;
             }
-            if (_clipmapUnderRenderer != null)
-            {
-                DestroyRuntimeObject(_clipmapUnderRenderer.gameObject);
-                _clipmapUnderRenderer = null;
-            }
-            DestroyRuntimeObject(_clipmapMesh);
-            _clipmapMesh = null;
-            DestroyRuntimeObject(_clipmapUnderMesh);
-            _clipmapUnderMesh = null;
-            _clipmapMpb = null;
-            _clipmapUnderMpb = null;
+            DestroyRuntimeObject(_clipmapTemplate);
+            _clipmapTemplate = null;
         }
 
         // (1/res, 1/res, res, res) of the sim texture, so shaders can bilinear-filter it manually
@@ -2290,15 +2376,14 @@ namespace AbstractOcclusion.WebGpuWater
             // so the two never double-draw (z-fight). Above and under each have their own twin; the
             // clipmaps only exist in play mode, so gate on their ACTUAL presence - otherwise edit mode
             // hides a plane with nothing to replace it (the surface looks cut).
-            bool clipmapActive = _clipmapRenderer != null;
-            bool underClipmapActive = _clipmapUnderRenderer != null;
+            bool clipmapActive = _clipmapLevels != null;
+            bool underClipmapActive = clipmapActive && _clipmapLevels.Length > 0 && _clipmapLevels[0].under != null;
             SetRendererEnabled(surfaceAbove, on && !clipmapActive);
             SetRendererEnabled(surfaceUnder, on && !underClipmapActive);
             SetRendererEnabled(poolRenderer, on);
             SetRendererEnabled(_patchRenderer, on && _windowed);
             SetRendererEnabled(_patchUnderRenderer, on && IsOceanClipmap);
-            SetRendererEnabled(_clipmapRenderer, on && IsOceanClipmap);
-            SetRendererEnabled(_clipmapUnderRenderer, on && IsOceanClipmap);
+            SetClipmapRenderersEnabled(on && IsOceanClipmap);
             // God rays obey the quality tier as well as culling: a tier that disables them
             // keeps the renderer off even when the body is on-screen. Windowed bodies also
             // suppress god rays (out of scope, same reason as caustics).
@@ -2313,10 +2398,6 @@ namespace AbstractOcclusion.WebGpuWater
         public void AddRipple(float worldX, float worldZ, float radius, float strength)
         {
             if (_water == null) return;
-
-            // Keep the injected VOLUME extent-stable when the sim's minimum drop footprint widens on
-            // a cap-limited grid (identity on tier-density grids and for radii above the floor).
-            strength *= DropFloorEnergyScale(radius);
 
             // Windowed bodies inject into the sim WINDOW frame; ripples outside it are dropped.
             if (_windowed)
@@ -2348,11 +2429,6 @@ namespace AbstractOcclusion.WebGpuWater
             // so the object's own wake can't feed back into how hard it pushes.
             float weight = SphereSubmersionWeight(worldPos, radius);
             if (weight <= 0f) return;
-
-            // Same footprint-floor energy compensation as AddRipple: a small interactor on a
-            // cap-limited grid gets its dipole widened to the texel floor, so scale the gain
-            // down by the area ratio to keep the imparted wake extent-stable.
-            strength *= DropFloorEnergyScale(radius);
 
             float velY = worldStep.y / VolumeExtentSafe.y; // world vertical motion -> pool-height units
 
@@ -2705,8 +2781,20 @@ namespace AbstractOcclusion.WebGpuWater
                 // pops off as hard-edged blobs. Scene data can't be trusted to keep the
                 // ordering (the sliders' ranges overlap), so enforce it here.
                 float residualSurvival = Mathf.Max(foamDecayResidual, foamDecay);
-                _water.StepFoam(foamGenRate, foamDecay, residualSurvival,
-                                foamSpread, foamFromSpeed, foamFromCurvature, foamAdvect,
+                // Scale-invariant foam ACTIVITY on cap-limited grids: the wave-speed correction
+                // above legitimately shrinks per-step pool velocities by the density ratio, which
+                // would sink the sim's speed/shear/curvature readings toward zero on mid/large
+                // bodies - the gen threshold could no longer tell a real ripple from noise, and
+                // the response knobs would need re-tuning per size. Boosting the response gains
+                // by 1/ratio restores the activity magnitude the knobs and threshold were
+                // authored against. Identity at ratio 1 (small bodies unchanged).
+                float foamActivityScale = 1f / Mathf.Max(_simDensityRatio, 0.05f);
+                // Min wave height is authored in WORLD metres; the sim's heights are pool units.
+                PushHeroWaveFoam(_water); // hero-wave whitewater source (inert without a hero wave)
+                _water.StepFoam(foamGenRate, foamGenThreshold,
+                                foamMinWaveHeight / VolumeExtentSafe.y, foamDecay,
+                                residualSurvival, foamSpread, foamFromSpeed * foamActivityScale,
+                                foamFromCurvature * foamActivityScale, foamAdvect,
                                 _foamTimeDebt, foamDecayRate);
                 _foamTimeDebt = 0f;
             }

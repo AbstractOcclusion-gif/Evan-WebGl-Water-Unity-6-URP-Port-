@@ -23,9 +23,13 @@
 #pragma kernel VisualizePreview
 
 RWTexture2DArray<float4> OceanH0;          // .xy = H0(k), .zw = conj(H0(-k))
-RWTexture2DArray<float2> OceanSpecX;       // horizontal x spectrum, then spatial row/col FFT scratch
-RWTexture2DArray<float2> OceanSpecY;       // height spectrum
-RWTexture2DArray<float2> OceanSpecZ;       // horizontal z spectrum
+// Complex spectra packed as R32_UINT (two half-floats per texel). WebGPU only permits READ-WRITE storage
+// on the r32 formats, and the in-place butterfly FFT below reads AND writes these in one dispatch; a
+// two-channel half target (rg16float) is not a valid read-write storage format. Pack/unpack via
+// OceanPackC/OceanUnpackC - half precision, so identical to the original rg16float targets.
+RWTexture2DArray<uint> OceanSpecX;         // horizontal x spectrum, then spatial row/col FFT scratch
+RWTexture2DArray<uint> OceanSpecY;         // height spectrum
+RWTexture2DArray<uint> OceanSpecZ;         // horizontal z spectrum
 RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
 // CHANNEL CONTRACT - OceanNormal repurposes two lanes; every consumer must honour this:
 //   .xz = surface normal tilt          (OceanFftNormalTilt, WaterLargeWaves.hlsl)
@@ -97,6 +101,10 @@ float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveA
 
 float2 OceanCMul(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 float2 OceanConj(float2 a) { return float2(a.x, -a.y); }
+
+// Pack/unpack a complex value into one R32_UINT texel as two half-floats (see the spectra declarations).
+uint OceanPackC(float2 v) { return f32tof16(v.x) | (f32tof16(v.y) << 16); }
+float2 OceanUnpackC(uint p) { return float2(f16tof32(p & 0xFFFFu), f16tof32(p >> 16)); }
 
 float2 OceanWaveVector(uint2 xy, uint slice)
 {
@@ -177,9 +185,9 @@ void SpectrumUpdate(uint3 id : SV_DispatchThreadID)
     float2 h = OceanCMul(h0.xy, float2(c, s)) + OceanCMul(h0.zw, float2(c, -s));
     float2 nk = (kMag > OCEAN_KMIN) ? k / kMag : float2(0.0, 0.0);
     float2 iH = float2(-h.y, h.x);
-    OceanSpecX[id] = iH * nk.x;
-    OceanSpecY[id] = h;
-    OceanSpecZ[id] = iH * nk.y;
+    OceanSpecX[id] = OceanPackC(iH * nk.x);
+    OceanSpecY[id] = OceanPackC(h);
+    OceanSpecZ[id] = OceanPackC(iH * nk.y);
 }
 
 // ---- Butterfly FFT ---------------------------------------------------------------------------------
@@ -206,9 +214,9 @@ void FftHorizontal(uint3 id : SV_DispatchThreadID)
 {
     uint col = id.x, row = id.y, slice = id.z;
     uint3 p = uint3(col, row, slice);
-    gX[0][col] = OceanSpecX[p];
-    gY[0][col] = OceanSpecY[p];
-    gZ[0][col] = OceanSpecZ[p];
+    gX[0][col] = OceanUnpackC(OceanSpecX[p]);
+    gY[0][col] = OceanUnpackC(OceanSpecY[p]);
+    gZ[0][col] = OceanUnpackC(OceanSpecZ[p]);
     GroupMemoryBarrierWithGroupSync();
 
     int src = 0;
@@ -221,9 +229,9 @@ void FftHorizontal(uint3 id : SV_DispatchThreadID)
         GroupMemoryBarrierWithGroupSync();
         src = 1 - src;
     }
-    OceanSpecX[p] = gX[src][col];
-    OceanSpecY[p] = gY[src][col];
-    OceanSpecZ[p] = gZ[src][col];
+    OceanSpecX[p] = OceanPackC(gX[src][col]);
+    OceanSpecY[p] = OceanPackC(gY[src][col]);
+    OceanSpecZ[p] = OceanPackC(gZ[src][col]);
 }
 
 [numthreads(1, FFT_SIZE, 1)]
@@ -231,9 +239,9 @@ void FftVertical(uint3 id : SV_DispatchThreadID)
 {
     uint col = id.x, row = id.y, slice = id.z;
     uint3 p = uint3(col, row, slice);
-    gX[0][row] = OceanSpecX[p];
-    gY[0][row] = OceanSpecY[p];
-    gZ[0][row] = OceanSpecZ[p];
+    gX[0][row] = OceanUnpackC(OceanSpecX[p]);
+    gY[0][row] = OceanUnpackC(OceanSpecY[p]);
+    gZ[0][row] = OceanUnpackC(OceanSpecZ[p]);
     GroupMemoryBarrierWithGroupSync();
 
     int src = 0;
@@ -244,6 +252,15 @@ void FftVertical(uint3 id : SV_DispatchThreadID)
         GroupMemoryBarrierWithGroupSync();
         src = 1 - src;
     }
+    // Write the transformed spectra back. FUNCTIONALLY REDUNDANT (the spectra are scratch after this pass,
+    // overwritten by next frame's SpectrumUpdate) but REQUIRED for WebGPU: a RWTexture read-only in a kernel
+    // is compiled to a SAMPLED texture, whose Uint sample type then mismatches the r32uint STORAGE binding
+    // (FftHorizontal reads AND writes them, so it stays a storage texture and validates). Writing here keeps
+    // this pass read-write too, so both kernels agree on the binding type.
+    OceanSpecX[p] = OceanPackC(gX[src][row]);
+    OceanSpecY[p] = OceanPackC(gY[src][row]);
+    OceanSpecZ[p] = OceanPackC(gZ[src][row]);
+
     // Centred spectrum -> multiply the spatial result by (-1)^(x+y) to undo the N/2 shift.
     float sign = ((col + row) & 1u) ? -1.0 : 1.0;
     float heightScale = OceanHeightScales[slice];

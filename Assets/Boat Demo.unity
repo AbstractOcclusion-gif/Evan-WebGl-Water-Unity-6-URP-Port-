@@ -10827,6 +10827,8 @@ MonoBehaviour:
   volume: {fileID: 1836526677}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
   particleMaterial: {fileID: 2100000, guid: 4d23231ea0481ee4b81b7bf6286f854e, type: 2}
+  renderMode: 0
+  densityMaterial: {fileID: 0}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 30
@@ -10880,8 +10882,7 @@ MonoBehaviour:
     swellHeight: 3
     swellWavelength: 140
     unboundedOcean: 1
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -10893,9 +10894,9 @@ MonoBehaviour:
     largeGodRayAnisotropy: 0.6
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
-    oceanFoamWindThreshold: 10
-    oceanFoamCoverage: 0
-    oceanFoamStrength: 0
+    oceanFoamWindThreshold: 3
+    oceanFoamCoverage: 0.89
+    oceanFoamStrength: 1.74
     oceanFoamFadeRate: 0.5
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
@@ -10909,8 +10910,6 @@ MonoBehaviour:
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -11048,10 +11047,13 @@ MonoBehaviour:
     foamDecayResidual: 0.9317
     foamDecayRate: 2.83
     foamSpread: 0.2
+    foamGenThreshold: 0.15
+    foamMinWaveHeight: 0.01
     foamAdvect: 3
     foamFromSpeed: 6
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamPatternSize: 2
     foamStrength: 1
     foamFeather: 0.15
     foamCoreCut: 0.5
@@ -11060,7 +11062,6 @@ MonoBehaviour:
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96
-  _legacyFoamDecayResidual: 0.993
   _legacyFoamDecayRate: 1
   _legacyFoamSpread: 0.2
   _legacyFoamAdvect: 3

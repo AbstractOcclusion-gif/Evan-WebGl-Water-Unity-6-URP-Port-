@@ -339,6 +339,9 @@ namespace AbstractOcclusion.WebGpuWater
         {
             ComputeShader cs = particleCompute;
             volume.WriteSimFrameUniforms(cs);
+            // Hero wave: lip-spray source in Spawn + base height in the density glue. The shared
+            // struct binder keeps packing identical to every other GPU consumer; inactive = inert.
+            volume.HeroWaveState.BindTo(cs);
 
             cs.SetFloat(ID_Size, volume.SimResolution);
             cs.SetInt(ID_Capacity, _capacityPow2);

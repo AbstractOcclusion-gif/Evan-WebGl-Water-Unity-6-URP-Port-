@@ -102,6 +102,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterEditorUI.SubHeading("Generation & decay");
                 DrawFields(
                     "foamSettings.foamGenRate",
+                    "foamSettings.foamGenThreshold",
+                    "foamSettings.foamMinWaveHeight",
                     "foamSettings.foamDecay",
                     "foamSettings.foamDecayResidual",
                     "foamSettings.foamDecayRate",
@@ -112,6 +114,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterEditorUI.SubHeading("Shading");
                 DrawFields(
                     "foamSettings.foamColor",
+                    "foamSettings.foamPatternSize",
                     "foamSettings.foamStrength",
                     "foamSettings.foamFeather",
                     "foamSettings.foamCoreCut",

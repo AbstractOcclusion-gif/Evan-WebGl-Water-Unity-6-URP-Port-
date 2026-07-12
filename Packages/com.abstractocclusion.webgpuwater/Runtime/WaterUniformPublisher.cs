@@ -53,6 +53,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
         static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
         static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
+        static readonly int ID_FoamTileSize = Shader.PropertyToID("_FoamTileSize");
         static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
         static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
         static readonly int ID_FoamFeather = Shader.PropertyToID("_FoamFeather");
@@ -83,6 +84,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanWorldWaves = Shader.PropertyToID("_OceanWorldWaves");
         static readonly int ID_SwellWavelength = Shader.PropertyToID("_LargeSwellWavelength");
         static readonly int ID_SwellHeight = Shader.PropertyToID("_LargeSwellHeight");
+        static readonly int ID_HeroWaveActive = Shader.PropertyToID("_HeroWaveActive");
+        static readonly int ID_HeroWaveFrame = Shader.PropertyToID("_HeroWaveFrame");
+        static readonly int ID_HeroWaveShape = Shader.PropertyToID("_HeroWaveShape");
+        static readonly int ID_HeroWaveCurl = Shader.PropertyToID("_HeroWaveCurl");
+        static readonly int ID_HeroWaveCurl2 = Shader.PropertyToID("_HeroWaveCurl2");
+        static readonly int ID_HeroWaveMotion = Shader.PropertyToID("_HeroWaveMotion");
         static readonly int ID_HorizonFade = Shader.PropertyToID("_HorizonFadeDistance");
         static readonly int ID_HorizonHazeColor = Shader.PropertyToID("_HorizonHazeColor");
         static readonly int ID_HorizonHazeDensity = Shader.PropertyToID("_HorizonHazeDensity");
@@ -226,6 +233,15 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_OceanWorldWaves, _body.IsOceanClipmap ? 1f : 0f);
             sink.SetFloat(ID_SwellWavelength, _body.SwellWavelength);
             sink.SetFloat(ID_SwellHeight, _body.SwellHeight);
+            // Hero wave (surfable breaking wave): state pushed by WaterHeroWave each frame; the
+            // zeroed default publishes Active = 0 and the shader skips the whole path.
+            HeroWaveShaderState hero = _body.HeroWaveState;
+            sink.SetFloat(ID_HeroWaveActive, hero.Active ? 1f : 0f);
+            sink.SetVector(ID_HeroWaveFrame, hero.Frame);
+            sink.SetVector(ID_HeroWaveShape, hero.Shape);
+            sink.SetVector(ID_HeroWaveCurl, hero.Curl);
+            sink.SetVector(ID_HeroWaveCurl2, hero.Curl2);
+            sink.SetVector(ID_HeroWaveMotion, hero.Motion);
             sink.SetFloat(ID_HorizonFade, _body.HorizonFadeDistance);
             sink.SetColor(ID_HorizonHazeColor, _body.HorizonHazeColor);
             sink.SetFloat(ID_HorizonHazeDensity, _body.HorizonHazeDensity);
@@ -310,6 +326,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetColor(ID_FoamColor, _body.foamColor);
             sink.SetFloat(ID_FoamEnabled, _body.Foam ? 1f : 0f);
             sink.SetFloat(ID_FoamStrength, _body.foamStrength);
+            sink.SetFloat(ID_FoamTileSize, _body.foamPatternSize);
             sink.SetFloat(ID_FoamBorder, _body.foamBorderWidth);
             sink.SetFloat(ID_FoamContact, _body.foamContactDepth);
             sink.SetFloat(ID_FoamFeather, _body.foamFeather);

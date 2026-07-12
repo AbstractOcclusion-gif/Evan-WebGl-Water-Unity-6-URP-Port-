@@ -14,9 +14,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Interactive ripples are authored in WORLD radius, converted to a grid fraction by the caller.
         // On a large plane that fraction can fall below one texel and inject an aliased spike, so floor
         // it to a few texels: every drop stays a smooth bump regardless of body size. _Radius is a
-        // fraction of the grid side, so N texels correspond to N / Resolution. Internal so WaterVolume
-        // can energy-compensate strength when this floor WIDENS a drop on a cap-limited coarse grid.
-        internal const float MinDropTexelRadius = 2.5f;
+        // fraction of the grid side, so N texels correspond to N / Resolution.
+        const float MinDropTexelRadius = 2.5f;
 
         // Compute kernel names (must match WaterSim.compute).
         const string KernelDrop = "Drop";
@@ -65,8 +64,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaveSpeed = Shader.PropertyToID("_WaveSpeed");
         static readonly int ID_Damping = Shader.PropertyToID("_Damping");
         static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
-        static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
+        static readonly int ID_FoamGenThreshold = Shader.PropertyToID("_FoamGenThreshold");
+        static readonly int ID_FoamMinWaveHeight = Shader.PropertyToID("_FoamMinWaveHeight");
         static readonly int ID_FoamDecayResidual = Shader.PropertyToID("_FoamDecayResidual");
+        static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
         static readonly int ID_FoamDtSteps = Shader.PropertyToID("_FoamDtSteps");
         static readonly int ID_FoamDecayRate = Shader.PropertyToID("_FoamDecayRate");
         static readonly int ID_FoamSpread = Shader.PropertyToID("_FoamSpread");
@@ -85,6 +86,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ShoreFoamDepthPool = Shader.PropertyToID("_ShoreFoamDepthPool");
         static readonly int ID_ShoreFoamStrength = Shader.PropertyToID("_ShoreFoamStrength");
         static readonly int ID_BreakFoamStrength = Shader.PropertyToID("_BreakFoamStrength");
+        static readonly int ID_HeroSimUvToWorldOrigin = Shader.PropertyToID("_HeroSimUvToWorldOrigin");
+        static readonly int ID_HeroSimUvToWorldAxes = Shader.PropertyToID("_HeroSimUvToWorldAxes");
+        static readonly int ID_HeroWaveFoamStrength = Shader.PropertyToID("_HeroWaveFoamStrength");
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
@@ -253,6 +257,34 @@ namespace AbstractOcclusion.WebGpuWater
             _breakFoamStrength = breakFoamStrength;
         }
 
+        // Hero-wave whitewater state, cached between SetHeroWaveFoam and the Foam dispatch.
+        // Default (inactive, zero strength) keeps the kernel's hero branch entirely skipped.
+        HeroWaveShaderState _heroWave;
+        Vector4 _heroUvToWorldOrigin;
+        Vector4 _heroUvToWorldAxes;
+
+        /// <summary>Hero-wave whitewater source for the Foam kernel: this frame's wave state (which
+        /// carries the master foam strength) plus the sim-uv -> world-xz affine (origin + axis
+        /// spans). Pushed by WaterVolume.PushHeroWaveFoam just before StepFoam; inactive = no-op.</summary>
+        internal void SetHeroWaveFoam(in HeroWaveShaderState state, Vector4 uvToWorldOrigin,
+                                      Vector4 uvToWorldAxes)
+        {
+            _heroWave = state;
+            _heroUvToWorldOrigin = uvToWorldOrigin;
+            _heroUvToWorldAxes = uvToWorldAxes;
+        }
+
+        // Push the hero-wave whitewater uniforms (the shared struct binder) plus this sim's
+        // uv -> world affine and the injection strength. The active flag gates everything in the
+        // kernel, so stale vectors from a cleared wave can't leak.
+        void BindHeroWave()
+        {
+            _heroWave.BindTo(_cs);
+            _cs.SetVector(ID_HeroSimUvToWorldOrigin, _heroUvToWorldOrigin);
+            _cs.SetVector(ID_HeroSimUvToWorldAxes, _heroUvToWorldAxes);
+            _cs.SetFloat(ID_HeroWaveFoamStrength, _heroWave.FoamStrength);
+        }
+
         // Bind the bed map + shoreline uniforms onto a kernel. A texture is always bound (black when
         // inactive) so the backend never sees an unbound sampler; the shader early-outs on _UseBedDepth.
         void BindBed(int kernel)
@@ -371,12 +403,14 @@ namespace AbstractOcclusion.WebGpuWater
         /// 1 = 1/60 s) so foam evolves frame-rate independently; <paramref name="decayRate"/>
         /// is a user time-scale on decay only (1 = authored speed, 2 = twice as fast).
         /// Reads the current height/normal state; ping-pongs the foam textures.</summary>
-        public void StepFoam(float genRate, float decayFresh, float decayResidual,
-                             float spread, float fromSpeed, float fromCurv, float advect,
-                             float dtSteps, float decayRate)
+        public void StepFoam(float genRate, float genThreshold, float minWaveHeight, float decayFresh,
+                             float decayResidual, float spread, float fromSpeed, float fromCurv,
+                             float advect, float dtSteps, float decayRate)
         {
             SetGridUniforms();
             _cs.SetFloat(ID_FoamGenRate, genRate);
+            _cs.SetFloat(ID_FoamGenThreshold, genThreshold);
+            _cs.SetFloat(ID_FoamMinWaveHeight, minWaveHeight);
             _cs.SetFloat(ID_FoamDecayFresh, decayFresh);
             _cs.SetFloat(ID_FoamDecayResidual, decayResidual);
             _cs.SetFloat(ID_FoamDtSteps, dtSteps);
@@ -389,6 +423,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(_kFoam, ID_FoamSrc, _foamA);
             _cs.SetTexture(_kFoam, ID_FoamDst, _foamB);
             BindBed(_kFoam);
+            BindHeroWave();
             _cs.Dispatch(_kFoam, _groups, _groups, 1);
             (_foamA, _foamB) = (_foamB, _foamA);
         }

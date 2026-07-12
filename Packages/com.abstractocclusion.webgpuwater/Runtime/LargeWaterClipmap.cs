@@ -1,35 +1,33 @@
-// LargeWaterClipmap - camera-following open-water surface geometry.
+// LargeWaterClipmap - camera-following open-water surface geometry (world-locked geometry clipmap).
 //
 // Pure mesh builder (no side effects): always compiled, but only USED when a WaterVolume has
 // Open Water + Unbounded Ocean enabled (see WaterVolume.IsOceanClipmap). Bounded lakes and pools
 // never build one, so the shipped small-body build is unaffected.
 //
-// Technique (reused, not copied, from Crest's single-mesh clipmap and KWS's infinite
-// ocean): instead of stretching one fixed grid over a whole ocean (which goes blocky),
-// render a radial grid whose triangles grow geometrically with distance from the viewer,
-// recentred on the camera each frame. Near the camera the mesh is dense (fine FFT waves
-// resolve); far away triangles are large (only long swell remains, which is all the eye
-// can see there). One continuous mesh means no LOD-ring seams to stitch - the trade vs a
-// full tiled geometry-clipmap is slightly less even texel density, which reads fine for a
-// first open-water pass and is far simpler to drive.
+// Technique (Losasso/Hoppe "Geometry Clipmaps", as used by Crest/KWS): the ocean is drawn as a set
+// of NESTED SQUARE LOD levels. Each level is one shared UNIFORM square-annulus grid authored in
+// INTEGER CELL UNITS; the driver scales it by that level's cell size and places it at a follow point
+// SNAPPED to that level's own world lattice. Because a uniform grid snapped to its own cell always
+// re-lands its vertices on a fixed world lattice, the wave field (a pure function of world XZ) is
+// sampled at stable world points no matter how the camera moves - which is what kills the "geometry
+// swim" the old radial ring mesh suffered (a ring-and-spoke mesh has no repeating lattice to snap to,
+// so its vertices slid through the waves as the camera followed).
 //
-// The mesh is authored flat in the XZ plane (y = 0) in LOCAL space, centred on the origin.
-// A driver places its Transform at the camera's XZ each frame; the surface shader adds wave
-// displacement per vertex in world space. Height is a pure function of world XZ, so the
-// buoyancy sampler stays valid (the CPU wave mirror in LargeWaveField).
+// The mesh here is authored flat in the XZ plane (y = 0), centred on the origin, in cell units
+// (vertex xz are integer cell indices). Level L's transform scales by cellSize*2^L and the surface
+// shader (a) offsets the vertex Y by the world-space wave height and (b) morphs the outermost band of
+// each level onto the next-coarser lattice to stitch the levels without T-junction cracks.
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    /// <summary>Builds the camera-following radial clipmap mesh for open-water bodies.</summary>
+    /// <summary>Builds the shared uniform square-annulus grid used by every ocean clipmap LOD level.</summary>
     internal static class LargeWaterClipmap
     {
         // Guard rails so a mis-authored inspector value fails loudly instead of producing a
         // degenerate (zero-area / NaN) mesh that the surface shader would then sample.
-        const int MinRings = 2;
-        const int MinSegments = 3;
-        const float MinRadius = 1e-3f;
+        const int MinGridResolution = 8;
 
         // The mesh is recentred on the camera every frame, so it must never frustum-cull. A
         // deliberately huge local bounds keeps it drawn from any view angle (mirrors the
@@ -37,117 +35,75 @@ namespace AbstractOcclusion.WebGpuWater
         const float HugeBoundsSize = 1_000_000f;
 
         /// <summary>
-        /// Radial clipmap grid: <paramref name="rings"/> concentric rings of
-        /// <paramref name="segments"/> vertices each. Ring radii grow GEOMETRICALLY from
-        /// <paramref name="innerRadius"/> to <paramref name="outerRadius"/> so triangle size scales
-        /// with distance (roughly constant screen-space density). When <paramref name="solidCenter"/>
-        /// is true a hub vertex fills the middle (a disc); when false the middle is a HOLE (an
-        /// annulus) - used so a dense near-field patch can own the centre without the two overlapping.
+        /// Uniform square-annulus grid, authored in INTEGER CELL UNITS: vertices at (i, 0, j) for
+        /// i,j in [-M/2, M/2], with the central square hole (|i| and |j| both within
+        /// <paramref name="holeHalfCells"/>) left untriangulated. The hole is filled by the next-finer
+        /// LOD level (or, for the innermost level, by the near-field patch). One template serves every
+        /// level; levels differ only by the transform scale (cell size) and snapped position.
         /// </summary>
-        internal static Mesh BuildRadialGrid(int rings, int segments, float innerRadius, float outerRadius,
-                                             bool solidCenter = true)
+        internal static Mesh BuildAnnulusTemplate(int gridResolution, int holeHalfCells)
         {
-            ValidateOrThrow(rings, segments, innerRadius, outerRadius);
+            ValidateOrThrow(gridResolution, holeHalfCells);
 
-            int centerCount = solidCenter ? 1 : 0;                  // disc = one hub vertex; annulus = none
-            int vertexCount = centerCount + rings * segments;
-            var vertices = new Vector3[vertexCount];
-            var uvs = new Vector2[vertexCount];
+            int half = gridResolution / 2;
+            int stride = gridResolution + 1;                       // vertices per side
+            var vertices = new Vector3[stride * stride];
+            var uvs = new Vector2[stride * stride];
 
-            if (solidCenter)
+            for (int i = -half; i <= half; i++)
             {
-                vertices[0] = Vector3.zero;                         // centre hub
-                uvs[0] = new Vector2(0.5f, 0.5f);
+                for (int j = -half; j <= half; j++)
+                {
+                    int index = VertexIndex(i, j, half, stride);
+                    vertices[index] = new Vector3(i, 0f, j);       // cell units; scaled to metres by the transform
+                    uvs[index] = new Vector2((i + half) / (float)gridResolution, (j + half) / (float)gridResolution);
+                }
             }
 
-            float radiusRatio = Mathf.Pow(outerRadius / innerRadius, 1f / (rings - 1));
-            for (int ring = 0; ring < rings; ring++)
-            {
-                float radius = innerRadius * Mathf.Pow(radiusRatio, ring);
-                WriteRing(vertices, uvs, centerCount, ring, segments, radius, outerRadius);
-            }
-
-            int[] triangles = BuildTriangles(rings, segments, centerCount);
-
+            int[] triangles = BuildAnnulusTriangles(gridResolution, holeHalfCells, half, stride);
             return Assemble(vertices, uvs, triangles);
         }
 
-        // One ring of 'segments' vertices evenly spaced around a circle of the given radius.
-        static void WriteRing(Vector3[] vertices, Vector2[] uvs, int centerCount, int ring, int segments, float radius, float outerRadius)
-        {
-            int ringStart = centerCount + ring * segments;
-            float angleStep = 2f * Mathf.PI / segments;
-            for (int seg = 0; seg < segments; seg++)
-            {
-                float angle = seg * angleStep;
-                float x = Mathf.Cos(angle) * radius;
-                float z = Mathf.Sin(angle) * radius;
-                int index = ringStart + seg;
-                vertices[index] = new Vector3(x, 0f, z);
-                // UV in [0,1] from local XZ (only used if a material wants a planar UV; the
-                // surface shader derives everything it needs from world position instead).
-                uvs[index] = new Vector2(x, z) * (0.5f / outerRadius) + new Vector2(0.5f, 0.5f);
-            }
-        }
+        static int VertexIndex(int i, int j, int half, int stride) => (i + half) * stride + (j + half);
 
-        // Quad strip between each pair of consecutive rings (each quad split into two triangles),
-        // plus a centre fan (centre -> ring 0) only when the mesh has a hub vertex. An annulus
-        // (centerCount = 0) has a hole and only the strips. Wound clockwise so the surface faces +Y.
-        static int[] BuildTriangles(int rings, int segments, int centerCount)
+        // One quad (two upward-facing triangles) per grid cell, skipping cells that lie wholly inside
+        // the central hole square. A quad occupies [i, i+1] x [j, j+1]; it is inside the hole when both
+        // axis spans stay within +/- holeHalfCells.
+        static int[] BuildAnnulusTriangles(int gridResolution, int holeHalfCells, int half, int stride)
         {
-            bool solidCenter = centerCount > 0;
-            int fanTriangles = solidCenter ? segments : 0;
-            int stripTriangles = (rings - 1) * segments * 2;
-            var triangles = new int[(fanTriangles + stripTriangles) * 3];
-            int t = 0;
-
-            // Centre fan (disc only).
-            if (solidCenter)
+            var triangles = new System.Collections.Generic.List<int>(gridResolution * gridResolution * 6);
+            for (int i = -half; i < half; i++)
             {
-                for (int seg = 0; seg < segments; seg++)
+                for (int j = -half; j < half; j++)
                 {
-                    int a = centerCount + seg;
-                    int b = centerCount + NextSeg(seg, segments);
-                    t = EmitTriangle(triangles, t, 0, b, a);
+                    if (IsQuadInsideHole(i, j, holeHalfCells)) continue;
+
+                    int a = VertexIndex(i, j, half, stride);
+                    int b = VertexIndex(i + 1, j, half, stride);
+                    int c = VertexIndex(i, j + 1, half, stride);
+                    int d = VertexIndex(i + 1, j + 1, half, stride);
+
+                    // Wound so the surface faces +Y (see the header): (a, c, b) and (b, c, d).
+                    triangles.Add(a); triangles.Add(c); triangles.Add(b);
+                    triangles.Add(b); triangles.Add(c); triangles.Add(d);
                 }
             }
-
-            // Ring-to-ring strips.
-            for (int ring = 0; ring < rings - 1; ring++)
-            {
-                int inner = centerCount + ring * segments;
-                int outer = centerCount + (ring + 1) * segments;
-                for (int seg = 0; seg < segments; seg++)
-                {
-                    int segNext = NextSeg(seg, segments);
-                    int i0 = inner + seg;
-                    int i1 = inner + segNext;
-                    int o0 = outer + seg;
-                    int o1 = outer + segNext;
-                    t = EmitTriangle(triangles, t, i0, o1, o0);
-                    t = EmitTriangle(triangles, t, i0, i1, o1);
-                }
-            }
-
-            return triangles;
+            return triangles.ToArray();
         }
 
-        static int NextSeg(int seg, int segments) => (seg + 1) % segments;
-
-        static int EmitTriangle(int[] triangles, int cursor, int a, int b, int c)
+        static bool IsQuadInsideHole(int i, int j, int holeHalfCells)
         {
-            triangles[cursor] = a;
-            triangles[cursor + 1] = b;
-            triangles[cursor + 2] = c;
-            return cursor + 3;
+            bool insideX = i >= -holeHalfCells && (i + 1) <= holeHalfCells;
+            bool insideZ = j >= -holeHalfCells && (j + 1) <= holeHalfCells;
+            return insideX && insideZ;
         }
 
         static Mesh Assemble(Vector3[] vertices, Vector2[] uvs, int[] triangles)
         {
             var mesh = new Mesh
             {
-                name = "LargeWaterClipmap",
-                // Ring * segment counts routinely exceed the 16-bit vertex limit.
+                name = "LargeWaterClipmapLevel",
+                // Grid resolutions routinely exceed the 16-bit vertex limit across the annulus.
                 indexFormat = IndexFormat.UInt32,
             };
             mesh.SetVertices(vertices);
@@ -166,16 +122,16 @@ namespace AbstractOcclusion.WebGpuWater
             return normals;
         }
 
-        static void ValidateOrThrow(int rings, int segments, float innerRadius, float outerRadius)
+        static void ValidateOrThrow(int gridResolution, int holeHalfCells)
         {
-            if (rings < MinRings)
-                throw new System.ArgumentOutOfRangeException(nameof(rings), rings, $"needs >= {MinRings} rings");
-            if (segments < MinSegments)
-                throw new System.ArgumentOutOfRangeException(nameof(segments), segments, $"needs >= {MinSegments} segments");
-            if (innerRadius < MinRadius)
-                throw new System.ArgumentOutOfRangeException(nameof(innerRadius), innerRadius, "must be positive");
-            if (outerRadius <= innerRadius)
-                throw new System.ArgumentOutOfRangeException(nameof(outerRadius), outerRadius, "must exceed innerRadius");
+            if (gridResolution < MinGridResolution)
+                throw new System.ArgumentOutOfRangeException(nameof(gridResolution), gridResolution,
+                    $"needs >= {MinGridResolution} cells per side");
+            if ((gridResolution & 1) != 0)
+                throw new System.ArgumentException($"gridResolution must be even (got {gridResolution})", nameof(gridResolution));
+            if (holeHalfCells < 0 || holeHalfCells >= gridResolution / 2)
+                throw new System.ArgumentOutOfRangeException(nameof(holeHalfCells), holeHalfCells,
+                    "must be in [0, gridResolution/2)");
         }
     }
 }

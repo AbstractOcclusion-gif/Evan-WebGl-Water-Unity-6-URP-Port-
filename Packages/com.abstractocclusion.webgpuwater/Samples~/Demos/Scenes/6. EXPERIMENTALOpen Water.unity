@@ -10092,6 +10092,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.1
   verticalSettleDamping: 1.7
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &887396529
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10108,6 +10114,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &887396530
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -10571,6 +10578,8 @@ MonoBehaviour:
   volume: {fileID: 1235312963}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
   particleMaterial: {fileID: 2100000, guid: b1c9901d0e04fa342bdb24e4564d5a6b, type: 2}
+  renderMode: 0
+  densityMaterial: {fileID: 0}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 30
@@ -10606,14 +10615,16 @@ MonoBehaviour:
   waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 1209048383}
-  tiles: {fileID: 0}
-  sky: {fileID: 8900000, guid: afc52f60475c07846ac62666948b3f42, type: 2}
+  tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
+  sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
   volumeExtent: {x: 200, y: 5, z: 200}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 32
   simWindowMeters: 20
   clampWindowToShore: 0
+  simWindowFocus: {fileID: 0}
+  simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 0
@@ -10642,6 +10653,9 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -10683,6 +10697,7 @@ MonoBehaviour:
     reflectUrpProbe: 0
     realRefraction: 1
     reflectionStrength: 1
+    envReflectionIntensity: 1
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -10691,6 +10706,7 @@ MonoBehaviour:
     refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 1
+  timeScale: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 512
   objectInteractionSettings:
@@ -10715,6 +10731,19 @@ MonoBehaviour:
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 0
+    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
+    scatterIntensity: 2
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -10750,13 +10779,13 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 1
-    windSpeed: 5.5
+    windSpeed: 4
     windFromDegrees: 0
-    poolHalfExtentMeters: 200
+    poolHalfExtentMeters: 500
     waveCount: 16
-    waveAmplitudeScale: 5
+    waveAmplitudeScale: 7.02
     waveDirectionSpread: 1
-    waveNormalStrength: 1
+    waveNormalStrength: 0.46
   _legacyWindWaves: 1
   _legacyWindSpeed: 6.7
   _legacyWindFromDegrees: 0
@@ -10772,10 +10801,13 @@ MonoBehaviour:
     foamDecayResidual: 0.99
     foamDecayRate: 1
     foamSpread: 0.086
+    foamGenThreshold: 0.15
+    foamMinWaveHeight: 0.01
     foamAdvect: 3
     foamFromSpeed: 6
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamPatternSize: 2
     foamStrength: 0.62
     foamFeather: 0.15
     foamCoreCut: 0.5
@@ -10784,7 +10816,6 @@ MonoBehaviour:
   _legacyFoam: 0
   _legacyFoamGenRate: 0.65
   _legacyFoamDecay: 0.9451
-  _legacyFoamDecayResidual: 0.99
   _legacyFoamDecayRate: 1
   _legacyFoamSpread: 0.086
   _legacyFoamAdvect: 3
@@ -10801,7 +10832,7 @@ MonoBehaviour:
     damping: 0.99
     stepsPerFrame: 1
     rippleStrength: 0.05
-    rippleRadius: 0.1
+    rippleRadius: 0.03
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05

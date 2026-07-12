@@ -205,6 +205,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.1
   verticalSettleDamping: 2
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &142369258
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -221,6 +227,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &142369259
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -326,133 +333,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 142369253}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!1 &203844586
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 203844589}
-  - component: {fileID: 203844588}
-  - component: {fileID: 203844587}
-  m_Layer: 0
-  m_Name: Directional Light
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &203844587
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 203844586}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  m_UsePipelineSettings: 1
-  m_AdditionalLightsShadowResolutionTier: 2
-  m_CustomShadowLayers: 0
-  m_LightCookieSize: {x: 1, y: 1}
-  m_LightCookieOffset: {x: 0, y: 0}
-  m_SoftShadowQuality: 0
-  m_RenderingLayersMask:
-    serializedVersion: 0
-    m_Bits: 1
-  m_ShadowRenderingLayersMask:
-    serializedVersion: 0
-    m_Bits: 1
-  m_Version: 4
-  m_LightLayerMask: 1
-  m_ShadowLayerMask: 1
-  m_RenderingLayers: 1
-  m_ShadowRenderingLayers: 1
---- !u!108 &203844588
-Light:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 203844586}
-  m_Enabled: 1
-  serializedVersion: 12
-  m_Type: 1
-  m_Color: {r: 1, g: 0.95686275, b: 0.8392157, a: 1}
-  m_Intensity: 1
-  m_Range: 10
-  m_SpotAngle: 30
-  m_InnerSpotAngle: 21.80208
-  m_CookieSize2D: {x: 10, y: 10}
-  m_Shadows:
-    m_Type: 2
-    m_Resolution: -1
-    m_CustomResolution: -1
-    m_Strength: 1
-    m_Bias: 0.05
-    m_NormalBias: 0.4
-    m_NearPlane: 0.2
-    m_CullingMatrixOverride:
-      e00: 1
-      e01: 0
-      e02: 0
-      e03: 0
-      e10: 0
-      e11: 1
-      e12: 0
-      e13: 0
-      e20: 0
-      e21: 0
-      e22: 1
-      e23: 0
-      e30: 0
-      e31: 0
-      e32: 0
-      e33: 1
-    m_UseCullingMatrixOverride: 0
-  m_Cookie: {fileID: 0}
-  m_DrawHalo: 0
-  m_Flare: {fileID: 0}
-  m_RenderMode: 0
-  m_CullingMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_RenderingLayerMask: 1
-  m_Lightmapping: 4
-  m_LightShadowCasterMode: 0
-  m_AreaSize: {x: 1, y: 1}
-  m_BounceIntensity: 1
-  m_ColorTemperature: 6570
-  m_UseColorTemperature: 0
-  m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
-  m_UseBoundingSphereOverride: 0
-  m_UseViewFrustumForShadowCasterCull: 1
-  m_ForceVisible: 0
-  m_ShadowRadius: 0
-  m_ShadowAngle: 0
-  m_LightUnit: 1
-  m_LuxAtDistance: 1
-  m_EnableSpotReflector: 1
---- !u!4 &203844589
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 203844586}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}
-  m_LocalPosition: {x: 0, y: 3, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
 --- !u!1 &468661120
 GameObject:
   m_ObjectHideFlags: 0
@@ -517,7 +397,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0.3, y: -1.5, z: -0.3}
-  m_LocalScale: {x: 0.4, y: 3, z: 0.4}
+  m_LocalScale: {x: 0.4, y: 4, z: 0.4}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 827941735}
@@ -550,6 +430,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 1
 --- !u!23 &762163586
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -5951,6 +5832,8 @@ MonoBehaviour:
   largeBodyThreshold: 48
   simWindowMeters: 32
   clampWindowToShore: 0
+  simWindowFocus: {fileID: 0}
+  simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 0
@@ -5979,6 +5862,9 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -6020,6 +5906,7 @@ MonoBehaviour:
     reflectUrpProbe: 0
     realRefraction: 1
     reflectionStrength: 1
+    envReflectionIntensity: 1
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -6028,6 +5915,7 @@ MonoBehaviour:
     refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
+  timeScale: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 512
   objectInteractionSettings:
@@ -6043,7 +5931,7 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0, g: 0.26852286, b: 0.3509434, a: 1}
+    fogColor: {r: 0.031505853, g: 0.22367314, b: 0.2830189, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     fogDensity: 0.2
     waterOpacity: 0
@@ -6052,6 +5940,19 @@ MonoBehaviour:
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 9.1
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 0
+    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
+    scatterIntensity: 2
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.6377357, g: 0.17837597, b: 0.07099317, a: 1}
@@ -6109,10 +6010,13 @@ MonoBehaviour:
     foamDecayResidual: 0.993
     foamDecayRate: 1
     foamSpread: 0.2
+    foamGenThreshold: 0.15
+    foamMinWaveHeight: 0.01
     foamAdvect: 3
     foamFromSpeed: 6
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamPatternSize: 2
     foamStrength: 1
     foamFeather: 0.15
     foamCoreCut: 0.5
@@ -6121,7 +6025,6 @@ MonoBehaviour:
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.97
-  _legacyFoamDecayResidual: 0.993
   _legacyFoamDecayRate: 1
   _legacyFoamSpread: 0.2
   _legacyFoamAdvect: 3
@@ -6227,7 +6130,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!198 &1433908027
 ParticleSystem:
   m_ObjectHideFlags: 0
@@ -11393,6 +11296,5 @@ SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 961739753}
-  - {fileID: 203844589}
   - {fileID: 827941735}
   - {fileID: 1174592926}

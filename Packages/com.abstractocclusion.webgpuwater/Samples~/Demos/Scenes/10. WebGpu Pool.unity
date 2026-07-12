@@ -245,7 +245,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: fbbb3cf841cd2af40ae0c5042450e958, type: 2}
+  - {fileID: 2100000, guid: 828c3580808b26e48a7784ac219f73b9, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -276,7 +276,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 565411546}
-  m_Mesh: {fileID: 4300000, guid: 05a635f9f1bbef141bd9ceee64c30717, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
 --- !u!1 &653487995
 GameObject:
   m_ObjectHideFlags: 0
@@ -335,7 +335,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 963ef64518b461b4d8583e8fd5aa991e, type: 2}
+  - {fileID: 2100000, guid: 9616343f6b745c14f9c3c072fbbf9b39, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -366,7 +366,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 653487995}
-  m_Mesh: {fileID: 4300000, guid: 05a635f9f1bbef141bd9ceee64c30717, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
 --- !u!1 &836982547
 GameObject:
   m_ObjectHideFlags: 0
@@ -788,7 +788,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: f2d985db071afac46bb8dbb94a28e922, type: 2}
+  - {fileID: 2100000, guid: f7d2c347a3df2f74b9f66abb71087a4e, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -819,7 +819,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1056463570}
-  m_Mesh: {fileID: 4300000, guid: 8d1b62eb47ac7854f8405804222b8d4e, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 1743e319e728aed4492ad2fd6a98d6d2, type: 2}
 --- !u!1 &1175356042
 GameObject:
   m_ObjectHideFlags: 0
@@ -5742,6 +5742,12 @@ MonoBehaviour:
   floatRadiusScale: 0.5
   waveDriftStrength: 0.15
   verticalSettleDamping: 1
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1272759484
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5758,6 +5764,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1272759485
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -5810,7 +5817,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 08426aeecc0e60540a475ff715495eb7, type: 2}
+  - {fileID: 2100000, guid: 66e778c9bd12b0e48b1f2266944e76d2, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -6005,17 +6012,19 @@ MonoBehaviour:
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 4800000, guid: 20ef2245624802e47920d7462ca2609d, type: 3}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
-  waterMesh: {fileID: 4300000, guid: 05a635f9f1bbef141bd9ceee64c30717, type: 2}
+  waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 836982548}
-  tiles: {fileID: 2800000, guid: 6e5b4f466b44cc24c8fb709a1ff8ef8b, type: 3}
-  sky: {fileID: 8900000, guid: 033b051978c8f2e4d8c9fd4b88a9aeb4, type: 2}
+  tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
+  sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
   volumeExtent: {x: 1, y: 1, z: 1}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
   simWindowMeters: 32
   clampWindowToShore: 0
+  simWindowFocus: {fileID: 0}
+  simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 0
@@ -6024,8 +6033,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -6044,14 +6052,15 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -6094,6 +6103,7 @@ MonoBehaviour:
     refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
+  timeScale: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -6118,6 +6128,19 @@ MonoBehaviour:
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 0
+    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
+    scatterIntensity: 2
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -6175,10 +6198,13 @@ MonoBehaviour:
     foamDecayResidual: 0.993
     foamDecayRate: 1
     foamSpread: 0.2
+    foamGenThreshold: 0.15
+    foamMinWaveHeight: 0.01
     foamAdvect: 3
     foamFromSpeed: 6
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamPatternSize: 2
     foamStrength: 1
     foamFeather: 0.15
     foamCoreCut: 0.5
@@ -6187,7 +6213,6 @@ MonoBehaviour:
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96
-  _legacyFoamDecayResidual: 0.993
   _legacyFoamDecayRate: 1
   _legacyFoamSpread: 0.2
   _legacyFoamAdvect: 3
@@ -11140,7 +11165,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: a9614220159f73b4f95d9544890ace07, type: 2}
+  - {fileID: 2100000, guid: 886a67df4e86736479b602d11683dd81, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -11171,7 +11196,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2121994488}
-  m_Mesh: {fileID: 4300000, guid: e3597f30612577349b6c67ea780ef711, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 02a3b3b12b1416c4084b37dacce13499, type: 2}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

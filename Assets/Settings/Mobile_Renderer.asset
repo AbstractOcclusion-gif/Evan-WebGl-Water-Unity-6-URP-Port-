@@ -49,7 +49,8 @@ MonoBehaviour:
     probeVolumeBlendStatesCS: {fileID: 0}
   m_RendererFeatures:
   - {fileID: 2710708040718219573}
-  m_RendererFeatureMap: 35f9cde0995e9e25
+  - {fileID: 8844371543007160279}
+  m_RendererFeatureMap: 35f9cde0995e9e25d7e783120f85bd7a
   m_UseNativeRenderPass: 1
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
@@ -91,4 +92,18 @@ MonoBehaviour:
   m_Name: LargeBodyAtmosphereFeature
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.LargeBodyAtmosphereFeature
   m_Active: 1
-  godRayShader: {fileID: 0}
+  godRayShader: {fileID: 4800000, guid: b96b932221599ec468e4bdd24b6b68ad, type: 3}
+--- !u!114 &8844371543007160279
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eb4ec8ce66175f94a9d438582dee7921, type: 3}
+  m_Name: WaterUnderwaterFogFeature
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterUnderwaterFogFeature
+  m_Active: 1
+  underwaterFogShader: {fileID: 4800000, guid: b4b285a8c132e8a47adf2ef988eb03db, type: 3}

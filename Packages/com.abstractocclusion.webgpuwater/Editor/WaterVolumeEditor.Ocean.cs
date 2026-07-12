@@ -41,8 +41,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     EditorGUILayout.HelpBox(OceanOnlyHelp, MessageType.None);
                     DrawFields(
-                        "ocean.clipmapRings",
-                        "ocean.clipmapSegments",
+                        "ocean.clipmapGridResolution",
                         "ocean.clipmapOuterRadius",
                         "ocean.oceanDetailFalloff",
                         "ocean.horizonFadeDistance",

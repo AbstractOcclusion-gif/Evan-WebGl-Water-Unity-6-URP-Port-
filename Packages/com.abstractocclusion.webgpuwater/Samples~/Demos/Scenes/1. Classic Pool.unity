@@ -879,6 +879,12 @@ MonoBehaviour:
   floatRadiusScale: 0.5
   waveDriftStrength: 0.15
   verticalSettleDamping: 1
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1272759484
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -895,6 +901,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1272759485
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -1035,7 +1042,7 @@ MonoBehaviour:
   maxParticlesPerBurst: 48
   upwardBias: 1
   outwardSpread: 1.3
-  dropletSize: 0.02
+  dropletSize: 0.1
   lifetime: {x: 0.6, y: 1.3}
   popDuration: 0.12
   driftStrength: 2
@@ -1043,7 +1050,7 @@ MonoBehaviour:
   surfaceRideHeight: 0.004
   crownParticles: {fileID: 2013404533}
   crownMinStrength: 0.086
-  crownBaseSize: 0.4
+  crownBaseSize: 0.5
   crownLifetime: 0.5
 --- !u!198 &1342015188
 ParticleSystem:
@@ -5924,6 +5931,8 @@ MonoBehaviour:
   largeBodyThreshold: 48
   simWindowMeters: 32
   clampWindowToShore: 0
+  simWindowFocus: {fileID: 0}
+  simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 0
@@ -5932,8 +5941,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -5952,14 +5960,15 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -5993,6 +6002,7 @@ MonoBehaviour:
     reflectUrpProbe: 0
     realRefraction: 1
     reflectionStrength: 1
+    envReflectionIntensity: 1
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -6001,6 +6011,7 @@ MonoBehaviour:
     refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
+  timeScale: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -6025,6 +6036,19 @@ MonoBehaviour:
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 7.2
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 0
+    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
+    scatterIntensity: 2
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -6077,24 +6101,26 @@ MonoBehaviour:
   _legacyWaveNormalStrength: 1
   foamSettings:
     foam: 1
-    foamGenRate: 0.6
-    foamDecay: 0.933
+    foamGenRate: 0.862
+    foamDecay: 0.9485
     foamDecayResidual: 0.9609
-    foamDecayRate: 0.34
+    foamDecayRate: 1.87
     foamSpread: 0.043
+    foamGenThreshold: 0.03
+    foamMinWaveHeight: 0.019
     foamAdvect: 3
     foamFromSpeed: 20
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamStrength: 1
+    foamPatternSize: 1
+    foamStrength: 1.113
     foamFeather: 0.083
-    foamCoreCut: 0.759
+    foamCoreCut: 1
     foamBorderWidth: 0
     foamContactDepth: 0
   _legacyFoam: 1
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.933
-  _legacyFoamDecayResidual: 0.9609
   _legacyFoamDecayRate: 0.34
   _legacyFoamSpread: 0.043
   _legacyFoamAdvect: 3
@@ -6141,6 +6167,8 @@ MonoBehaviour:
   volume: {fileID: 0}
   particleCompute: {fileID: 0}
   particleMaterial: {fileID: 0}
+  renderMode: 0
+  densityMaterial: {fileID: 0}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 30

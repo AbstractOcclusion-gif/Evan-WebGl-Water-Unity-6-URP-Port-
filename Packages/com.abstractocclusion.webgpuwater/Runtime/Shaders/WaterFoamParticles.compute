@@ -26,6 +26,7 @@
 
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
+#include "WaterHeroWave.hlsl"   // hero wave: lip spray source + base height for surface glue
 
 // MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
 #define SPAWN_THREAD_GROUP_SIZE  8
@@ -117,6 +118,13 @@ static const int SPLAT_RADIUS_MAX = 3;
 static const uint TILE_GRID = 16;
 // Spawn-probability boost per unit of local velocity shear (wake edges emit more).
 static const float SPAWN_SHEAR_BOOST = 4.0;
+
+// Hero-wave lip spray: above this lip weight (crestness x peel x un-collapsed, 0..1) a spawn in the
+// actively-breaking pocket is FORCED to ballistic spray - the jet thrown off the overturning lip.
+static const float HERO_SPRAY_MIN_LIP = 0.35;
+// Horizontal throw (world units/sec at lip weight 1) along the wave's travel direction; gravity
+// arcs it down the face. Matches the visual speed of the curl, not a physical jet velocity.
+static const float HERO_SPRAY_THROW_SPEED = 7.0;
 
 // ---- CPU-event splash bursts (spray unification): rigidbody impacts and mouse splashes
 // queue burst requests on the CPU; the SpawnBurst kernel throws KIND_SPRAY droplets from
@@ -277,6 +285,7 @@ bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
 // compute has no wave globals). Pond: sim heightfield. Ocean: summed FFT cascades.
 float SurfaceWorldY(float3 worldPos, float2 simNorm)
 {
+    float surfaceY;
 #ifdef OCEAN_CREST_FOAM
     float height = 0.0;
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
@@ -286,12 +295,21 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
         float2 uv = worldPos.xz / max(_OceanFftDomainSizes[c], 1e-3);
         height += active * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
     }
-    return _VolumeCenter.y + height * _OceanFftAmplitude;
+    surfaceY = _VolumeCenter.y + height * _OceanFftAmplitude;
 #else
     // Sim height is stored in pool units; the volume's vertical extent maps it to metres.
     float poolY = SampleSim(simNorm).r;
-    return _VolumeCenter.y + poolY * VolumeExtentSafe().y;
+    surfaceY = _VolumeCenter.y + poolY * VolumeExtentSafe().y;
 #endif
+    // Hero wave: the ocean itself rises with the wave (base offset on every surface vertex), so
+    // the particle glue must rise too or foam sinks INTO the raised crest. Base part only - a
+    // floating particle sits on the face, never on the overhanging lip sheet.
+    if (_HeroWaveActive > 0.5)
+    {
+        float heroWeightUnused;
+        surfaceY += HeroWaveOffset(worldPos.xz, false, heroWeightUnused).y;
+    }
+    return surfaceY;
 }
 
 // ---------------------------------------------------------------- kernels
@@ -311,16 +329,15 @@ void BeginFrame(uint3 id : SV_DispatchThreadID)
 void Spawn(uint3 id : SV_DispatchThreadID)
 {
     int2 texel = int2(id.xy);
+    float3 texelWorld = TexelToWorld(texel);
     float foam = FoamTex.Load(int3(texel, 0));
 #ifdef OCEAN_CREST_FOAM
     // Add breaking-crest foam from the FFT cascade, sampled at this texel's world position. max() so a
     // texel that is both interaction-foamy and on a crest still emits at the stronger of the two.
-    foam = max(foam, OceanCrestFoamAt(TexelToWorld(texel).xz));
+    foam = max(foam, OceanCrestFoamAt(texelWorld.xz));
 #endif
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;
-
-    float3 texelWorld = TexelToWorld(texel);
 
     // Stochastic distance LOD (KWS): spawn probability falls with camera distance, dithered
     // by an independent random so density thins smoothly instead of cutting at a ring.
@@ -358,7 +375,21 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float r1 = Rand01(id.xy, _FrameSeed ^ 0x85EBCA6Bu);
     float r2 = Rand01(id.xy, _FrameSeed ^ 0xC2B2AE35u);
 
+    // Hero-wave lip weight: > 0 only in the actively breaking pocket. The foam BUFFER already
+    // carries the injected lip foam (spawn probability is covered); this weight forces the pocket's
+    // spawns into thrown spray. Evaluated here - after the probability roll - so the transcendental
+    // terms run only for the handful of texels that actually spawn this frame.
+    float heroLip = 0.0;
+    if (_HeroWaveActive > 0.5)
+    {
+        HeroWaveTerms heroTerms = HeroComputeTerms(HeroLocalCoords(texelWorld.xz));
+        float heroGate = smoothstep(0.0, HERO_SHEET_MIN_AMPLITUDE, heroTerms.amplitude);
+        heroLip = heroTerms.crestness * heroTerms.peel * (1.0 - heroTerms.collapse) * heroGate;
+    }
+
     bool spray = r0 < _SprayChance;
+    // The breaking pocket always throws: lip spawns are ballistic jet, never floating foam.
+    if (heroLip > HERO_SPRAY_MIN_LIP) spray = true;
 
     // Per-screen-tile spray budget (KWS): spray clumping in one screen region is capped by
     // reserving a slot in a coarse tile grid; over-budget spawns demote to floating foam
@@ -383,6 +414,15 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     particle.worldPos.y = 0.0;
     particle.velocity = flowWorld + float3(_WindDrift.x, 0.0, _WindDrift.y);
     if (spray) particle.velocity.y = _SprayLaunchSpeed * (0.6 + 0.4 * r1);
+    // Lip jet: throw the pocket's spray forward along the wave's travel direction, scaled by the
+    // lip weight, so droplets fly off the curl and gravity arcs them down the face. Gated on the
+    // POST-BUDGET spray flag: a tile-cap demotion must not leave a floater streaking at 7 m/s.
+    if (spray && heroLip > HERO_SPRAY_MIN_LIP)
+    {
+        float2 heroAlong = _HeroWaveFrame.zw;
+        float2 heroTravel = float2(-heroAlong.y, heroAlong.x);
+        particle.velocity += float3(heroTravel.x, 0.0, heroTravel.y) * (HERO_SPRAY_THROW_SPEED * heroLip);
+    }
     particle.age = 0.0;
     particle.life = lerp(_LifeMin, _LifeMax, r1);
     particle.size = lerp(_SizeMin, _SizeMax, r2);

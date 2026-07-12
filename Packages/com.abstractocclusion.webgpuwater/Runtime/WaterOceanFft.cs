@@ -235,9 +235,12 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             _h0 = CreateArray("OceanFftH0", RenderTextureFormat.ARGBHalf, RenderTextureFormat.ARGBFloat);
-            _specX = CreateArray("OceanFftSpecX", RenderTextureFormat.RGHalf, RenderTextureFormat.RGFloat);
-            _specY = CreateArray("OceanFftSpecY", RenderTextureFormat.RGHalf, RenderTextureFormat.RGFloat);
-            _specZ = CreateArray("OceanFftSpecZ", RenderTextureFormat.RGHalf, RenderTextureFormat.RGFloat);
+            // Complex spectra packed as R32_UINT (two half-floats/texel): the in-place butterfly FFT reads
+            // AND writes these, and WebGPU only allows read-write storage on the r32 formats (rg16float is
+            // not even a storage format there). The compute packs/unpacks via OceanPackC/OceanUnpackC.
+            _specX = CreateSpecArray("OceanFftSpecX");
+            _specY = CreateSpecArray("OceanFftSpecY");
+            _specZ = CreateSpecArray("OceanFftSpecZ");
             _displacement = CreateArray("OceanFftDisplacement", RenderTextureFormat.ARGBHalf, RenderTextureFormat.ARGBFloat);
             // Mipped + trilinear: the fragment samples this per pixel, so mips give distance anti-aliasing.
             _normal = CreateArray("OceanFftNormal", RenderTextureFormat.ARGBHalf, RenderTextureFormat.ARGBFloat, mips: true);
@@ -269,6 +272,33 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (TryCreateArray(name, preferred, mips, out RenderTexture rt)) return rt;
             if (TryCreateArray(name, fallback, mips, out rt)) return rt;
+            return null;
+        }
+
+        // Spectrum array target in R32_UINT (packed complex, read-write storage). Point-sampled: the FFT
+        // only index-loads it, never filters. R32_UInt is universally random-write capable, so no fallback.
+        RenderTexture CreateSpecArray(string name)
+        {
+            var desc = new RenderTextureDescriptor(_resolution, _resolution,
+                UnityEngine.Experimental.Rendering.GraphicsFormat.R32_UInt, 0)
+            {
+                dimension = TextureDimension.Tex2DArray,
+                volumeDepth = _cascades,
+                enableRandomWrite = true,
+                msaaSamples = 1,
+                useMipMap = false,
+            };
+            var rt = new RenderTexture(desc)
+            {
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Repeat,
+                name = name,
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+            rt.Create();
+            if (rt.IsCreated()) return rt;
+            rt.Release();
+            Object.Destroy(rt);
             return null;
         }
 

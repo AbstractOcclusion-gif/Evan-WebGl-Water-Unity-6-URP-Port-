@@ -332,18 +332,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             m.EnableKeyword(KeywordRealRefraction);
         }
 
-        // Give a water surface material the animated foam pattern + its relief normal
-        // map. Skipped silently when the flipbook asset is absent: the shader's white/bump
-        // defaults degrade to flat foam.
+        // Give a water surface material the animated foam pattern. Skipped silently when the
+        // flipbook asset is absent: the shader's white default degrades to flat foam. Relief
+        // is procedural now (finite differences of the pattern, like the ocean whitecap), so
+        // no normal-map assignment; the generated FoamFlipbookNormal asset stays on disk for
+        // old materials that still serialize it.
         internal static void AssignFoamFlipbook(Material m)
         {
             var flipbook = LoadFlipbook(FoamFlipbookPath, TextureWrapMode.Repeat, true);
             if (flipbook == null) return;
             m.SetTexture(PropFoamTex, flipbook);
             m.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
-
-            var relief = LoadFlipbook(FoamNormalFlipbookPath, TextureWrapMode.Repeat, true, linear: true);
-            if (relief != null) m.SetTexture(PropFoamNormalTex, relief);
         }
 
         // Underwater god-ray volume (caustic-masked light shafts). Returns null if the shader is

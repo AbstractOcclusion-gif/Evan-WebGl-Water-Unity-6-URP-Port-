@@ -5519,6 +5519,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.2
   verticalSettleDamping: 1.5
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &648697667
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5535,6 +5541,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &648697668
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -10867,6 +10874,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.2
   verticalSettleDamping: 1.5
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1216013719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10883,6 +10896,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1216013720
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -11188,6 +11202,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.2
   verticalSettleDamping: 1.5
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1374467074
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11204,6 +11224,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1374467075
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -11397,6 +11418,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.2
   verticalSettleDamping: 1.5
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1476185876
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11413,6 +11440,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1476185877
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -11696,6 +11724,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.2
   verticalSettleDamping: 1.5
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1556238450
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11712,6 +11746,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1556238451
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -12067,6 +12102,8 @@ MonoBehaviour:
   largeBodyThreshold: 15
   simWindowMeters: 10
   clampWindowToShore: 1
+  simWindowFocus: {fileID: 0}
+  simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 0
@@ -12095,6 +12132,9 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -12136,6 +12176,7 @@ MonoBehaviour:
     reflectUrpProbe: 0
     realRefraction: 1
     reflectionStrength: 0.2
+    envReflectionIntensity: 1
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -12144,6 +12185,7 @@ MonoBehaviour:
     refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
+  timeScale: 1
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -12168,6 +12210,19 @@ MonoBehaviour:
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 8
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 0
+    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
+    scatterIntensity: 2
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
   depthAttenuation:
     depthDarken: 1
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -12219,16 +12274,19 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 2.26
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 0
+    foam: 1
     foamGenRate: 0.98
     foamDecay: 0.948
     foamDecayResidual: 0.99
     foamDecayRate: 0.3
     foamSpread: 0.038
+    foamGenThreshold: 0.15
+    foamMinWaveHeight: 0.01
     foamAdvect: 1.85
     foamFromSpeed: 12.1
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamPatternSize: 2
     foamStrength: 0.71
     foamFeather: 0.254
     foamCoreCut: 0.82
@@ -12237,7 +12295,6 @@ MonoBehaviour:
   _legacyFoam: 1
   _legacyFoamGenRate: 0.98
   _legacyFoamDecay: 0.948
-  _legacyFoamDecayResidual: 0.99
   _legacyFoamDecayRate: 0.3
   _legacyFoamSpread: 0.038
   _legacyFoamAdvect: 1.85
@@ -12355,6 +12412,12 @@ MonoBehaviour:
   floatRadiusScale: 1.5
   waveDriftStrength: 0.2
   verticalSettleDamping: 1.5
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 0
+  drawDebugGizmos: 1
 --- !u!114 &1982793376
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -12371,6 +12434,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
+  reflectsWaves: 0
 --- !u!54 &1982793377
 Rigidbody:
   m_ObjectHideFlags: 0
