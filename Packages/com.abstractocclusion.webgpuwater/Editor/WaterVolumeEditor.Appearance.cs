@@ -53,14 +53,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "volumeScatterSettings.scatterAnisotropy",
                     "volumeScatterSettings.scatterAmbientTerm",
                     "volumeScatterSettings.scatterSunTerm");
-                WaterEditorUI.SubHeading("Wave-crest subsurface glow");
-                DrawFields(
-                    "volumeScatterSettings.crestScatter",
-                    "volumeScatterSettings.sssIntensity",
-                    "volumeScatterSettings.sssSunFalloff",
-                    "volumeScatterSettings.sssPinchMin",
-                    "volumeScatterSettings.sssPinchMax",
-                    "volumeScatterSettings.sssPinchFalloff");
+                _showCrestGlow = WaterEditorUI.SubSection("Wave-crest subsurface glow (ocean)", _showCrestGlow, () =>
+                    DrawFields(
+                        "volumeScatterSettings.crestScatter",
+                        "volumeScatterSettings.sssIntensity",
+                        "volumeScatterSettings.sssSunFalloff",
+                        "volumeScatterSettings.sssPinchMin",
+                        "volumeScatterSettings.sssPinchMax",
+                        "volumeScatterSettings.sssPinchFalloff"),
+                    contentEnabled: IsOcean);
             });
         }
 
@@ -111,7 +112,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "foamSettings.foamPatternSize",
                     "foamSettings.foamStrength",
                     "foamSettings.foamFeather",
-                    "foamSettings.foamCoreCut",
+                    "foamSettings.foamCoreCut");
+                // Pool-wall border foam + geometry contact foam are bounded-only.
+                DrawFieldsIf(Bounded,
                     "foamSettings.foamBorderWidth",
                     "foamSettings.foamContactDepth");
             });

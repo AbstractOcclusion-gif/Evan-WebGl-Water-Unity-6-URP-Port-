@@ -1014,17 +1014,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
                         float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
 
-                        // contact foam where geometry pierces the waterline. Needs the
-                        // depth texture; when it's unavailable (or uses a different Z
-                        // convention in a build) the sample can resolve in FRONT of the
-                        // surface, which the old formula turned into full-surface foam.
-                        // Guard: only add contact foam where the scene is genuinely just
-                        // BEHIND the surface, else none. Fixes "all water foamed" builds.
-                        float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
-                        float sceneEye = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(suv, 0, 0)));
-                        float surfEye  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
-                        float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
-                        float contact  = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
+                        // contact foam where geometry pierces the waterline. BOUNDED bodies only (same
+                        // gate as the border above): on a windowed ocean/large body the screen-depth
+                        // contact test is unreliable (it fought the shore/SWE work) and there are no walls,
+                        // so it is skipped entirely. Needs the depth texture; the behind-guard only adds
+                        // foam where the scene is genuinely just BEHIND the surface (fixes "all water
+                        // foamed" builds).
+                        float contact = 0.0;
+                        if (_SimWindowed < 0.5)
+                        {
+                            float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
+                            float sceneEye = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(suv, 0, 0)));
+                            float surfEye  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
+                            float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
+                            contact = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
+                        }
 
                         float mask = saturate((advected + border + contact) * _FoamStrength);
 

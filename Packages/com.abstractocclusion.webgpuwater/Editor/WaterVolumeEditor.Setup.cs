@@ -20,7 +20,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawLookSection()
         {
             _showLook = WaterEditorUI.Section("Look / Surfaces", _showLook, () =>
-                DrawFields("tiles", "sky"));
+            {
+                DrawFieldsIf(Bounded, "tiles"); // pool tile albedo - bounded bodies only
+                DrawFields("sky");
+            });
         }
 
         void DrawBodySection()
@@ -50,7 +53,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _showPerformance = WaterEditorUI.Section("Performance", _showPerformance, () =>
             {
-                DrawFields("quality", "enableCulling");
+                DrawFields("quality", "rippleQuality", "enableCulling");
                 // Activation distance only bites when culling is on; grey it out otherwise.
                 EditorGUI.BeginDisabledGroup(!Prop("enableCulling").boolValue);
                 DrawFields("activationDistance");

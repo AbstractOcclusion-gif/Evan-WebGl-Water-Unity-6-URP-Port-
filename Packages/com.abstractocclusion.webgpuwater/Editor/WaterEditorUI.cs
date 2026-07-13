@@ -58,9 +58,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // ---- sections ------------------------------------------------------------------------
 
-        /// <summary>A boxed foldout section. Returns the new expanded state.</summary>
-        public static bool Section(string title, bool expanded, Action drawContent)
+        /// <summary>A boxed foldout section. When <paramref name="contentEnabled"/> is false the body is
+        /// greyed (disabled) but the header still folds, so the reader can see settings that don't apply
+        /// to the current body type. Returns the new expanded state.</summary>
+        public static bool Section(string title, bool expanded, Action drawContent, bool contentEnabled = true)
         {
+            if (!contentEnabled) EditorGUI.BeginDisabledGroup(true);
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             expanded = EditorGUILayout.Foldout(expanded, title, true, FoldoutStyle);
 
@@ -74,6 +77,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space(Style.SectionBottomSpacing);
+            if (!contentEnabled) EditorGUI.EndDisabledGroup();
             return expanded;
         }
 
@@ -81,10 +85,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         /// A boxed foldout section with an enable toggle in the header row; the body is disabled
         /// (greyed) while the toggle is off. Returns the new expanded state.
         /// </summary>
-        public static bool SectionWithToggle(string title, bool expanded, SerializedProperty enabled, Action drawContent)
+        public static bool SectionWithToggle(string title, bool expanded, SerializedProperty enabled, Action drawContent, bool contentEnabled = true)
         {
             if (enabled == null) throw new ArgumentNullException(nameof(enabled));
 
+            if (!contentEnabled) EditorGUI.BeginDisabledGroup(true);
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
             EditorGUILayout.BeginHorizontal();
@@ -105,6 +110,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space(Style.SectionBottomSpacing);
+            if (!contentEnabled) EditorGUI.EndDisabledGroup();
             return expanded;
         }
 
@@ -113,6 +119,41 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             EditorGUILayout.Space(Style.SubHeadingTopSpacing);
             GUILayout.Label(text, SubHeadingStyle);
+        }
+
+        /// <summary>A nested collapsible sub-group inside a Section (its own expanded state). When
+        /// <paramref name="contentEnabled"/> is false the body is greyed. Returns the new expanded state.</summary>
+        public static bool SubSection(string title, bool expanded, Action drawContent, bool contentEnabled = true)
+        {
+            if (!contentEnabled) EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.Space(Style.SubHeadingTopSpacing);
+            expanded = EditorGUILayout.Foldout(expanded, title, true, SubSectionFoldoutStyle);
+
+            if (expanded && drawContent != null)
+            {
+                EditorGUI.indentLevel++;
+                drawContent.Invoke();
+                EditorGUI.indentLevel--;
+            }
+
+            if (!contentEnabled) EditorGUI.EndDisabledGroup();
+            return expanded;
+        }
+
+        /// <summary>A segmented Pond / Lake / Ocean selector bound to the bodyType enum property.</summary>
+        public static void BodyTypeSelector(SerializedProperty bodyType)
+        {
+            if (bodyType == null) throw new ArgumentNullException(nameof(bodyType));
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Label("Body Type", SubHeadingStyle, GUILayout.Width(Style.BodyTypeLabelWidth));
+            int current = bodyType.enumValueIndex;
+            int picked = GUILayout.Toolbar(current, bodyType.enumDisplayNames);
+            if (picked != current) bodyType.enumValueIndex = picked;
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.EndVertical();
+            EditorGUILayout.Space(Style.SectionBottomSpacing);
         }
 
         // ---- lazy styles ---------------------------------------------------------------------
@@ -152,6 +193,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         private static GUIStyle SubHeadingStyle => _subHeadingStyle ??= new GUIStyle(EditorStyles.miniBoldLabel)
         {
             normal = { textColor = Style.SubHeadingColor }
+        };
+
+        private static GUIStyle _subSectionFoldoutStyle;
+        private static GUIStyle SubSectionFoldoutStyle => _subSectionFoldoutStyle ??= new GUIStyle(EditorStyles.foldout)
+        {
+            fontStyle = FontStyle.Bold,
+            normal = { textColor = Style.SubHeadingColor },
+            onNormal = { textColor = Style.SubHeadingColor }
         };
 
         // ---- footer text (resolved package version, no hardcoded number) ---------------------
@@ -196,6 +245,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             public const float SectionBottomSpacing = 3f;
             public const float SubHeadingTopSpacing = 4f;
             public const float ToggleWidth = 20f;
+            public const float BodyTypeLabelWidth = 70f;
 
             public const string FooterPrefix = "AbstractOcclusion  ·  WebGPU Water";
         }

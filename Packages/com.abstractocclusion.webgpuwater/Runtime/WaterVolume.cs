@@ -128,7 +128,7 @@ namespace AbstractOcclusion.WebGpuWater
                      "Publishes the _LargeBody shader flag; the clipmap + FFT modules read the same flag.")]
             public bool openWater = false;
             [Tooltip("Open-water SWELL height multiplier. The big waves' scale and direction come from " +
-                     "the Wind waves settings below (wind speed scales the swell, wind heading steers it); " +
+                     "the Wind Waves section (wind speed scales the swell, wind heading steers it); " +
                      "this is an artistic multiplier on top, like Wave Amplitude Scale is for the small " +
                      "waves. 0 = no big swell (small wind waves remain).")]
             [Min(0f)] public float largeWaveAmplitude = 1f;

@@ -17,15 +17,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawRippleSection()
         {
             _showRipple = WaterEditorUI.Section("Ripple Tuning", _showRipple, () =>
+            {
                 DrawFields(
                     "rippleSettings.waveSpeed",
                     "rippleSettings.damping",
                     "rippleSettings.stepsPerFrame",
                     "rippleSettings.rippleStrength",
                     "rippleSettings.rippleRadius",
-                    "rippleSettings.seedRipplesOnStart",
+                    "rippleSettings.seedRipplesOnStart");
+                // Volume conservation is meaningless on an unbounded ocean (no finite volume to conserve).
+                DrawFieldsIf(Bounded,
                     "rippleSettings.conserveVolume",
-                    "rippleSettings.conserveMaxCorrection"));
+                    "rippleSettings.conserveMaxCorrection");
+            });
         }
 
         void DrawWindWavesSection()

@@ -1,6 +1,7 @@
 // WebGL Water - WaterVolume inspector: large-water + ocean sections (camera-following sim window,
-// open water, horizon clipmap, ocean god rays, whitecap foam). The clipmap/god-ray/foam blocks are
-// ocean-only, so they grey out until Open Water is on. Draws serialized properties by exact path.
+// open water, horizon clipmap, ocean god rays, whitecap foam). Greyed by body type: the sim window
+// and open water apply to Lake + Ocean; the clipmap/god-ray/whitecap blocks are Ocean-only. Draws
+// serialized properties by exact path. Editor-only.
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
@@ -19,53 +20,58 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "clampWindowToShore",
                     "simWindowFocus",
                     "simWindowOffset",
-                    "simWindowEdgeFadeTexels"));
+                    "simWindowEdgeFadeTexels"),
+                contentEnabled: LakeOrOcean);
         }
 
         void DrawOceanOpenWaterSection()
         {
             _showOceanOpenWater = WaterEditorUI.SectionWithToggle(
                 "Ocean · Open Water", _showOceanOpenWater, Prop("ocean.openWater"), () =>
-                DrawFields(
-                    "ocean.largeWaveAmplitude",
-                    "ocean.largeWaveChoppiness",
-                    "ocean.swellHeight",
-                    "ocean.swellWavelength",
-                    "ocean.unboundedOcean"));
+                {
+                    EditorGUILayout.HelpBox(SwellHelp, MessageType.None);
+                    DrawFields(
+                        "ocean.largeWaveAmplitude",
+                        "ocean.largeWaveChoppiness",
+                        "ocean.swellHeight",
+                        "ocean.swellWavelength",
+                        "ocean.unboundedOcean");
+                },
+                contentEnabled: LakeOrOcean);
         }
 
         void DrawOceanClipmapSection()
         {
             _showOceanClipmap = WaterEditorUI.Section("Ocean · Clipmap (horizon)", _showOceanClipmap, () =>
-                DrawOceanOnly(() =>
-                {
-                    EditorGUILayout.HelpBox(OceanOnlyHelp, MessageType.None);
-                    DrawFields(
-                        "ocean.clipmapGridResolution",
-                        "ocean.clipmapOuterRadius",
-                        "ocean.oceanDetailFalloff",
-                        "ocean.horizonFadeDistance",
-                        "ocean.horizonHazeColor",
-                        "ocean.horizonHazeDensity");
-                }));
+            {
+                EditorGUILayout.HelpBox(OceanOnlyHelp, MessageType.None);
+                DrawFields(
+                    "ocean.clipmapGridResolution",
+                    "ocean.clipmapOuterRadius",
+                    "ocean.oceanDetailFalloff",
+                    "ocean.horizonFadeDistance",
+                    "ocean.horizonHazeColor",
+                    "ocean.horizonHazeDensity");
+            }, contentEnabled: IsOcean);
         }
 
         void DrawOceanGodRaysSection()
         {
             _showOceanGodRays = WaterEditorUI.Section("Ocean · God Rays", _showOceanGodRays, () =>
-                DrawOceanOnly(() => DrawFields(
+                DrawFields(
                     "ocean.largeGodRayColor",
                     "ocean.largeGodRayDensity",
                     "ocean.largeGodRaySteps",
                     "ocean.largeGodRayAnisotropy",
                     "ocean.largeGodRayExtinction",
-                    "ocean.largeGodRayCausticStrength")));
+                    "ocean.largeGodRayCausticStrength"),
+                contentEnabled: IsOcean);
         }
 
         void DrawOceanFoamSection()
         {
             _showOceanFoam = WaterEditorUI.Section("Ocean · Foam (whitecaps)", _showOceanFoam, () =>
-                DrawOceanOnly(() => DrawFields(
+                DrawFields(
                     "ocean.oceanFoamWindThreshold",
                     "ocean.oceanFoamCoverage",
                     "ocean.oceanFoamStrength",
@@ -75,18 +81,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "ocean.oceanFoamFeather",
                     "ocean.oceanFoamDeposit",
                     "ocean.oceanFoamDrift",
-                    "ocean.oceanFoamMaxBuildup")));
+                    "ocean.oceanFoamMaxBuildup"),
+                contentEnabled: IsOcean);
         }
 
-        // Ocean sub-features do nothing on a body that isn't open water; grey them to say so.
-        void DrawOceanOnly(System.Action drawContent)
-        {
-            EditorGUI.BeginDisabledGroup(!Prop("ocean.openWater").boolValue);
-            drawContent.Invoke();
-            EditorGUI.EndDisabledGroup();
-        }
-
-        const string OceanOnlyHelp = "Ocean-only. Requires Open Water (above) to take effect.";
+        const string OceanOnlyHelp = "Ocean-only. Requires Open Water on to take effect.";
+        const string SwellHelp =
+            "Large Wave Amplitude scales the wind-driven swell (steered by the Wind Waves section). " +
+            "Swell Height adds an independent long-period roll on top. Unbounded Ocean extends the " +
+            "surface to the horizon (an ocean, not a bounded lake).";
     }
 }
 #endif
