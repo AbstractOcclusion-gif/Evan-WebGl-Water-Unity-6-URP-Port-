@@ -47,20 +47,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             sampler2D _BedTex;
             float _BedValid;
             float _UseBedDepth;
-            float _SwellShoalDepth;
-            float _SwellShoalStrength;
-
-            // Swell shoaling at a WORLD xz. KEEP IN SYNC with WaterSurface / WaterUnderwaterFog /
-            // LargeBodyCaustics and LargeWaveField (CPU).
-            float SwellShoalFactor(float2 worldXZ)
-            {
-                if (_UseBedDepth < 0.5 || _BedValid < 0.5) return 1.0;
-                float2 bedUV = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y)).xz * 0.5 + 0.5;
-                float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
-                float stillDepth = max(0.0, -bedPoolY * VolumeExtentSafe().y);
-                float t = saturate(stillDepth / max(_SwellShoalDepth, 1e-3));
-                return lerp(1.0 - _SwellShoalStrength, 1.0, t);
-            }
 
             // Atlas layout is a uniform now (_ParticleFlipbookGrid): (1,1) = a plain non-atlas texture,
             // (2,2) etc. = a flipbook. Optional, like the surface foam's _FoamTexFrames.
@@ -147,7 +133,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // tilt) so foam sits ON the breaking wave, not on the flat rest plane. The pond path
                     // (else) is byte-for-byte unchanged.
                     float2 wxz = particle.worldPos.xz;
-                    surfaceWorld = float3(wxz.x, _VolumeCenter.y + LargeBodyWaveHeight(wxz) * SwellShoalFactor(wxz), wxz.y);
+                    surfaceWorld = float3(wxz.x, _VolumeCenter.y + LargeBodyWaveHeight(wxz), wxz.y);
                     float2 tilt = OceanFftNormalTilt(wxz);
                     surfaceNormal = normalize(float3(tilt.x, 1.0, tilt.y));
                 }

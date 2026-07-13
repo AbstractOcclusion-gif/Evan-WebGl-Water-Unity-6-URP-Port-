@@ -217,23 +217,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
             sampler2D _BedTex;
-            float _SwellShoalDepth;    // world depth over which the swell ramps to full height
-            float _SwellShoalStrength; // 0 = no reduction, 1 = flattened at the waterline
-
-            // Swell shoaling at a WORLD xz from the baked bed: 1 in deep water, ramping toward
-            // (1 - strength) as the still-water column thins over _SwellShoalDepth. Used to shoal the
-            // swell height/chop (vertex) AND to fade the whitecap coverage (fragment) so flattened swell
-            // stops foaming. 1 when no bed. KEEP IN SYNC with WaterUnderwaterFog / FoamParticles /
-            // LargeBodyCaustics and LargeWaveField (CPU).
-            float SwellShoalFactor(float2 worldXZ)
-            {
-                if (_UseBedDepth < 0.5 || _BedValid < 0.5) return 1.0;
-                float2 bedUV = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y)).xz * 0.5 + 0.5;
-                float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
-                float stillDepth = max(0.0, -bedPoolY * VolumeExtentSafe().y);
-                float t = saturate(stillDepth / max(_SwellShoalDepth, 1e-3));
-                return lerp(1.0 - _SwellShoalStrength, 1.0, t);
-            }
 
             // Foam: _FoamMask (sim buffer) + globals from the controller; _FoamTex
             // is an optional per-material pattern (defaults white = flat foam).
@@ -580,15 +563,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 {
                     float2 sourceXZ = worldPos.xz;
                     o.largeWaveSourceXZ = sourceXZ;
-                    // Shoaling: attenuate the open-water swell by the still-water column depth so it
-                    // flattens toward shore instead of marching onto the beach at full height (controlled
-                    // by Swell Shoal Depth/Strength). No-op without a baked bed.
-                    float swellAtten = SwellShoalFactor(sourceXZ);
                     // Height + chop. The far-field band-limit (dropping short waves the coarse mesh can't
                     // resolve, keeping the long swell) lives INSIDE these functions now, driven by
                     // camera distance - no-op for bounded bodies (_LargeWaveDetailSlope = 0).
-                    worldPos.y  += LargeBodyWaveHeight(sourceXZ) * swellAtten;
-                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ) * swellAtten; // 0 when choppiness = 0
+                    worldPos.y  += LargeBodyWaveHeight(sourceXZ);
+                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
                 }
                 // Hero wave (surfable breaking wave). BASE offset on every open-water vertex, so the
                 // ocean itself rises/leans/collapses with the wave (one surface, no flat plane under
@@ -956,9 +935,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
                     if (_OceanFftActive > 0.5)
                     {
-                        // Fade the whitecap coverage by the swell shoaling so flattened swell near shore
-                        // stops foaming (the height is shoaled to match, above).
-                        float coverage = OceanFftFoam(i.largeWaveSourceXZ) * SwellShoalFactor(i.largeWaveSourceXZ);
+                        float coverage = OceanFftFoam(i.largeWaveSourceXZ);
                         if (coverage > FOAM_MASK_EPSILON)
                         {
                             // Parallax: sample the PATTERN where a layer floating just above the surface
