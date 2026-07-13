@@ -316,8 +316,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_BedValid, _body.IsBedBaked ? 1f : 0f);
             sink.SetFloat(ID_UseBedDepth, _body.useBedDepth ? 1f : 0f);
             sink.SetColor(ID_DeepWaterColor, _body.deepWaterColor);
-            sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinShorelineFadeDepth, _body.shorelineFadeDepth));
-            sink.SetFloat(ID_ShorelineStrength, _body.shorelineStrength);
+            sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinBedFadeDepth, _body.bedFadeDepth));
+            sink.SetFloat(ID_ShorelineStrength, _body.bedTintStrength);
 
             sink.SetColor(ID_FoamColor, _body.foamColor);
             sink.SetFloat(ID_FoamEnabled, _body.Foam ? 1f : 0f);

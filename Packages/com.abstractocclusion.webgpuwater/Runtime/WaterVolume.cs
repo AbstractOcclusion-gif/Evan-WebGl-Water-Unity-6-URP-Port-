@@ -44,6 +44,11 @@ namespace AbstractOcclusion.WebGpuWater
         /// more GPU cost. Windowed oceans are unaffected (they keep the quality-tier resolution).</summary>
         public enum RippleQuality { Low, Medium, High, Ultra }
 
+        /// <summary>Body archetype used by the inspector to show the relevant settings and apply sensible
+        /// defaults. Advisory only: it drives the editor UI + the "Apply defaults" action, not the runtime
+        /// paths (those still read openWater / unboundedOcean / enableLargeBodyWindow).</summary>
+        public enum WaterBodyType { Pond, Lake, Ocean }
+
         [Header("Assigned by the scene builder")]
         [SerializeField] internal ComputeShader simCompute;
         // Optional, ocean-only: the FFT-cascade wave compute. Unassigned, or on non-ocean bodies, the
@@ -64,6 +69,12 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Interactive-ripple detail on a bounded body: higher = a denser sim grid (crisper, " +
                  "rounder ripples) with a matched surface mesh, at more GPU cost. No effect on windowed oceans.")]
         [SerializeField] internal RippleQuality rippleQuality = RippleQuality.High;
+
+        [Header("Body type")]
+        [Tooltip("Body archetype. Advisory: drives which inspector sections are relevant and the " +
+                 "'Apply defaults' action. Pond = small bounded pool; Lake = large / open bounded water; " +
+                 "Ocean = unbounded open water to the horizon.")]
+        [SerializeField] internal WaterBodyType bodyType = WaterBodyType.Pond;
 
         [Header("Water volume (placement)")]
         [Tooltip("World half-size per pool unit, per axis: X = half width, Y = depth to the " +
@@ -854,7 +865,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 8;
+        const int CurrentSettingsVersion = 9;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -870,6 +881,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion < 6) MigrateInteractionAndRippleV6();
             if (_settingsVersion < 7) MigrateReflectionsV7();
             if (_settingsVersion < 8) MigrateBedDepthV8();
+            if (_settingsVersion < 9) MigrateBodyTypeV9();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -929,7 +941,7 @@ namespace AbstractOcclusion.WebGpuWater
             windWaveSettings.windWaves = _legacyWindWaves;
             windWaveSettings.windSpeed = _legacyWindSpeed;
             windWaveSettings.windFromDegrees = _legacyWindFromDegrees;
-            windWaveSettings.poolHalfExtentMeters = _legacyPoolHalfExtentMeters;
+            windWaveSettings.waveScaleMeters = _legacyPoolHalfExtentMeters;
             windWaveSettings.waveCount = _legacyWaveCount;
             windWaveSettings.waveAmplitudeScale = _legacyWaveAmplitudeScale;
             windWaveSettings.waveDirectionSpread = _legacyWaveDirectionSpread;
@@ -990,8 +1002,18 @@ namespace AbstractOcclusion.WebGpuWater
             bedDepthSettings.bedTerrain = _legacyBedTerrain;
             bedDepthSettings.bedResolution = _legacyBedResolution;
             bedDepthSettings.deepWaterColor = _legacyDeepWaterColor;
-            bedDepthSettings.shorelineFadeDepth = _legacyShorelineFadeDepth;
-            bedDepthSettings.shorelineStrength = _legacyShorelineStrength;
+            bedDepthSettings.bedFadeDepth = _legacyShorelineFadeDepth;
+            bedDepthSettings.bedTintStrength = _legacyShorelineStrength;
+        }
+
+        // v9: infer the advisory body archetype for bodies authored before the WaterBodyType field
+        // existed, so their inspector opens on the right type. Unbounded = Ocean, open water = Lake,
+        // else Pond. Advisory only; the user can re-pick.
+        void MigrateBodyTypeV9()
+        {
+            bodyType = ocean.unboundedOcean ? WaterBodyType.Ocean
+                     : ocean.openWater      ? WaterBodyType.Lake
+                     :                         WaterBodyType.Pond;
         }
 
         // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
@@ -1019,11 +1041,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] public int bedResolution = 256;
             [Tooltip("Colour the surface tints toward over deep water.")]
             public Color deepWaterColor = new Color(0.02f, 0.10f, 0.15f);
-            [Tooltip("World-unit depth at which the shoreline gradient reaches ~63% toward the deep " +
+            [Tooltip("World-unit depth at which the deep-water tint reaches ~63% toward the deep " +
                      "colour. Smaller = the water darkens in shallower depth.")]
-            [Range(0.1f, 50f)] public float shorelineFadeDepth = 6f;
+            [Range(0.1f, 50f)] [FormerlySerializedAs("shorelineFadeDepth")] public float bedFadeDepth = 6f;
             [Tooltip("Maximum tint toward the deep-water colour.")]
-            [Range(0f, 1f)] public float shorelineStrength = 0.8f;
+            [Range(0f, 1f)] [FormerlySerializedAs("shorelineStrength")] public float bedTintStrength = 0.8f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -1031,8 +1053,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal Terrain bedTerrain => bedDepthSettings.bedTerrain;
         internal int bedResolution => bedDepthSettings.bedResolution;
         internal Color deepWaterColor => bedDepthSettings.deepWaterColor;
-        internal float shorelineFadeDepth => bedDepthSettings.shorelineFadeDepth;
-        internal float shorelineStrength => bedDepthSettings.shorelineStrength;
+        internal float bedFadeDepth => bedDepthSettings.bedFadeDepth;
+        internal float bedTintStrength => bedDepthSettings.bedTintStrength;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -1058,9 +1080,9 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 15f)] public float windSpeed = 3f;
             [Tooltip("Wind heading in degrees: 0 = blowing toward +X (i.e. coming from the west).")]
             [Range(0f, 360f)] public float windFromDegrees = 0f;
-            [Tooltip("Physical size the pool half-extent ([-1,1] -> +/-this) represents, in metres. " +
-                     "Sets wave scale; fetch is twice this.")]
-            [Range(1f, 500f)] public float poolHalfExtentMeters = 10f;
+            [Tooltip("Physical size the body half-extent ([-1,1] -> +/-this) represents, in metres. " +
+                     "Sets wind-wave scale; fetch is twice this.")]
+            [Range(1f, 500f)] [FormerlySerializedAs("poolHalfExtentMeters")] public float waveScaleMeters = 10f;
             [Tooltip("Number of sinusoidal components summed for the wave layer.")]
             [Range(1, WaterWaveBank.MaxWaves)] public int waveCount = 12;
             [Tooltip("Artistic multiplier on the physically-derived wave height (a light breeze " +
@@ -1078,7 +1100,7 @@ namespace AbstractOcclusion.WebGpuWater
         bool windWaves => windWaveSettings.windWaves;
         internal float windSpeed => windWaveSettings.windSpeed;
         internal float windFromDegrees => windWaveSettings.windFromDegrees;
-        internal float poolHalfExtentMeters => windWaveSettings.poolHalfExtentMeters;
+        internal float waveScaleMeters => windWaveSettings.waveScaleMeters;
         internal int waveCount => windWaveSettings.waveCount;
         internal float waveAmplitudeScale => windWaveSettings.waveAmplitudeScale;
         internal float waveDirectionSpread => windWaveSettings.waveDirectionSpread;
@@ -1130,8 +1152,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 0.2f)] public float foamMinWaveHeight = 0.01f;
             [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
             [Range(0f, 8f)] public float foamAdvect = 3f;
-            public float foamFromSpeed = 6f;
-            public float foamFromCurvature = 30f;
+            [Tooltip("How strongly moving/agitated water (surface speed + shear) generates foam.")]
+            [Range(0f, 20f)] public float foamFromSpeed = 6f;
+            [Tooltip("How strongly surface curvature (crests, chop, sharp folds) generates foam.")]
+            [Range(0f, 100f)] public float foamFromCurvature = 30f;
             [Space]
             public Color foamColor = Color.white;
             [Tooltip("WORLD size (metres) of one foam-pattern tile. The pattern is sampled in world " +
@@ -1491,7 +1515,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinVolumeExtent = 1e-5f;        // a zero extent would collapse the pool-space transforms
         const float MinWindowHalfExtent = 1e-3f;    // same guard for the scrolling sim window
         const float RayParallelEpsilon = 1e-6f;     // surface picking: treat near-parallel rays as a miss
-        internal const float MinShorelineFadeDepth = 0.01f; // keeps the shoreline depth scale finite (publisher)
+        internal const float MinBedFadeDepth = 0.01f; // keeps the bed depth scale finite (publisher)
         const float MinWaveMetersPerUnit = 1e-3f;   // keeps wave-space conversions finite
 
         // Edit-mode preview: Update ticks come from the editor loop at an uneven cadence, so
@@ -3127,7 +3151,7 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // ---- wind-wave layer -----------------------------------------------
-        internal float WaveMetersPerUnit => Mathf.Max(MinWaveMetersPerUnit, poolHalfExtentMeters);
+        internal float WaveMetersPerUnit => Mathf.Max(MinWaveMetersPerUnit, waveScaleMeters);
 
         // Regenerate the bank only when a wind/scale parameter actually changes, so
         // the phases stay stable frame-to-frame (a fresh bank would pop the surface).
@@ -3138,19 +3162,19 @@ namespace AbstractOcclusion.WebGpuWater
             bool dirty = windWaves != _waveGenEnabled
                          || windSpeed != _waveGenWindSpeed
                          || windFromDegrees != _waveGenWindFrom
-                         || poolHalfExtentMeters != _waveGenExtentMeters
+                         || waveScaleMeters != _waveGenExtentMeters
                          || count != _waveGenCount
                          || waveAmplitudeScale != _waveGenAmpScale
                          || waveDirectionSpread != _waveGenSpread
                          || verticalExtent != _waveGenVerticalExtent;
             if (!dirty) return;
 
-            _waveBank.Generate(windSpeed, windFromDegrees, 2f * poolHalfExtentMeters,
+            _waveBank.Generate(windSpeed, windFromDegrees, 2f * waveScaleMeters,
                                count, waveAmplitudeScale, waveDirectionSpread, WaveMetersPerUnit,
                                verticalExtent);
             _waveGenWindSpeed = windSpeed;
             _waveGenWindFrom = windFromDegrees;
-            _waveGenExtentMeters = poolHalfExtentMeters;
+            _waveGenExtentMeters = waveScaleMeters;
             _waveGenCount = count;
             _waveGenAmpScale = waveAmplitudeScale;
             _waveGenSpread = waveDirectionSpread;

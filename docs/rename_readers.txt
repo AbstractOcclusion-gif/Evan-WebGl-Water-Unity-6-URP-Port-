@@ -1,0 +1,74 @@
+﻿.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBoatDemoBuilder.cs:47: body.rippleQuality = WaterVolume.RippleQuality.High;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterStressTestBuilder.cs:43: body.rippleQuality = WaterVolume.RippleQuality.High;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:87: "bedDepthSettings.shorelineFadeDepth",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:88: "bedDepthSettings.shorelineStrength"));
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:106: "foamSettings.foamFromSpeed",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:107: "foamSettings.foamFromCurvature");
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Dynamics.cs:38: "windWaveSettings.poolHalfExtentMeters",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:82: WaterVolume.RippleQuality _rippleQuality = WaterVolume.RippleQuality.High;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:204: _rippleQuality = (WaterVolume.RippleQuality)EditorGUILayout.EnumPopup(
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:207: _rippleQuality);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:268: body.rippleQuality = _rippleQuality;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:74: static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:403: _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:49: static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:319: sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinShorelineFadeDepth, _body.shorelineFadeDepth));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:320: sink.SetFloat(ID_ShorelineStrength, _body.shorelineStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:30: public partial class WaterVolume : MonoBehaviour, ISerializationCallbackReceiver
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:45: public enum RippleQuality { Low, Medium, High, Ultra }
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:66: [SerializeField] internal RippleQuality rippleQuality = RippleQuality.High;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:845: // exactly once by MigrateDepthAttenuationV1 (see OnAfterDeserialize). Hidden; do not edit.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:857: const int CurrentSettingsVersion = 8;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:858: [SerializeField, HideInInspector] int _settingsVersion = 0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:860: void ISerializationCallbackReceiver.OnBeforeSerialize() { }
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:862: void ISerializationCallbackReceiver.OnAfterDeserialize()
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:864: if (_settingsVersion >= CurrentSettingsVersion) return; // new or already-migrated asset
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:865: if (_settingsVersion < 1) MigrateDepthAttenuationV1();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:866: if (_settingsVersion < 2) MigrateOceanV2();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:867: if (_settingsVersion < 3) MigrateWaterFogV3();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:868: if (_settingsVersion < 4) MigrateWindWavesV4();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:869: if (_settingsVersion < 5) MigrateFoamV5();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:870: if (_settingsVersion < 6) MigrateInteractionAndRippleV6();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:871: if (_settingsVersion < 7) MigrateReflectionsV7();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:872: if (_settingsVersion < 8) MigrateBedDepthV8();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:873: _settingsVersion = CurrentSettingsVersion;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:932: windWaveSettings.poolHalfExtentMeters = _legacyPoolHalfExtentMeters;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:948: foamSettings.foamFromSpeed = _legacyFoamFromSpeed;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:949: foamSettings.foamFromCurvature = _legacyFoamFromCurvature;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:993: bedDepthSettings.shorelineFadeDepth = _legacyShorelineFadeDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:994: bedDepthSettings.shorelineStrength = _legacyShorelineStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:998: // on new bodies. Only assets serialized before a feature existed (no _settingsVersion -> 0) migrate.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1000: void Reset() => _settingsVersion = CurrentSettingsVersion;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1024: [Range(0.1f, 50f)] public float shorelineFadeDepth = 6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1026: [Range(0f, 1f)] public float shorelineStrength = 0.8f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1034: internal float shorelineFadeDepth => bedDepthSettings.shorelineFadeDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1035: internal float shorelineStrength => bedDepthSettings.shorelineStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1042: [SerializeField, HideInInspector, FormerlySerializedAs("shorelineFadeDepth")] float _legacyShorelineFadeDepth = 6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1043: [SerializeField, HideInInspector, FormerlySerializedAs("shorelineStrength")] float _legacyShorelineStrength = 0.8f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1063: [Range(1f, 500f)] public float poolHalfExtentMeters = 10f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1081: internal float poolHalfExtentMeters => windWaveSettings.poolHalfExtentMeters;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1095: [SerializeField, HideInInspector, FormerlySerializedAs("poolHalfExtentMeters")] float _legacyPoolHalfExtentMeters = 10f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1133: public float foamFromSpeed = 6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1134: public float foamFromCurvature = 30f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1165: internal float foamFromSpeed => foamSettings.foamFromSpeed;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1166: internal float foamFromCurvature => foamSettings.foamFromCurvature;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1185: [SerializeField, HideInInspector, FormerlySerializedAs("foamFromSpeed")] float _legacyFoamFromSpeed = 6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1186: [SerializeField, HideInInspector, FormerlySerializedAs("foamFromCurvature")] float _legacyFoamFromCurvature = 30f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1444: readonly struct RippleQualitySetting
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1450: public RippleQualitySetting(float texelsPerMeter, int minResolution, int maxResolution)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1458: static readonly System.Collections.Generic.Dictionary<RippleQuality, RippleQualitySetting> RippleQualityTable =
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1459: new System.Collections.Generic.Dictionary<RippleQuality, RippleQualitySetting>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1461: { RippleQuality.Low,    new RippleQualitySetting(8f, 128, 192) },
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1462: { RippleQuality.Medium, new RippleQualitySetting(12f, 192, 256) },
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1463: { RippleQuality.High,   new RippleQualitySetting(16f, 256, 320) },
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1464: { RippleQuality.Ultra,  new RippleQualitySetting(24f, 256, 384) },
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1494: internal const float MinShorelineFadeDepth = 0.01f; // keeps the shoreline depth scale finite (publisher)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1873: RippleQualitySetting setting = RippleQualityTable[rippleQuality];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1894: RippleQualitySetting setting = RippleQualityTable[rippleQuality];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2748: residualSurvival, foamSpread, foamFromSpeed * foamActivityScale,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2749: foamFromCurvature * foamActivityScale, foamAdvect,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3130: internal float WaveMetersPerUnit => Mathf.Max(MinWaveMetersPerUnit, poolHalfExtentMeters);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3141: || poolHalfExtentMeters != _waveGenExtentMeters
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3148: _waveBank.Generate(windSpeed, windFromDegrees, 2f * poolHalfExtentMeters,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3153: _waveGenExtentMeters = poolHalfExtentMeters;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterWaveBank.cs:43: // same chop on a 10 m pond or a 500 m plane. Equals the default poolHalfExtentMeters, so at the

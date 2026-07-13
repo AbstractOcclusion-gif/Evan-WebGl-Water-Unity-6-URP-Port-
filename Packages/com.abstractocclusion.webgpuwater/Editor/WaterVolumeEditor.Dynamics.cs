@@ -35,7 +35,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "windWaveSettings.windSpeed",
                     "windWaveSettings.windFromDegrees",
-                    "windWaveSettings.poolHalfExtentMeters",
+                    "windWaveSettings.waveScaleMeters",
                     "windWaveSettings.waveCount",
                     "windWaveSettings.waveAmplitudeScale",
                     "windWaveSettings.waveDirectionSpread",
