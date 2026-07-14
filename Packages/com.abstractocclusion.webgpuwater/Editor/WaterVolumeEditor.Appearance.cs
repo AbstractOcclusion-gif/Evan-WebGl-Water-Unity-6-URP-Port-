@@ -87,7 +87,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.deepWaterColor",
                     "bedDepthSettings.bedFadeDepth",
                     "bedDepthSettings.bedTintStrength",
-                    "bedDepthSettings.shoreShoalDepth"));
+                    "bedDepthSettings.shoreShoalDepth",
+                    "bedDepthSettings.sweZoneMeters",
+                    "bedDepthSettings.sweResolution",
+                    "bedDepthSettings.swePumpGain",
+                    "bedDepthSettings.swePushGain"));
         }
 
         void DrawFoamSection()

@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 2100000, guid: fc127bc6306166c469e98a7c2d569c44, type: 2}
+  m_SkyboxMaterial: {fileID: 2100000, guid: 1ba659bf44e2fd04796b4a5283be3453, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -181,23 +181,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
-  title: Reflexion trio
-  description: 'Demonstrate the different reflection type . Planar : add planar reflection
-    script to camera , remove water from reflected layer , and tick planar in water
-    volume . SSR : cant reflect the skybox , need to be used with cube map in look
-    tab .  URP probe : Cretae reflexion using reflexion probe in scene . Procedural
-    sky : The defaut sky , you can replace it by any custom cube map in look tab
-    . '
-  showCameraControls: 0
-  corner: 0
-  margin: 16
-  panelWidth: 600
-  titleFontSize: 24
-  bodyFontSize: 16
-  backgroundColor: {r: 0, g: 0, b: 0, a: 0.55}
-  textColor: {r: 1, g: 1, b: 1, a: 1}
-  toggleKey: 282
-  visibleOnStart: 1
 --- !u!4 &69048039
 Transform:
   m_ObjectHideFlags: 0
@@ -213,133 +196,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &203844586
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 203844589}
-  - component: {fileID: 203844588}
-  - component: {fileID: 203844587}
-  m_Layer: 0
-  m_Name: Directional Light
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &203844587
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 203844586}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  m_UsePipelineSettings: 1
-  m_AdditionalLightsShadowResolutionTier: 2
-  m_CustomShadowLayers: 0
-  m_LightCookieSize: {x: 1, y: 1}
-  m_LightCookieOffset: {x: 0, y: 0}
-  m_SoftShadowQuality: 0
-  m_RenderingLayersMask:
-    serializedVersion: 0
-    m_Bits: 1
-  m_ShadowRenderingLayersMask:
-    serializedVersion: 0
-    m_Bits: 1
-  m_Version: 4
-  m_LightLayerMask: 1
-  m_ShadowLayerMask: 1
-  m_RenderingLayers: 1
-  m_ShadowRenderingLayers: 1
---- !u!108 &203844588
-Light:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 203844586}
-  m_Enabled: 1
-  serializedVersion: 12
-  m_Type: 1
-  m_Color: {r: 1, g: 0.95686275, b: 0.8392157, a: 1}
-  m_Intensity: 1
-  m_Range: 10
-  m_SpotAngle: 30
-  m_InnerSpotAngle: 21.80208
-  m_CookieSize2D: {x: 10, y: 10}
-  m_Shadows:
-    m_Type: 2
-    m_Resolution: -1
-    m_CustomResolution: -1
-    m_Strength: 1
-    m_Bias: 0.05
-    m_NormalBias: 0.4
-    m_NearPlane: 0.2
-    m_CullingMatrixOverride:
-      e00: 1
-      e01: 0
-      e02: 0
-      e03: 0
-      e10: 0
-      e11: 1
-      e12: 0
-      e13: 0
-      e20: 0
-      e21: 0
-      e22: 1
-      e23: 0
-      e30: 0
-      e31: 0
-      e32: 0
-      e33: 1
-    m_UseCullingMatrixOverride: 0
-  m_Cookie: {fileID: 0}
-  m_DrawHalo: 0
-  m_Flare: {fileID: 0}
-  m_RenderMode: 0
-  m_CullingMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_RenderingLayerMask: 1
-  m_Lightmapping: 4
-  m_LightShadowCasterMode: 0
-  m_AreaSize: {x: 1, y: 1}
-  m_BounceIntensity: 1
-  m_ColorTemperature: 6570
-  m_UseColorTemperature: 0
-  m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
-  m_UseBoundingSphereOverride: 0
-  m_UseViewFrustumForShadowCasterCull: 1
-  m_ForceVisible: 0
-  m_ShadowRadius: 0
-  m_ShadowAngle: 0
-  m_LightUnit: 1
-  m_LuxAtDistance: 1
-  m_EnableSpotReflector: 1
---- !u!4 &203844589
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 203844586}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}
-  m_LocalPosition: {x: 0, y: 3, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
 --- !u!1 &284080211
 GameObject:
   m_ObjectHideFlags: 0
@@ -5255,6 +5111,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
+  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -5264,6 +5121,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
+  bodyType: 0
   volumeExtent: {x: 1, y: 1, z: 1}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -5279,8 +5137,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -5308,8 +5165,6 @@ MonoBehaviour:
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -5353,7 +5208,7 @@ MonoBehaviour:
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
+  lightDir: {x: 0.041607156, y: 0.66666245, z: -0.74419755}
   causticResolution: 512
   objectInteractionSettings:
     objectInteraction: 0
@@ -5403,20 +5258,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -5427,7 +5281,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 4
     windFromDegrees: 0
-    poolHalfExtentMeters: 1
+    waveScaleMeters: 1
     waveCount: 12
     waveAmplitudeScale: 4
     waveDirectionSpread: 2
@@ -5917,13 +5771,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 538847045}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.303531, y: -0.49112344, z: 0.18759248, w: 0.7946545}
+  m_LocalRotation: {x: 0.35668033, y: -0.026083684, z: 0.0099629965, w: 0.93380916}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1432954775}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 41.81, y: -3.2, z: 0}
 --- !u!1 &572153371
 GameObject:
   m_ObjectHideFlags: 0
@@ -6578,6 +6432,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
+  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -6587,6 +6442,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
+  bodyType: 0
   volumeExtent: {x: 1, y: 1, z: 1}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -6602,8 +6458,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -6631,8 +6486,6 @@ MonoBehaviour:
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -6676,7 +6529,7 @@ MonoBehaviour:
   _legacyReflectionMode: 2
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
+  lightDir: {x: 0.041607156, y: 0.66666245, z: -0.74419755}
   causticResolution: 512
   objectInteractionSettings:
     objectInteraction: 0
@@ -6726,20 +6579,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -6750,7 +6602,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 4
     windFromDegrees: 0
-    poolHalfExtentMeters: 1
+    waveScaleMeters: 1
     waveCount: 12
     waveAmplitudeScale: 4
     waveDirectionSpread: 2
@@ -6862,6 +6714,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
+  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -6871,6 +6724,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
+  bodyType: 0
   volumeExtent: {x: 1, y: 1, z: 1}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -6886,8 +6740,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -6915,8 +6768,6 @@ MonoBehaviour:
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -6960,7 +6811,7 @@ MonoBehaviour:
   _legacyReflectionMode: 0
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
+  lightDir: {x: 0.041607156, y: 0.66666245, z: -0.74419755}
   causticResolution: 512
   objectInteractionSettings:
     objectInteraction: 0
@@ -7010,20 +6861,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -7034,7 +6884,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 4
     windFromDegrees: 0
-    poolHalfExtentMeters: 1
+    waveScaleMeters: 1
     waveCount: 12
     waveAmplitudeScale: 4
     waveDirectionSpread: 2
@@ -12902,6 +12752,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
+  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -12911,6 +12762,7 @@ MonoBehaviour:
   tiles: {fileID: 0}
   sky: {fileID: 8900000, guid: 2a60bd4d766c6dc4c894e0df5b502280, type: 3}
   rippleQuality: 2
+  bodyType: 0
   volumeExtent: {x: 1, y: 1, z: 1}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -12926,8 +12778,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -12955,8 +12806,6 @@ MonoBehaviour:
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -13000,7 +12849,7 @@ MonoBehaviour:
   _legacyReflectionMode: 0
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
+  lightDir: {x: 0.041607156, y: 0.66666245, z: -0.74419755}
   causticResolution: 512
   objectInteractionSettings:
     objectInteraction: 0
@@ -13050,20 +12899,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -13074,7 +12922,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 4
     windFromDegrees: 0
-    poolHalfExtentMeters: 1
+    waveScaleMeters: 1
     waveCount: 12
     waveAmplitudeScale: 4
     waveDirectionSpread: 2
@@ -13301,7 +13149,6 @@ SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 961739753}
-  - {fileID: 203844589}
   - {fileID: 1432954775}
   - {fileID: 1153498010}
   - {fileID: 1815056127}

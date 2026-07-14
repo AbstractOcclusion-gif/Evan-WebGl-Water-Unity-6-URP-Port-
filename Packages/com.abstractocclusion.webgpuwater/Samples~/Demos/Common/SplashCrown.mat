@@ -36,8 +36,8 @@ Material:
     - PixelSnap: 0
     - _EnableExternalAlpha: 0
     - _PackedChannels: 1
-    - _ParticleOpacity: 0.189
-    - _SoftFadeDistance: 0.5
+    - _ParticleOpacity: 0.92
+    - _SoftFadeDistance: 0.152
     m_Colors:
     - _Color: {r: 0.95, g: 0.98, b: 1, a: 1}
     - _Flip: {r: 1, g: 1, b: 1, a: 1}

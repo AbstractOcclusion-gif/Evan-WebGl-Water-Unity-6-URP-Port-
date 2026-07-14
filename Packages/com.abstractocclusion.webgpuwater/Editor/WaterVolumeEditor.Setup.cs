@@ -43,7 +43,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 EditorGUILayout.HelpBox(WiringHelp, MessageType.None);
                 DrawFields(
-                    "simCompute", "oceanFftCompute", "causticsShader",
+                    "simCompute", "oceanFftCompute", "sweCompute", "causticsShader",
                     "largeBodyCausticsShader", "obstacleShader", "waterMesh",
                     "targetCamera", "sun");
             });

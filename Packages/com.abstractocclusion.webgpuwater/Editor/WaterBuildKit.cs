@@ -71,7 +71,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Shader names (keep in sync with the Shader "..." declarations in Shaders/).
         internal const string ShaderWaterSurface = "AbstractOcclusion/WebGpuWater/WaterSurface";
-        internal const string ShaderPoolWall = "AbstractOcclusion/WebGpuWater/PoolWall";
+        internal const string ShaderAnalyticPool = "AbstractOcclusion/WebGpuWater/AnalyticPool";
         internal const string ShaderCaustics = "AbstractOcclusion/WebGpuWater/Caustics";
         internal const string ShaderObstacle = "AbstractOcclusion/WebGpuWater/ObstacleDepth";
         internal const string ShaderReceiver = "AbstractOcclusion/WebGpuWater/WaterReceiver";
@@ -374,12 +374,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 cam = camGO.AddComponent<Camera>();
                 camGO.tag = MainCameraTag;
             }
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = Color.black;
-            // Same constants the runtime couples its activation distance to (see WaterVolume).
+            // Leave the camera's clear flags / background (skybox) and far clip alone: forcing a solid
+            // black clear and a 100 m far plane clipped the user's scene. Only the framing (fov/near) is set.
             cam.fieldOfView = WaterVolume.CameraFieldOfView;
             cam.nearClipPlane = WaterVolume.CameraNearClip;
-            cam.farClipPlane = WaterVolume.CameraFarClip;
 
             orbit = cam.GetComponent<OrbitCamera>();
             if (orbit == null) orbit = cam.gameObject.AddComponent<OrbitCamera>();
@@ -711,7 +709,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             shaders = new ShaderSet
             {
                 Water = Shader.Find(ShaderWaterSurface),
-                Pool = Shader.Find(ShaderPoolWall),
+                Pool = Shader.Find(ShaderAnalyticPool),
                 Caustics = Shader.Find(ShaderCaustics),
                 Obstacle = Shader.Find(ShaderObstacle),
                 Receiver = Shader.Find(ShaderReceiver),

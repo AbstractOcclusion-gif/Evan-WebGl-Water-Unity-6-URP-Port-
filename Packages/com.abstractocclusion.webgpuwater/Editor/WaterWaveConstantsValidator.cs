@@ -66,7 +66,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             EditorApplication.delayCall += Validate;
         }
 
-        [MenuItem(MenuPath)]
+        // Menu entry removed; still runs automatically on script reload (see the static ctor above).
         static void Validate()
         {
             if (!TryReadPackageAsset(HlslAssetName, HlslExtension, out string hlslSource, out string readError) ||

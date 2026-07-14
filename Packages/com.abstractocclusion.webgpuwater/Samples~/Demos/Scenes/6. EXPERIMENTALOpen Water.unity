@@ -10609,6 +10609,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
+  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -10618,6 +10619,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
+  bodyType: 1
   volumeExtent: {x: 200, y: 5, z: 200}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 32
@@ -10633,8 +10635,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
-    clipmapRings: 48
-    clipmapSegments: 96
+    clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 0
@@ -10662,8 +10663,6 @@ MonoBehaviour:
   _legacySwellHeight: 0
   _legacySwellWavelength: 140
   _legacyUnboundedOcean: 0
-  _legacyClipmapRings: 48
-  _legacyClipmapSegments: 96
   _legacyClipmapOuterRadius: 10000
   _legacyOceanDetailFalloff: 0.03
   _legacyHorizonFadeDistance: 0
@@ -10757,20 +10756,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -10781,7 +10779,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 4
     windFromDegrees: 0
-    poolHalfExtentMeters: 500
+    waveScaleMeters: 500
     waveCount: 16
     waveAmplitudeScale: 7.02
     waveDirectionSpread: 1

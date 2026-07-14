@@ -70,8 +70,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
         float3 SceneWorldPos(float2 uv)
         {
-            // Point-LOAD the live depth (no sampler needed, and depth must not interpolate across edges).
-            float rawDepth = LOAD_TEXTURE2D_X(_WaterFogSceneDepth, uint2(uv * _ScreenParams.xy)).r;
+            // Use the RESOLVED scene depth (_CameraDepthTexture) rather than the raw depth-stencil
+            // attachment: on the WebGPU/Dawn backend a depth-stencil resource sampled as a colour
+            // texture is stride-reinterpreted, which duplicated the depth image 2x/4x across the screen
+            // and tiled the ocean fog. This is the same depth source the (correct) god-ray pass uses.
+            // The wavy waterline no longer relies on post-transparent depth - it is computed analytically
+            // in SurfaceHeightAtXZ below - so the pre-transparent opaque depth here is fine.
+            float rawDepth = SampleSceneDepth(uv);
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
         }
 

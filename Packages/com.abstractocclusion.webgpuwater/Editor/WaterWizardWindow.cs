@@ -41,10 +41,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string PlanarPropertyPath = "reflectionSettings.usePlanarReflection";
         const string OpenWaterPropertyPath = "ocean.openWater";
         const string UnboundedOceanPropertyPath = "ocean.unboundedOcean";
+        const string BodyTypePropertyPath = "bodyType";
 
         // The base water type. Fog is a property of the type: only SurfaceWithFog turns it on, so the pool
         // and plain surface start fog-free. OpenWaterOcean drives the experimental large-body/clipmap path.
         enum WaterKind { LegacyAnalyticPool, SurfaceOnly, SurfaceWithFog, OpenWaterOcean }
+
+        // Camera controller wired onto the scene camera: orbit around the water, or free-fly it.
+        enum CameraMode { Orbit, Fly }
 
         enum InteractionMode { Floatable, InteractableStatic }
         enum BuoyancyPreset { Light, Normal, Heavy }
@@ -87,6 +91,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _splash = true;
         bool _godRays = true;
         bool _addFloorCollider = true;
+        CameraMode _cameraMode = CameraMode.Orbit;
 
         InteractionMode _objectMode = InteractionMode.Floatable;
         BuoyancyPreset _buoyancyPreset = BuoyancyPreset.Normal;
@@ -206,6 +211,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                  "ripples. Higher = rounder ripples at more GPU cost."),
                 _rippleQuality);
 
+            _cameraMode = (CameraMode)EditorGUILayout.EnumPopup(
+                new GUIContent("Camera", "Orbit: rotate/zoom around the water. Fly: free WASD movement, " +
+                                         "Q/E down/up, hold right-mouse to look, Shift to boost."),
+                _cameraMode);
+
             _reflections = EditorGUILayout.Toggle(
                 new GUIContent("Reflection", "Rich reflection on top of the sky base."), _reflections);
             using (new EditorGUI.DisabledScope(!_reflections))
@@ -271,6 +281,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ApplyReflection(body);
             ApplyFoam(body);
             bool openWater = ApplyOpenWater(body);
+
+            // Splash unticked: the build context always creates a shared splash emitter, so remove it and
+            // unwire the body when the user opted out - otherwise props still splash despite the toggle.
+            if (!_splash && ctx.Splash != null)
+            {
+                body.splashEmitter = null;
+                Object.DestroyImmediate(ctx.Splash.gameObject);
+            }
+
+            ApplyCameraMode(body);
+
             EditorUtility.SetDirty(body);
 
             if (_addFloorCollider)
@@ -298,11 +319,43 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             bool openWater = _kind == WaterKind.OpenWaterOcean || bigExtent;
             bool unbounded = _kind == WaterKind.OpenWaterOcean && _unboundedOcean;
 
+            // Label the archetype so the inspector shows the right sections/defaults: an Ocean if the
+            // user picked open water, a Lake for a large bounded body (same size cut-off that arms open
+            // water above), else a Pond. Advisory only - it matches the behaviour set here.
+            WaterVolume.WaterBodyType bodyType =
+                _kind == WaterKind.OpenWaterOcean ? WaterVolume.WaterBodyType.Ocean
+                : bigExtent                       ? WaterVolume.WaterBodyType.Lake
+                                                  : WaterVolume.WaterBodyType.Pond;
+
             var serialized = new SerializedObject(body);
             serialized.FindProperty(OpenWaterPropertyPath).boolValue = openWater;
             serialized.FindProperty(UnboundedOceanPropertyPath).boolValue = unbounded;
+            serialized.FindProperty(BodyTypePropertyPath).enumValueIndex = (int)bodyType;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             return openWater;
+        }
+
+        // Swap the scene camera's controller to match the chosen mode. SetUpCamera always rigs an
+        // OrbitCamera; for Fly we remove it and add a FlyCamera (and drop the body's orbit reference so
+        // its background-drag rotation is inert). Only one controller drives the transform at a time.
+        void ApplyCameraMode(WaterVolume body)
+        {
+            Camera cam = body.targetCamera;
+            if (cam == null)
+                return;
+
+            if (_cameraMode == CameraMode.Fly)
+            {
+                OrbitCamera orbit = cam.GetComponent<OrbitCamera>();
+                if (orbit != null) Object.DestroyImmediate(orbit);
+                body.orbit = null;
+                if (cam.GetComponent<FlyCamera>() == null) cam.gameObject.AddComponent<FlyCamera>();
+                return;
+            }
+
+            FlyCamera fly = cam.GetComponent<FlyCamera>();
+            if (fly != null) Object.DestroyImmediate(fly);
+            if (body.orbit == null) body.orbit = cam.GetComponent<OrbitCamera>();
         }
 
         void ApplyCustomPoolTexture(WaterVolume body, bool withPool)

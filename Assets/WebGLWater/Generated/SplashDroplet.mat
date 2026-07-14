@@ -30,7 +30,7 @@ Material:
     m_Ints: []
     m_Floats:
     - _PackedChannels: 1
-    - _ParticleOpacity: 0.5
+    - _ParticleOpacity: 1
     - _SoftFadeDistance: 0.05
     m_Colors:
     - _Tint: {r: 0.95, g: 0.97999996, b: 1, a: 1}

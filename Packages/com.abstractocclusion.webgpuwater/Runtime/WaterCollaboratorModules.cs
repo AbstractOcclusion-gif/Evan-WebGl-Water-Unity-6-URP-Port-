@@ -111,6 +111,32 @@ namespace AbstractOcclusion.WebGpuWater
         }
     }
 
+    /// <summary>Shoreline shallow-water (SWE) sim zone (Layer C): emergent breaking + run-up near the
+    /// waterline. Built only when a terrain + the SWE compute are wired; the actual solve is further
+    /// gated inside the driver on Layer A's depth field being baked (so a runtime Use-Bed-Depth toggle
+    /// lights it up without a re-enable). Any body without both stays byte-for-byte unchanged.</summary>
+    internal sealed class ShoreSweModule : IWaterModule
+    {
+        readonly WaterVolume _owner;
+        public WaterShoreSwe Swe { get; private set; }
+
+        public ShoreSweModule(WaterVolume owner) => _owner = owner;
+
+        // DISABLED (2026-07-13): Layer C is parked pending a Unity compile check of WaterShoreSwe.compute.
+        // Never construct/dispatch the SWE zone, so a broken compute can't take down the body (and shoal)
+        // in OnEnable. Re-enable with `_owner.sweCompute != null` once the compute is verified to compile.
+        public bool Enabled => false;
+
+        public void Initialize(WaterContext context)
+            => Swe = new WaterShoreSwe(_owner.sweCompute, _owner.sweResolution, _owner, _owner.sweZoneMeters);
+
+        public void Dispose()
+        {
+            Swe?.Dispose();
+            Swe = null;
+        }
+    }
+
     /// <summary>Camera-following scrolling sim window for large bodies.</summary>
     internal sealed class SimWindowModule : IWaterModule
     {

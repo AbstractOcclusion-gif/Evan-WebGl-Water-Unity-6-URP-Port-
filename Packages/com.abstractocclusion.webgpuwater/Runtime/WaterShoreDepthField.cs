@@ -48,6 +48,16 @@ namespace AbstractOcclusion.WebGpuWater
         internal static void ToggleDepthDebug() => _depthDebugEnabled = !_depthDebugEnabled;
         internal static void ToggleSdfDebug() => _sdfDebugEnabled = !_sdfDebugEnabled;
 
+        // Read-only surface for downstream consumers that must bind the fields explicitly onto a
+        // compute (the SWE zone, Layer C) rather than rely on the published graphics globals.
+        internal bool DepthBaked => _depthBaked;
+        internal bool SdfBaked => _sdfBaked;
+        internal Texture DepthTexture => _depthTex;
+        internal Texture SdfTexture => _sdfTex;
+        internal Vector2 FieldCenter => _center;
+        internal Vector2 FieldHalfSize => _halfSize;
+        internal float FieldWaterLevel => _waterLevel;
+
         // Lazily bake (once, when opted in) then (re)publish the globals every frame so the samplers are
         // always bound - even unbaked they publish a black fallback + valid=0, because WebGPU never
         // tolerates an unbound sampler.

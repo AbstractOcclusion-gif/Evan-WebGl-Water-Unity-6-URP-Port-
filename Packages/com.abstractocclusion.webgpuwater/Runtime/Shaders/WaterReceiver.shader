@@ -11,6 +11,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
         _BaseMap ("Base Map", 2D) = "white" {}
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Float) = 1
+        [Toggle(_AUTOTILEOBJSIZE)] _AutoTileByObjectSize ("Auto Tile By Object Size", Float) = 0
+        _TilesTiling ("Tiles Tiling (tiles per world unit)", Vector) = (1,1,0,0)
         _Smoothness ("Smoothness", Range(0,1)) = 0.5
         _SpecColor ("Specular Color", Color) = (0.2, 0.2, 0.2, 1)
         _CausticStrength ("Caustic Strength", Range(0,8)) = 4
@@ -35,6 +37,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma shader_feature_local _AUTOTILEOBJSIZE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -68,6 +71,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseColor;
                 float4 _BaseMap_ST;
+                float4 _TilesTiling;
                 float4 _SpecColor;
                 float4 _CausticTint;
                 float4 _UnderwaterTint;
@@ -89,22 +93,41 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 VertexNormalInputs normalInput = GetVertexNormalInputs(IN.normalOS, IN.tangentOS);
                 o.normalWS   = normalInput.normalWS;
                 o.tangentWS  = float4(normalInput.tangentWS, IN.tangentOS.w * GetOddNegativeScale());
-                o.uv         = TRANSFORM_TEX(IN.uv, _BaseMap);
+                o.uv         = IN.uv; // raw mesh UV; tiling applied in frag (Base Map ST, or object size)
                 return o;
             }
 
             half4 frag(Varyings IN) : SV_Target
             {
-                float3 albedo = _BaseColor.rgb * SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv).rgb;
+                // Tangent frame first: needed for the normal map and (when enabled) to project the
+                // object world size onto the surface U/V axes for size-based tiling.
+                float3 vertexNormalWS = normalize(IN.normalWS);
+                float3 tangentWS = normalize(IN.tangentWS.xyz);
+                float3 bitangentWS = normalize(cross(vertexNormalWS, tangentWS) * IN.tangentWS.w);
+
+                // Sampling UV. Default: standard Base Map tiling/offset (_BaseMap_ST), unchanged.
+                // Auto Tile By Object Size: scale the raw mesh UV by the object WORLD size (from its
+                // object-to-world matrix) projected onto the surface U/V axes, so texel density stays
+                // even however the object is scaled - the receiver analogue of AnalyticPool face-size
+                // tiling. _TilesTiling is then tiles-per-world-unit.
+            #ifdef _AUTOTILEOBJSIZE
+                float3 objectSize = float3(
+                    length(unity_ObjectToWorld._m00_m10_m20),
+                    length(unity_ObjectToWorld._m01_m11_m21),
+                    length(unity_ObjectToWorld._m02_m12_m22));
+                float2 faceWorld = float2(dot(abs(tangentWS), objectSize), dot(abs(bitangentWS), objectSize));
+                float2 uv = IN.uv * faceWorld * _TilesTiling.xy;
+            #else
+                float2 uv = IN.uv * _BaseMap_ST.xy + _BaseMap_ST.zw;
+            #endif
+
+                float3 albedo = _BaseColor.rgb * SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv).rgb;
 
                 // Tangent-space normal map -> world normal. Rebuild the bitangent from the
                 // interpolated normal/tangent and the stored handedness sign so mirrored UVs
                 // light correctly. Default "bump" map is flat, so untouched materials are
                 // identical to before.
-                float3 vertexNormalWS = normalize(IN.normalWS);
-                float3 tangentWS = normalize(IN.tangentWS.xyz);
-                float3 bitangentWS = normalize(cross(vertexNormalWS, tangentWS) * IN.tangentWS.w);
-                float3 normalTS = UnpackNormalScale(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv), _BumpScale);
+                float3 normalTS = UnpackNormalScale(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, uv), _BumpScale);
                 float3 N = normalize(normalTS.x * tangentWS + normalTS.y * bitangentWS + normalTS.z * vertexNormalWS);
 
                 float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);

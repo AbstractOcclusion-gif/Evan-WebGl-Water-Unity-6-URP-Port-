@@ -94,11 +94,13 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
             Varyings vert(Attributes IN)
             {
                 Varyings o;
-                // The object's own transform defines the POOL-space box ([-1,0] in y,
-                // [-1,1] in x,z), whether that's an identity-transform pool-space mesh
-                // (rebuilt scene) or the legacy unit cube scaled (2,1,2) at (0,-0.5,0).
-                // The volume frame then places that pool box in the world.
-                float3 poolPos = TransformObjectToWorld(IN.positionOS.xyz);
+                // The GodRayBox mesh is authored in POOL space ([-1,1] in x,z, [-1,0] in y), so its
+                // vertices ARE the pool-space box position - place it purely by the volume frame, exactly
+                // like WaterSurface/AnalyticPool. The old TransformObjectToWorld baked the renderer's own world
+                // transform in first, which double-counted once the body was moved off origin (or extended):
+                // the box then no longer scaled/tracked the pond, and the fragment's pool-space march
+                // (WorldToPool + IntersectCube in [-1,1]) received world coords instead of pool coords.
+                float3 poolPos = IN.positionOS.xyz;
                 float3 worldPos = PoolToWorld(poolPos);
                 o.poolPos = poolPos;
                 o.positionCS = TransformWorldToHClip(worldPos);

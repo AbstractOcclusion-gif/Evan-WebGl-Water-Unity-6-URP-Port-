@@ -6009,6 +6009,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
+  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 4800000, guid: 20ef2245624802e47920d7462ca2609d, type: 3}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -6018,6 +6019,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
+  bodyType: 0
   volumeExtent: {x: 1, y: 1, z: 1}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -6154,20 +6156,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -6178,7 +6179,7 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 3
     windFromDegrees: 0
-    poolHalfExtentMeters: 3
+    waveScaleMeters: 3
     waveCount: 12
     waveAmplitudeScale: 4
     waveDirectionSpread: 1
@@ -6192,24 +6193,24 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 2
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 0
-    foamGenRate: 0.6
-    foamDecay: 0.96
+    foam: 1
+    foamGenRate: 0.819
+    foamDecay: 0.9893
     foamDecayResidual: 0.993
-    foamDecayRate: 1
-    foamSpread: 0.2
-    foamGenThreshold: 0.15
+    foamDecayRate: 0.41
+    foamSpread: 0.073
+    foamGenThreshold: 0.038
     foamMinWaveHeight: 0.01
-    foamAdvect: 3
+    foamAdvect: 2.96
     foamFromSpeed: 6
     foamFromCurvature: 30
     foamColor: {r: 1, g: 1, b: 1, a: 1}
     foamPatternSize: 2
     foamStrength: 1
-    foamFeather: 0.15
-    foamCoreCut: 0.5
+    foamFeather: 0.416
+    foamCoreCut: 0.864
     foamBorderWidth: 0
-    foamContactDepth: 0.06
+    foamContactDepth: 0
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96
@@ -6279,7 +6280,7 @@ MonoBehaviour:
   maxParticlesPerBurst: 48
   upwardBias: 1
   outwardSpread: 1.3
-  dropletSize: 0.02
+  dropletSize: 0.1
   lifetime: {x: 0.6, y: 1.3}
   popDuration: 0.12
   driftStrength: 2

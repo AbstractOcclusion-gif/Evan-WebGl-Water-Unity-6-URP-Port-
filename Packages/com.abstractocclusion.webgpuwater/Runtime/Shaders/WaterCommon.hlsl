@@ -86,7 +86,7 @@ float4 SampleWaterBicubic(float2 uv)
 
 // Pick the pool face a POOL-space point lies on: the tile UV, the flat face normal, and a
 // tangent frame that matches the UV axes (for optional normal mapping). Shared by GetWallColor
-// (the analytic look) and the PoolWall geometry pass (which supplies its own texture/normal).
+// (the analytic look) and the AnalyticPool geometry pass (which supplies its own texture/normal).
 void WallSurface(float3 p, out float2 uv, out float3 normal, out float3 tangent, out float3 bitangent)
 {
     if (abs(p.x) > 0.999)
@@ -114,10 +114,10 @@ void WallSurface(float3 p, out float2 uv, out float3 normal, out float3 tangent,
 
 // The pool wall SHADING scalar (no albedo): pool ambient occlusion, refracted-sun diffuse for
 // the supplied normal, projected caustics below the waterline and the rim shadow above it. Split
-// out so the PoolWall geometry pass can reuse it with a normal-mapped normal and its own albedo,
+// out so the AnalyticPool geometry pass can reuse it with a normal-mapped normal and its own albedo,
 // while GetWallColor keeps the original analytic behaviour byte-for-byte.
 
-// Strength the projected caustics are baked at in the legacy analytic path (GetWallColor). PoolWall
+// Strength the projected caustics are baked at in the legacy analytic path (GetWallColor). AnalyticPool
 // overrides this with its own material Caustic Strength; keeping the legacy value here as a named
 // constant preserves GetWallColor's result exactly.
 #define WALL_CAUSTIC_LEGACY_STRENGTH 2.0
@@ -165,7 +165,7 @@ float GetWallShade(float3 p, float3 normal)
 // Analytic wall colour with the projected caustic gated by an externally supplied main-light shadow
 // term (0 = fully shadowed -> no caustic, 1 = lit -> legacy look). The caller (WaterSurface) samples
 // the shadow at the floor's world position; a caustic is refracted sun, so it must vanish under a
-// caster like the geometry paths (PoolWall / WaterReceiver) already do.
+// caster like the geometry paths (AnalyticPool / WaterReceiver) already do.
 float3 GetWallColorShadowed(float3 p, float causticShadow)
 {
     float2 uv; float3 normal, tangent, bitangent;

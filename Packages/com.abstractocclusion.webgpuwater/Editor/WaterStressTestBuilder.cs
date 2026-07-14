@@ -28,7 +28,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float CameraYaw = -200f;
         static readonly Vector3 CameraPivot = new Vector3(0f, 0f, 0f);
 
-        [MenuItem(MenuPath)]
+        // Menu entry removed (demo); build method kept for reference / manual invocation.
         static void Build()
         {
             var root = new GameObject(RootObjectName);

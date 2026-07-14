@@ -29,7 +29,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _FoamTex:
-        m_Texture: {fileID: 0}
+        m_Texture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _OceanWhitecapNormalTex:
@@ -37,7 +37,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _OceanWhitecapTex:
-        m_Texture: {fileID: 0}
+        m_Texture: {fileID: 2800000, guid: 51833769e1293ba45876c32eaabecf26, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
@@ -59,6 +59,6 @@ Material:
     - _UseSSR: 0
     - _UseUrpProbe: 0
     m_Colors:
-    - _FoamTexFrames: {r: 1, g: 1, b: 0, a: 0}
+    - _FoamTexFrames: {r: 4, g: 4, b: 0, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

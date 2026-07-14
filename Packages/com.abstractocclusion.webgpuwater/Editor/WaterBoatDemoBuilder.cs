@@ -32,7 +32,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const int BoatSamplesPerAxis = 3;                                 // 27 probes -> good roll/pitch + length torque
         const float BoatObjectWidth = 5f;                                 // ignore ripples shorter than the hull
 
-        [MenuItem(MenuPath)]
+        // Menu entry removed (demo); build method kept for reference / manual invocation.
         static void Build()
         {
             var root = new GameObject(RootObjectName);

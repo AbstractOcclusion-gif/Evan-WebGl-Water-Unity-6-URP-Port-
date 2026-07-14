@@ -671,7 +671,7 @@ Camera:
   m_GameObject: {fileID: 961739749}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 2
+  m_ClearFlags: 1
   m_BackGroundColor: {r: 0, g: 0, b: 0, a: 1}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
@@ -694,7 +694,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.01
-  far clip plane: 100
+  far clip plane: 1000
   field of view: 45
   orthographic: 0
   orthographic size: 5
@@ -721,13 +721,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalRotation: {x: 0.21362713, y: 0, z: 0, w: 0.9769153}
+  m_LocalPosition: {x: 0, y: 5.75, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 24.67, y: 0, z: 0}
 --- !u!114 &961739754
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -747,7 +747,7 @@ MonoBehaviour:
   minPitch: -89.99
   maxPitch: 89.99
   rotateSpeed: 0.5
-  distance: 34
+  distance: 20
   minDistance: 1.5
   maxDistance: 12
   zoomSpeed: 0.5
@@ -5653,7 +5653,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
-  oceanFftCompute: {fileID: 0}
+  oceanFftCompute: {fileID: 7200000, guid: a72790f9172cdc8418a85c91acdb0a2d, type: 3}
+  sweCompute: {fileID: 7200000, guid: d88f5f32627ea2949b1013415f68ec6b, type: 3}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 4800000, guid: 20ef2245624802e47920d7462ca2609d, type: 3}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -5663,6 +5664,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
+  bodyType: 2
   volumeExtent: {x: 40, y: 4, z: 40}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -5673,33 +5675,33 @@ MonoBehaviour:
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
-    largeWaveAmplitude: 1
+    largeWaveAmplitude: 0.5
     largeWaveChoppiness: 0
-    swellHeight: 0
+    swellHeight: 0.5
     swellWavelength: 140
     unboundedOcean: 1
     clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
-    horizonFadeDistance: 0
+    horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
-    horizonHazeDensity: 0
+    horizonHazeDensity: 0.003
     largeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
-    largeGodRayDensity: 0
+    largeGodRayDensity: 1
     largeGodRaySteps: 24
     largeGodRayAnisotropy: 0.6
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
     oceanFoamWindThreshold: 4
-    oceanFoamCoverage: 1
+    oceanFoamCoverage: 1.1
     oceanFoamStrength: 1
-    oceanFoamFadeRate: 0.5
+    oceanFoamFadeRate: 3
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
-    oceanFoamTileSize: 8
-    oceanFoamFeather: 0.25
-    oceanFoamDeposit: 0.85
-    oceanFoamDrift: 0.08
-    oceanFoamMaxBuildup: 1
+    oceanFoamTileSize: 7
+    oceanFoamFeather: 0.445
+    oceanFoamDeposit: 0.3
+    oceanFoamDrift: 0.1
+    oceanFoamMaxBuildup: 3
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -5737,8 +5739,8 @@ MonoBehaviour:
     useScreenSpaceReflection: 1
     usePlanarReflection: 0
     reflectUrpProbe: 0
-    realRefraction: 0
-    reflectionStrength: 1
+    realRefraction: 1
+    reflectionStrength: 0.4
     envReflectionIntensity: 1
     reflectionDistortion: 0.05
     ssrStrength: 1
@@ -5748,7 +5750,7 @@ MonoBehaviour:
     refractionDistortion: 0.05
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
-  timeScale: 1
+  timeScale: 0.7
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
   objectInteractionSettings:
@@ -5763,10 +5765,10 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
-    waterFog: 0
+    waterFog: 1
     fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 2
+    fogDensity: 0.1
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -5774,45 +5776,44 @@ MonoBehaviour:
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
   volumeScatterSettings:
-    volumeScatter: 0
-    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
-    scatterIntensity: 2
+    volumeScatter: 1
+    scatterColor: {r: 0.050980385, g: 0.28833166, b: 0.32156864, a: 1}
+    scatterIntensity: 1
     scatterAnisotropy: 0.5
     scatterAmbientTerm: 1
     scatterSunTerm: 1
-    crestScatter: 0
-    sssIntensity: 3
-    sssSunFalloff: 2
-    sssPinchMin: 0.1
-    sssPinchMax: 0.6
-    sssPinchFalloff: 1.5
+    crestScatter: 1
+    sssIntensity: 2.5
+    sssSunFalloff: 0.57
+    sssPinchMin: 0
+    sssPinchMax: 0.693
+    sssPinchFalloff: 1.28
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    depthDarkenStrength: 1
+    depthDarkenStrength: 3.98
     causticDepthFade: 0.5
     godRayDepthFade: 0.5
-    linkDepthToFog: 0
+    linkDepthToFog: 1
   _legacyDepthDarken: 0
   _legacyDepthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyDepthDarkenStrength: 1
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 8
+  _settingsVersion: 9
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
     bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-    shorelineFadeDepth: 6
-    shorelineStrength: 0.8
-    shoalDepth: 3
-    shorelineFoamDepth: 1
-    shorelineFoamStrength: 0.6
-    breakingFoamStrength: 0.5
-    swellShoalDepth: 8
-    swellShoalStrength: 1
+    bedFadeDepth: 6
+    bedTintStrength: 0.8
+    shoreShoalDepth: 4
+    sweZoneMeters: 96
+    sweResolution: 256
+    swePumpGain: 0.05
+    swePushGain: 0.3
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -5821,11 +5822,11 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 1
-    windSpeed: 3
+    windSpeed: 4.5
     windFromDegrees: 0
-    poolHalfExtentMeters: 10
+    waveScaleMeters: 500
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 2
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -5967,16 +5968,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8f5f81db5e68f1647a064d5fa8da05b2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterBuoyancyStressSpawner
-  gridX: 8
-  gridZ: 8
+  gridX: 16
+  gridZ: 16
   spacing: 2.5
   dropHeight: 1.5
   floaterSize: {x: 0.8, y: 0.8, z: 0.8}
   mass: 20
   buoyancy: 2.5
   samplesPerAxis: 1
-  objectWidth: 0
-  surfaceRelativeDrag: 0
+  objectWidth: 0.8
+  surfaceRelativeDrag: 1
   addRippleInteractor: 0
   addSplash: 0
   overlay: {fileID: 1718559811}
