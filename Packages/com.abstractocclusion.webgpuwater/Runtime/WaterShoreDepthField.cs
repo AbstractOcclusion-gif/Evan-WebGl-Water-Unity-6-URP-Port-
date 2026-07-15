@@ -1,11 +1,23 @@
-// WebGpuWater - world-frame terrain seabed-height + shoreline SDF field (Layer A shoreline substrate).
+// WebGpuWater - world-frame terrain seabed-depth + shoreline SDF field (Layer A shoreline substrate).
 //
-// Bakes the terrain seabed height into a WORLD-frame map, then derives a jump-flood signed-distance
-// field (distance + direction to shore) from it, so shoreline features (shoaling, shore foam, the
-// SWE zone) share one depth-and-shore signal that also exists on ocean/windowed bodies - unlike
+// Bakes the terrain into a WORLD-frame map, then derives a jump-flood signed-distance field
+// (distance + direction to shore) from it, so shoreline features (shoaling, surf fronts, shore
+// foam, swash) share one depth-and-shore signal that also exists on ocean/windowed bodies - unlike
 // WaterBedBaker, which is pool-frame and bounded-only. The seabed is static geometry, so both the
 // depth bake and the SDF are one-time CPU computations (the same proven Terrain.SampleHeight the bed
 // baker uses), stored in half-float textures (WebGPU-filterable) and published as globals.
+//
+// P0 precision fix (audit B4): the depth texture now stores the STILL-WATER COLUMN DEPTH
+// (waterLevel - seabedY, metres) instead of the seabed's absolute world height. Half-float spends
+// its precision on the small values near the waterline - exactly where every consumer needs it -
+// instead of on a large absolute Y, which banded the shallows into visible terraces.
+//
+// P0 direction fix (audit B11): the raw jump-flood direction is piecewise-constant per nearest-seed
+// cell and flips hard on the medial axis; a couple of box-blur passes over the (unnormalized)
+// direction vectors makes it smooth enough to steer refraction and the surf fronts.
+//
+// The CPU-side arrays are KEPT after the bake (a few MB at default resolution) so the buoyancy
+// mirror (LargeWaveField) can sample the same field the shaders see - no GPU readback anywhere.
 //
 // WHY reuse the useBedDepth opt-in as the gate: the bake costs resolution^2 main-thread SampleHeight
 // calls plus a jump flood, so - exactly like WaterBedBaker - a terrain scene must not pay it at
@@ -26,6 +38,25 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SdfDebug = Shader.PropertyToID("_ShoreSDFDebug");
         static readonly int ID_WaterLevel = Shader.PropertyToID("_ShoreWaterLevel");
         static readonly int ID_ShoalDepth = Shader.PropertyToID("_ShoreShoalDepth");
+        // P1 shoal-transform + P2 surf-front knobs (all live-tunable; no rebake needed).
+        static readonly int ID_Refraction = Shader.PropertyToID("_ShoreRefraction");
+        static readonly int ID_Compression = Shader.PropertyToID("_ShoreCompression");
+        static readonly int ID_Greens = Shader.PropertyToID("_ShoreGreens");
+        static readonly int ID_SurfActive = Shader.PropertyToID("_SurfActive");
+        static readonly int ID_SurfAmplitude = Shader.PropertyToID("_SurfAmplitude");
+        static readonly int ID_SurfWavelength = Shader.PropertyToID("_SurfWavelength");
+        static readonly int ID_SurfPeriod = Shader.PropertyToID("_SurfPeriod");
+        static readonly int ID_SurfBandDepth = Shader.PropertyToID("_SurfBandDepth");
+        static readonly int ID_SurfSetStrength = Shader.PropertyToID("_SurfSetStrength");
+        static readonly int ID_SurfLean = Shader.PropertyToID("_SurfLean");
+        static readonly int ID_SurfCompression = Shader.PropertyToID("_SurfCompression");
+        static readonly int ID_SurfGreens = Shader.PropertyToID("_SurfGreens");
+        static readonly int ID_SurfAmbientFade = Shader.PropertyToID("_SurfAmbientFade");
+        static readonly int ID_SurfSwashAmplitude = Shader.PropertyToID("_SurfSwashAmplitude");
+        static readonly int ID_SurfWaterlineFoam = Shader.PropertyToID("_SurfWaterlineFoam");
+
+        // How many box-blur passes smooth the SDF direction field (see the header note).
+        const int DirectionSmoothPasses = 2;
 
         // Debug visualizations are globals (one field is published at a time), toggled from the
         // WaterVolume context menu; static so the flags survive the per-body republish each frame.
@@ -34,13 +65,21 @@ namespace AbstractOcclusion.WebGpuWater
 
         readonly WaterVolume _body;
 
-        Texture2D _depthTex;         // R = seabed WORLD height (metres), half-float
+        Texture2D _depthTex;         // R = still-water column depth (m, + water / - land), half-float
         Texture2D _sdfTex;           // RG = toward-shore dir (0..1), B = signed distance (m), A = mask
         Vector2 _center, _halfSize;  // world XZ centre / half-extent of the baked field
         float _waterLevel;           // still-water plane world Y at bake time (for shoaling depth)
+        int _res;                    // baked resolution (texels per side)
         bool _depthBaked;
         bool _sdfBaked;
         bool _bakeAttempted;         // lazy gate: bake once per enable, only when useBedDepth is on
+
+        // CPU copies kept for the buoyancy mirror (LargeWaveField samples the SAME field as the
+        // shaders, bilinearly, with no readback). Null until baked.
+        float[] _cpuDepth;           // column depth per texel
+        float[] _cpuSdfDist;         // signed distance per texel
+        float[] _cpuSdfDirX;         // toward-shore direction per texel (unit, world xz)
+        float[] _cpuSdfDirZ;
 
         internal WaterShoreDepthField(WaterVolume body)
             => _body = body ?? throw new System.ArgumentNullException(nameof(body));
@@ -49,7 +88,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal static void ToggleSdfDebug() => _sdfDebugEnabled = !_sdfDebugEnabled;
 
         // Read-only surface for downstream consumers that must bind the fields explicitly onto a
-        // compute (the SWE zone, Layer C) rather than rely on the published graphics globals.
+        // compute (the SWE zone, the ripple-sim foam injection) rather than rely on the published
+        // graphics globals.
         internal bool DepthBaked => _depthBaked;
         internal bool SdfBaked => _sdfBaked;
         internal Texture DepthTexture => _depthTex;
@@ -80,11 +120,15 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 size = terrain.terrainData.size;
             _center = new Vector2(origin.x + size.x * 0.5f, origin.z + size.z * 0.5f);
             _halfSize = new Vector2(size.x * 0.5f, size.z * 0.5f);
+            // The still-water plane is the body's surface (transform Y); the waterline is where the
+            // seabed crosses it. Baked into the stored depth, and published for absolute consumers.
+            _waterLevel = _body.VolumeCenter.y;
 
             int res = Mathf.Clamp(_body.bedResolution, WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution);
+            _res = res;
             EnsureTexture(ref _depthTex, res, TextureFormat.RHalf, "ShoreDepthWorld");
 
-            var seabed = new float[res * res];
+            var depth = new float[res * res];
             var depthPixels = new Color[res * res];
             for (int z = 0; z < res; z++)
             {
@@ -93,22 +137,21 @@ namespace AbstractOcclusion.WebGpuWater
                 {
                     float worldX = TexelToWorld(x, res, _center.x, _halfSize.x);
                     float seabedY = origin.y + terrain.SampleHeight(new Vector3(worldX, 0f, worldZ));
-                    seabed[z * res + x] = seabedY;
-                    depthPixels[z * res + x] = new Color(seabedY, 0f, 0f, 0f);
+                    float columnDepth = _waterLevel - seabedY; // + in water, - on dry land
+                    depth[z * res + x] = columnDepth;
+                    depthPixels[z * res + x] = new Color(columnDepth, 0f, 0f, 0f);
                 }
             }
             _depthTex.SetPixels(depthPixels);
             _depthTex.Apply(false, false);
             _depthBaked = true;
+            _cpuDepth = depth;
 
-            // The still-water plane is the body's surface (transform Y); the waterline is where the
-            // seabed crosses it. Stored + published so the shoaling shader reads depth = level - seabed.
-            _waterLevel = _body.VolumeCenter.y;
-            BuildSdf(seabed, res, _waterLevel);
+            BuildSdf(depth, res);
         }
 
-        // CPU jump-flood signed distance + direction to shore, derived from the baked seabed heights.
-        void BuildSdf(float[] seabed, int res, float waterLevel)
+        // CPU jump-flood signed distance + direction to shore, derived from the baked column depths.
+        void BuildSdf(float[] depth, int res)
         {
             int n = res * res;
             var worldX = new float[res];
@@ -126,12 +169,12 @@ namespace AbstractOcclusion.WebGpuWater
                 {
                     int i = z * res + x;
                     src[i] = -1;
-                    bool submerged = seabed[i] < waterLevel;
+                    bool submerged = depth[i] > 0f;
                     bool boundary =
-                        (x > 0 && (seabed[i - 1] < waterLevel) != submerged) ||
-                        (x < res - 1 && (seabed[i + 1] < waterLevel) != submerged) ||
-                        (z > 0 && (seabed[i - res] < waterLevel) != submerged) ||
-                        (z < res - 1 && (seabed[i + res] < waterLevel) != submerged);
+                        (x > 0 && (depth[i - 1] > 0f) != submerged) ||
+                        (x < res - 1 && (depth[i + 1] > 0f) != submerged) ||
+                        (z > 0 && (depth[i - res] > 0f) != submerged) ||
+                        (z < res - 1 && (depth[i + res] > 0f) != submerged);
                     if (boundary) { src[i] = i; seedCount++; }
                 }
             }
@@ -168,28 +211,78 @@ namespace AbstractOcclusion.WebGpuWater
                 (src, dst) = (dst, src);
             }
 
-            // Pack: RG = toward-shore unit direction (0..1), B = signed distance (m, + water / - land), A = 1.
-            var sdfPixels = new Color[n];
+            // Raw per-texel results: signed distance + toward-shore vector (unnormalized for the blur).
+            var dist = new float[n];
+            var dirX = new float[n];
+            var dirZ = new float[n];
             for (int z = 0; z < res; z++)
             {
                 for (int x = 0; x < res; x++)
                 {
                     int i = z * res + x;
                     int seed = src[i];
-                    if (seed < 0) { sdfPixels[i] = new Color(0.5f, 0.5f, 0f, 0f); continue; }
+                    if (seed < 0) { dist[i] = 0f; dirX[i] = 0f; dirZ[i] = 0f; continue; }
                     float dx = worldX[seed % res] - worldX[x];
                     float dz = worldZ[seed / res] - worldZ[z];
-                    float dist = Mathf.Sqrt(dx * dx + dz * dz);
-                    float sign = seabed[i] < waterLevel ? 1f : -1f; // + offshore water, - dry land
-                    float inv = dist > 1e-4f ? 1f / dist : 0f;
-                    sdfPixels[i] = new Color(dx * inv * 0.5f + 0.5f, dz * inv * 0.5f + 0.5f, sign * dist, 1f);
+                    float d = Mathf.Sqrt(dx * dx + dz * dz);
+                    float sign = depth[i] > 0f ? 1f : -1f; // + offshore water, - dry land
+                    dist[i] = sign * d;
+                    float inv = d > 1e-4f ? 1f / d : 0f;
+                    dirX[i] = dx * inv;
+                    dirZ[i] = dz * inv;
                 }
             }
+
+            // Direction smoothing (audit B11): box-blur the direction VECTORS (not the angles) a
+            // couple of passes, then renormalize per texel. Cheap at bake time; kills the medial-axis
+            // flips and the per-Voronoi-cell facets that would otherwise steer the surf fronts.
+            var blurX = new float[n];
+            var blurZ = new float[n];
+            for (int pass = 0; pass < DirectionSmoothPasses; pass++)
+            {
+                for (int z = 0; z < res; z++)
+                {
+                    for (int x = 0; x < res; x++)
+                    {
+                        float sumX = 0f, sumZ = 0f;
+                        for (int oz = -1; oz <= 1; oz++)
+                        {
+                            int zz = Mathf.Clamp(z + oz, 0, res - 1);
+                            for (int ox = -1; ox <= 1; ox++)
+                            {
+                                int xx = Mathf.Clamp(x + ox, 0, res - 1);
+                                int j = zz * res + xx;
+                                sumX += dirX[j];
+                                sumZ += dirZ[j];
+                            }
+                        }
+                        int i = z * res + x;
+                        blurX[i] = sumX / 9f;
+                        blurZ[i] = sumZ / 9f;
+                    }
+                }
+                (dirX, blurX) = (blurX, dirX);
+                (dirZ, blurZ) = (blurZ, dirZ);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                float len = Mathf.Sqrt(dirX[i] * dirX[i] + dirZ[i] * dirZ[i]);
+                if (len > 1e-4f) { dirX[i] /= len; dirZ[i] /= len; }
+                else { dirX[i] = 0f; dirZ[i] = 0f; }
+            }
+
+            // Pack: RG = toward-shore unit direction (0..1), B = signed distance (m), A = 1.
+            var sdfPixels = new Color[n];
+            for (int i = 0; i < n; i++)
+                sdfPixels[i] = new Color(dirX[i] * 0.5f + 0.5f, dirZ[i] * 0.5f + 0.5f, dist[i], 1f);
 
             EnsureTexture(ref _sdfTex, res, TextureFormat.RGBAHalf, "ShoreSdfWorld");
             _sdfTex.SetPixels(sdfPixels);
             _sdfTex.Apply(false, false);
             _sdfBaked = true;
+            _cpuSdfDist = dist;
+            _cpuSdfDirX = dirX;
+            _cpuSdfDirZ = dirZ;
         }
 
         static float SeedDistanceSq(int seed, int x, int z, int res, float[] worldX, float[] worldZ)
@@ -204,26 +297,113 @@ namespace AbstractOcclusion.WebGpuWater
         static float TexelToWorld(int index, int res, float center, float half)
             => center + (((index + 0.5f) / res) * 2f - 1f) * half;
 
+        // --- CPU sampling for the buoyancy mirror (matches the shader's bilinear reads + border
+        // feather, so LargeWaveField sees the same field the vertex shader does) -------------------
+
+        // Matches SHORE_BORDER_FEATHER in WaterShore.hlsl.
+        const float BorderFeather = 0.08f;
+
+        /// <summary>Sample the shore field at a world xz for the CPU wave mirror. Returns false
+        /// (deep-water behaviour) when unbaked or outside the feathered field.</summary>
+        internal bool TrySampleShore(float worldX, float worldZ, out float depth, out float sdfDist,
+                                     out float dirX, out float dirZ, out float influence)
+        {
+            depth = float.MaxValue;
+            sdfDist = 0f;
+            dirX = 0f;
+            dirZ = 0f;
+            influence = 0f;
+            if (!_depthBaked || _cpuDepth == null) return false;
+
+            float u = (worldX - _center.x) / (2f * _halfSize.x) + 0.5f;
+            float v = (worldZ - _center.y) / (2f * _halfSize.y) + 0.5f;
+            float edgeU = Mathf.Min(u, 1f - u);
+            float edgeV = Mathf.Min(v, 1f - v);
+            influence = Mathf.Clamp01(edgeU / BorderFeather) * Mathf.Clamp01(edgeV / BorderFeather);
+            if (influence <= 0f) { influence = 0f; return false; }
+
+            depth = BilinearCpu(_cpuDepth, u, v);
+            if (_sdfBaked && _cpuSdfDist != null)
+            {
+                sdfDist = BilinearCpu(_cpuSdfDist, u, v);
+                dirX = BilinearCpu(_cpuSdfDirX, u, v);
+                dirZ = BilinearCpu(_cpuSdfDirZ, u, v);
+                float len = Mathf.Sqrt(dirX * dirX + dirZ * dirZ);
+                if (len > 1e-4f) { dirX /= len; dirZ /= len; }
+                else { dirX = 0f; dirZ = 0f; }
+            }
+            return true;
+        }
+
+        float BilinearCpu(float[] field, float u, float v)
+        {
+            int res = _res;
+            float fx = Mathf.Clamp01(u) * res - 0.5f;
+            float fz = Mathf.Clamp01(v) * res - 0.5f;
+            int x0 = Mathf.Clamp(Mathf.FloorToInt(fx), 0, res - 1);
+            int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, res - 1);
+            int x1 = Mathf.Min(x0 + 1, res - 1);
+            int z1 = Mathf.Min(z0 + 1, res - 1);
+            float tx = Mathf.Clamp01(fx - x0);
+            float tz = Mathf.Clamp01(fz - z0);
+            float a = Mathf.Lerp(field[z0 * res + x0], field[z0 * res + x1], tx);
+            float b = Mathf.Lerp(field[z1 * res + x0], field[z1 * res + x1], tx);
+            return Mathf.Lerp(a, b, tz);
+        }
+
         void Publish()
         {
-            Shader.SetGlobalTexture(ID_Tex, _depthBaked ? (Texture)_depthTex : Texture2D.blackTexture);
+            // Runtime toggle-off must actually TURN THE GPU SIDE OFF (the CPU mirror already gates
+            // on useBedDepth): a stale bake keeps its textures but publishes invalid, so the
+            // shaders and the buoyancy mirror always agree about whether the shore is live.
+            bool depthLive = _depthBaked && _body.useBedDepth;
+            bool sdfLive = _sdfBaked && _body.useBedDepth;
+            Shader.SetGlobalTexture(ID_Tex, depthLive ? (Texture)_depthTex : Texture2D.blackTexture);
             Shader.SetGlobalVector(ID_Center, new Vector4(_center.x, _center.y, 0f, 0f));
             Shader.SetGlobalVector(ID_Size, new Vector4(_halfSize.x, _halfSize.y, 0f, 0f));
-            Shader.SetGlobalFloat(ID_Valid, _depthBaked ? 1f : 0f);
+            Shader.SetGlobalFloat(ID_Valid, depthLive ? 1f : 0f);
             Shader.SetGlobalFloat(ID_Debug, _depthDebugEnabled ? 1f : 0f);
             Shader.SetGlobalFloat(ID_WaterLevel, _waterLevel);
             Shader.SetGlobalFloat(ID_ShoalDepth, _body.shoreShoalDepth); // live-tunable; no rebake needed
 
-            Shader.SetGlobalTexture(ID_SdfTex, _sdfBaked ? (Texture)_sdfTex : Texture2D.blackTexture);
-            Shader.SetGlobalFloat(ID_SdfValid, _sdfBaked ? 1f : 0f);
+            Shader.SetGlobalTexture(ID_SdfTex, sdfLive ? (Texture)_sdfTex : Texture2D.blackTexture);
+            Shader.SetGlobalFloat(ID_SdfValid, sdfLive ? 1f : 0f);
             Shader.SetGlobalFloat(ID_SdfDebug, _sdfDebugEnabled ? 1f : 0f);
+
+            // P1 shoal-transform knobs (inert when the field is unbaked - the shaders gate on the
+            // valid flags above - but published every frame so they stay live-tunable).
+            Shader.SetGlobalFloat(ID_Refraction, _body.shoreRefraction);
+            Shader.SetGlobalFloat(ID_Compression, _body.shoreCompression);
+            Shader.SetGlobalFloat(ID_Greens, _body.shoreGreens);
+
+            // P2 surf breaker fronts: active only with BOTH fields baked (they steer by the SDF)
+            // and the body opted in. The same values feed the ripple-sim foam injection through
+            // WaterSimulation.BindShoreFoam - one source, two consumers.
+            Shader.SetGlobalFloat(ID_SurfActive, SurfLayerActive ? 1f : 0f);
+            Shader.SetGlobalFloat(ID_SurfAmplitude, _body.SurfAmplitudeEffective);
+            Shader.SetGlobalFloat(ID_SurfWavelength, _body.surfWavelength);
+            Shader.SetGlobalFloat(ID_SurfPeriod, _body.surfPeriod);
+            Shader.SetGlobalFloat(ID_SurfBandDepth, _body.surfBandDepth);
+            Shader.SetGlobalFloat(ID_SurfSetStrength, _body.surfSetStrength);
+            Shader.SetGlobalFloat(ID_SurfLean, _body.surfLean);
+            Shader.SetGlobalFloat(ID_SurfCompression, _body.shoreCompression);
+            Shader.SetGlobalFloat(ID_SurfGreens, _body.shoreGreens);
+            Shader.SetGlobalFloat(ID_SurfAmbientFade, _body.surfAmbientFade);
+            Shader.SetGlobalFloat(ID_SurfSwashAmplitude, _body.surfSwashAmplitude);
+            Shader.SetGlobalFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
         }
+
+        /// <summary>True when the surf breaker-front layer runs on this body: bed depth on, surf
+        /// opted in, and both substrate fields baked (the fronts steer by the SDF). One definition,
+        /// consumed by the publisher, the foam injection and the CPU mirror alike.</summary>
+        internal bool SurfLayerActive
+            => _body.useBedDepth && _body.surfEnabled && _depthBaked && _sdfBaked;
 
         void EnsureTexture(ref Texture2D tex, int res, TextureFormat format, string texName)
         {
             if (tex != null && tex.width == res && tex.format == format) return;
             if (tex != null) DestroyTexture(ref tex);
-            // Half-float: heights/distances need sub-metre precision but not float32 - and float32 is
+            // Half-float: depths/distances need sub-metre precision but not float32 - and float32 is
             // not hardware-filterable on WebGPU, whereas half is. Linear (not sRGB) data.
             tex = new Texture2D(res, res, format, false, true)
             {
@@ -241,6 +421,10 @@ namespace AbstractOcclusion.WebGpuWater
             _depthBaked = false;
             _sdfBaked = false;
             _bakeAttempted = false;   // re-arm the lazy bake gate for the next enable
+            _cpuDepth = null;
+            _cpuSdfDist = null;
+            _cpuSdfDirX = null;
+            _cpuSdfDirZ = null;
         }
 
         static void DestroyTexture(ref Texture2D tex)

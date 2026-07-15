@@ -44,6 +44,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
         static readonly int ID_BedValid = Shader.PropertyToID("_BedValid");
         static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
+        static readonly int ID_ShoreBodyGate = Shader.PropertyToID("_ShoreBodyGate");
         static readonly int ID_DeepWaterColor = Shader.PropertyToID("_DeepWaterColor");
         static readonly int ID_ShorelineScale = Shader.PropertyToID("_ShorelineDepthScale");
         static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
@@ -315,6 +316,10 @@ namespace AbstractOcclusion.WebGpuWater
             if (_body.BedTexture != null) sink.SetTexture(ID_BedTex, _body.BedTexture);
             sink.SetFloat(ID_BedValid, _body.IsBedBaked ? 1f : 0f);
             sink.SetFloat(ID_UseBedDepth, _body.useBedDepth ? 1f : 0f);
+            // Per-body gate on the SHARED _Shore*/_Surf* globals (WaterShoreDepthField publishes
+            // one field at a time): only the body that opted into bed depth reads the shore
+            // substrate, so a pond overlapping the terrain field can never catch its surf/shoal.
+            sink.SetFloat(ID_ShoreBodyGate, _body.useBedDepth ? 1f : 0f);
             sink.SetColor(ID_DeepWaterColor, _body.deepWaterColor);
             sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinBedFadeDepth, _body.bedFadeDepth));
             sink.SetFloat(ID_ShorelineStrength, _body.bedTintStrength);

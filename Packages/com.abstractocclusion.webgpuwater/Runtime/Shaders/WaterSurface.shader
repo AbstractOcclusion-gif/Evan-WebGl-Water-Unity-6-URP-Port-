@@ -591,6 +591,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         worldPos += HeroWaveOffset(o.largeWaveSourceXZ, false, heroWeight);
                     }
                 }
+                // Surf swash film: over the beach the surface HUGS THE SAND (a thin film a few
+                // centimetres proud of it) wherever the swash has recently reached - a flat plane
+                // below the terrain would lose the depth test and the breathing waterline + wet
+                // glaze would never render. Fragments past the drying wet line stay under the sand
+                // (depth-occluded) and are clipped in the fragment anyway; the still-water region
+                // is untouched (the lift only ever RAISES onto dry ground).
+                if (_SurfActive > 0.5 && _ShoreDepthValid > 0.5 && _UseBedDepth > 0.5)
+                {
+                    ShoreData shoreVert = ShoreSample(worldPos.xz);
+                    float beachRise = -shoreVert.depth; // metres the sand sits above the still level
+                    if (shoreVert.influence > 0.0 && beachRise > 0.0)
+                    {
+                        float2 swashVert = EvaluateSurfSwash(shoreVert.influence, _WaveTime);
+                        if (swashVert.y > 1e-3)
+                            worldPos.y = max(worldPos.y, _ShoreWaterLevel
+                                             + min(beachRise, swashVert.y) + SURF_FILM_THICKNESS);
+                    }
+                }
                 o.worldPos = worldPos;
                 // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
                 // depth test against the coplanar far plane at EVERY distance. The old bias was a constant
@@ -755,12 +773,28 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // World-space surface normal + view ray, so reflection/refraction angles
                 // are correct even when the volume is rotated or has a rectangular footprint.
                 float3 normal = PoolNormalToWorld(normalPool);
+                // ---- Coastline: ONE shore-substrate + surf-front sample at the SOURCE xz, hoisted
+                // here and shared by the wave normal, the whitewash foam, the crest glow and the
+                // swash below - both cheaper and far less inlining pressure on the shader compiler
+                // than re-evaluating per consumer. Inert (zeros / deep water) unless this body runs
+                // the surf layer over a baked Layer A field. ----
+                ShoreData shoreFrag = ShoreDataInert();
+                SurfWaveSample surfFrag = SurfWaveSampleInert();
+                if (_SurfActive > 0.5 && _ShoreDepthValid > 0.5)
+                {
+                    shoreFrag = ShoreSample(i.largeWaveSourceXZ);
+                    surfFrag = EvaluateSurfWaves(i.largeWaveSourceXZ, shoreFrag.depth,
+                                                 shoreFrag.sdfDist, shoreFrag.toShore,
+                                                 shoreFrag.influence, _WaveTime);
+                }
+
                 // Open water: PoolNormalToWorld divides normal.xz by the (large) footprint extent,
                 // flattening the surface so screen-space refraction collapses on big bodies. Add a
                 // WORLD-space wave slope here (after that division) so open water keeps real normals
                 // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
                 if (_LargeBody > 0.5)
-                    normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
+                    normal = ApplyLargeBodyWaveNormalShore(normal, i.largeWaveSourceXZ,
+                                                           _WaveNormalStrength, shoreFrag, surfFrag);
                 // Hero wave: tilt by the base wave slope everywhere (matches the base vertex offset);
                 // on the lip sheet, blend toward its interpolated geometric normal by curl weight so
                 // the overturned surface shades correctly while its foot inherits the detailed normal.
@@ -876,6 +910,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float pinch = pow(ramp, _SssPinchFalloff);
                         float sunFacing = pow(saturate(dot(-incomingRay, _LightDir)), _SssSunFalloff);
                         sssBoost = pinch * sunFacing * _SssIntensity;
+                    }
+
+                    // ---- Surf breaker crest glow: cresting lips scatter sunlight exactly like
+                    // FFT-pinched crests, so reuse the subsurface glow path (same gate/knobs). The
+                    // shore/front sample itself is hoisted next to the normal above. ----
+                    if (_SssEnabled > 0.5 && surfFrag.breaker > 0.0)
+                    {
+                        float surfSun = pow(saturate(dot(-incomingRay, _LightDir)), _SssSunFalloff);
+                        sssBoost += surfFrag.breaker * surfSun * _SssIntensity;
                     }
 
                     // The water's lit body colour (picked scatter colour + sun/ambient), or the flat fog
@@ -1061,10 +1104,36 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         }
                     }
 
+                    // ---- Surf whitewash look: ANALYTIC coverage from the breaker-front layer (broken
+                    // bores + trailing churn), textured through the same pond-foam pattern pipeline so
+                    // the lace/lighting language matches. Analytic coverage works at ANY distance - the
+                    // sim-injected shore foam (near field, advected + organic) rides the pond layer
+                    // above; this layer keeps distant breakers white. ----
+                    float surfFoamAlpha = 0.0;
+                    float3 surfFoamLook = float3(0.0, 0.0, 0.0);
+                    if (surfFrag.whitewash > FOAM_MASK_EPSILON)
+                    {
+                        float2 surfUv = i.largeWaveSourceXZ / max(_FoamTileSize, 1e-3)
+                                      + normal.xz * FOAM_NORMAL_NUDGE;
+                        float surfDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
+                        float3 surfPattern; float surfCore, surfLace, surfAlpha; float2 surfTilt;
+                        EvaluateFoam(surfUv, nxz, saturate(surfFrag.whitewash), surfDist,
+                                     surfPattern, surfCore, surfLace, surfAlpha, surfTilt);
+                        float3 surfFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+                        float3 surfFoamBitangent = cross(normal, surfFoamTangent);
+                        float3 surfFoamNormal = normalize(normal + surfFoamTangent * surfTilt.x
+                                                                 + surfFoamBitangent * surfTilt.y);
+                        float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
+                        float3 surfAlbedo = _FoamColor.rgb
+                            * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfCore * FOAM_CORE_WHITEN);
+                        surfFoamLook = FoamLitColor(surfAlbedo, _SunColor, surfWrapped);
+                        surfFoamAlpha = surfAlpha;
+                    }
+
                     // Foam is matte: the combined coverage knocks the specular reflection down before
                     // compositing (this surface expresses gloss as the reflection term, so this IS the
                     // "foam roughens the surface" cue - Crest lerps smoothness down the same way).
-                    float foamMatte = max(oceanFoam, pondFoamAlpha);
+                    float foamMatte = max(max(oceanFoam, pondFoamAlpha), surfFoamAlpha);
 
                     float3 outColor = lerp(refractedColor, reflectedColor,
                                            fresnel * _ReflectionStrength * (1.0 - foamMatte));
@@ -1077,34 +1146,78 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     if (sssBoost > 0.0)
                         outColor += _ScatterColor.rgb * _SunColor * (sssBoost * (1.0 - foamMatte));
 
+                    // ---- Shallow-water clarity (surf bodies): centimetres-deep run-out shows the
+                    // ground through it instead of reading as flat opaque blue between the last
+                    // bore and the beach. Keyed off the WORLD-FRAME shore field so it works on the
+                    // windowed ocean too (the pool-bed block below is bounded-only). ----
+                    if (_SurfActive > 0.5 && shoreFrag.influence > 0.0
+                        && shoreFrag.depth > 0.0 && shoreFrag.depth < 0.6)
+                    {
+                        float shallowClarity = 1.0 - saturate(shoreFrag.depth / 0.6);
+                        outColor = lerp(outColor, refractedColor,
+                                        shallowClarity * 0.5 * shoreFrag.influence);
+                    }
+
                     // ---- Shoreline gradient from the real terrain depth (baked bed map).
                     // Tint toward the deep-water colour by the water-column depth, so the surface
                     // reads clear over shallows and dark over the drop-off. No-op until a bed is
-                    // baked and the toggle is on. ----
+                    // baked and the toggle is on.
+                    // Surf swash (P4): the clip line breathes with the arriving fronts - the film runs
+                    // up the beach and drains back - and the zone the film has recently covered renders
+                    // as a dark wet-sand glaze instead of clipping away. Fully analytic (the swash and
+                    // the drying wet line are closed-form functions of the wave clock); zero when the
+                    // surf layer is off, so the classic hard waterline is byte-identical. ----
                     if (_UseBedDepth > 0.5 && _BedValid > 0.5)
                     {
                         float2 bedUV = i.position.xz * 0.5 + 0.5;
                         float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
                         float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
+                        float2 swash = (_SurfActive > 0.5)
+                            ? EvaluateSurfSwash(shoreFrag.influence, _WaveTime)
+                            : float2(0.0, 0.0);
+                        float swashLevel = swash.x;
+                        float wetLevel = swash.y;
                         // Terrain mask: cut the water where the bed rises above the surface (dry beach)
                         // so the plane doesn't draw over the sand. clip() discards the fragment; the small
                         // positive bias keeps a hair of water right at the waterline (no shimmer gap).
+                        // The swash keeps fragments alive up to the wet line (current film OR still-drying
+                        // sand), so the film and the glaze have geometry to render on.
                         const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
-                        clip(colDepth + SHORE_CLIP_BIAS);
+                        clip(colDepth + SHORE_CLIP_BIAS + max(swashLevel, wetLevel));
                         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
                         outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
+                        // Wet-sand glaze: fragments above the CURRENT film but under the drying wet line
+                        // show the darkened scene through a thin glossy sheet - wet sand with zero state.
+                        float beachRise = -colDepth;                    // metres above the still level
+                        if (beachRise > 0.0 && wetLevel > 0.0)
+                        {
+                            // Thin-film transparency: the swash sheet is centimetres of water ON the
+                            // sand, not ocean - pull HARD toward the refracted ground so the film
+                            // reads wet-and-clear ("swash amplitude causes the blue water line" -
+                            // the band must never look like blue ocean sitting on the beach).
+                            float filmT = saturate(beachRise / max(wetLevel, 1e-3));
+                            outColor = lerp(outColor, refractedColor, 0.6 + 0.3 * filmT);
+                            float aboveFilm = saturate((beachRise - swashLevel)
+                                                       / max(wetLevel - swashLevel, 1e-3));
+                            float glaze = aboveFilm * smoothstep(0.0, 0.25, (wetLevel - beachRise)
+                                                                 / max(wetLevel, 1e-3));
+                            float3 wetLook = refractedColor * 0.7 + reflectedColor * 0.12;
+                            outColor = lerp(outColor, wetLook, glaze * 0.85);
+                        }
                     }
                     // ---- Exclusive foam composite (looks evaluated above, before the reflection
                     // composite, so the combined coverage could matte the specular): ONE write into
-                    // outColor, after the shoreline gradient so foam sits over it. Coverage is the max of the
-                    // two layers (never their stack) and the colour is their alpha-weighted blend, so a
+                    // outColor, after the shoreline gradient so foam sits over it. Coverage is the max of
+                    // the layers (never their stack) and the colour is their alpha-weighted blend, so a
                     // lone layer is bit-identical to the old per-layer lerp while overlap can no longer
                     // double-lay foam. ----
-                    float foamCombinedAlpha = max(oceanFoamAlpha, pondFoamAlpha);
+                    float foamCombinedAlpha = max(max(oceanFoamAlpha, pondFoamAlpha), surfFoamAlpha);
                     if (foamCombinedAlpha > 0.0)
                     {
-                        float3 foamCombinedLook = (oceanFoamLook * oceanFoamAlpha + pondFoamLook * pondFoamAlpha)
-                                                / max(oceanFoamAlpha + pondFoamAlpha, 1e-5);
+                        float3 foamCombinedLook = (oceanFoamLook * oceanFoamAlpha
+                                                   + pondFoamLook * pondFoamAlpha
+                                                   + surfFoamLook * surfFoamAlpha)
+                                                / max(oceanFoamAlpha + pondFoamAlpha + surfFoamAlpha, 1e-5);
                         outColor = lerp(outColor, foamCombinedLook, foamCombinedAlpha);
                     }
 
@@ -1136,8 +1249,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     if (_ShoreDepthDebug > 0.5 && _ShoreDepthValid > 0.5)
                     {
                         float2 shoreUV = (i.worldPos.xz - _ShoreDepthCenter.xy) / (2.0 * _ShoreDepthSize.xy) + 0.5;
-                        float seabedY = tex2Dlod(_ShoreDepthTex, float4(shoreUV, 0, 0)).r;
-                        float shoreColDepth = i.worldPos.y - seabedY;   // metres of water column
+                        // P0: the field stores the still-water column depth directly (see WaterShore.hlsl).
+                        float shoreColDepth = tex2Dlod(_ShoreDepthTex, float4(shoreUV, 0, 0)).r;
                         const float SHORE_DEBUG_RANGE = 10.0;           // depth (m) mapped shallow -> deep
                         float3 shoreDbg = (shoreColDepth < 0.0)
                             ? float3(1.0, 0.0, 0.0)

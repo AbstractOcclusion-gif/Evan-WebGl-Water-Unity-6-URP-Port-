@@ -45,8 +45,9 @@ static const float DRAIN_BAND = 0.06;
 Texture2D<float4>   Src;
 RWTexture2D<float4> Dst;
 
-// Layer A fields (bound by C#). Depth = seabed WORLD height (m). SDF: RG = toward-shore dir (0..1),
-// B = signed distance (m), A = mask. Half-float, linear-filterable on WebGPU.
+// Layer A fields (bound by C#). Depth = still-water COLUMN DEPTH (m, + water / - land; P0
+// semantics). SDF: RG = toward-shore dir (0..1), B = signed distance (m), A = mask. Half-float,
+// linear-filterable on WebGPU.
 Texture2D<float>  _ShoreDepthTex;
 SamplerState      sampler_ShoreDepthTex;
 Texture2D<float4> _ShoreSDFTex;
@@ -97,16 +98,17 @@ float2 CellWorld(int2 p)
     return _SweCenter.xy + (uv * 2.0 - 1.0) * _SweHalfSize.xy;
 }
 
-// Layer A seabed world height under a world XZ (linear-sampled half-float).
-float SeabedY(float2 worldXZ)
+// Still-water column depth (m) under a world XZ (linear-sampled half-float). The Layer A field
+// stores the column depth DIRECTLY (P0 precision fix, coastline audit B4) - + water, <= 0 dry land.
+float ColumnDepth(float2 worldXZ)
 {
     float2 uv = (worldXZ - _ShoreDepthCenter.xy) / (2.0 * _ShoreDepthSize.xy) + 0.5;
     uv = saturate(uv);
     return _ShoreDepthTex.SampleLevel(sampler_ShoreDepthTex, uv, 0);
 }
 
-// Still-water column depth (m): surface plane minus seabed. <= 0 on dry land.
-float ColumnDepth(float2 worldXZ) { return _ShoreWaterLevel - SeabedY(worldXZ); }
+// Layer A seabed world height under a world XZ, reconstructed from the stored column depth.
+float SeabedY(float2 worldXZ) { return _ShoreWaterLevel - ColumnDepth(worldXZ); }
 
 // Toward-shore unit direction from the SDF (run-up direction).
 float2 ShoreDir(float2 worldXZ)
@@ -126,11 +128,14 @@ float NearShoreMask(float depth)
 
 // Crest depth shoaling weight (mirrors WaterShore.hlsl::ShoalWeight; re-declared here because that
 // header declares _ShoreDepthTex as a sampler2D and would clash with the Texture2D form above).
+// KEEP IN LOCKSTEP with the header: smoothstep hand-over (P0 fix B3), not the old hard lerp ramp.
 float ShoalWeight(float depth, float wavelength)
 {
     float clamped = max(depth, 0.0);
     float raw = saturate(2.0 * clamped / max(wavelength, 1e-3));
-    return lerp(raw, 1.0, saturate(clamped / max(_ShoreShoalDepth, 1e-3)));
+    float band = max(_ShoreShoalDepth, 1e-3);
+    float deep = smoothstep(0.35 * band, band, clamped);
+    return lerp(raw, 1.0, deep);
 }
 
 // Incoming swell surface displacement (about still level) at a world XZ, shoaled by depth.

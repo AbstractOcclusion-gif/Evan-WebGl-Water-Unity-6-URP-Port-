@@ -126,7 +126,8 @@ namespace AbstractOcclusion.WebGpuWater
             float worldRate = (VolumeRotation * new Vector3(0f, poolRate * VolumeExtentSafe.y, 0f)).y;
             if (openWater)
                 worldRate += LargeWaveField.VerticalVelocityAtQuery(worldPoint.x, worldPoint.z, WaveTime,
-                    LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness);
+                    LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength, SwellHeight,
+                    LargeWaveChoppiness, ShoreWaveCtx);
 
             Vector3 velocity = worldFlow;
             velocity.y += worldRate;

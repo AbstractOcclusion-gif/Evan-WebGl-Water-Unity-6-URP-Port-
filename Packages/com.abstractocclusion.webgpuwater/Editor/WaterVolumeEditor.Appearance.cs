@@ -81,17 +81,39 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _showBedDepth = WaterEditorUI.SectionWithToggle(
                 "Bed Depth (real terrain depth)", _showBedDepth, Prop("bedDepthSettings.useBedDepth"), () =>
+            {
                 DrawFields(
                     "bedDepthSettings.bedTerrain",
                     "bedDepthSettings.bedResolution",
                     "bedDepthSettings.deepWaterColor",
                     "bedDepthSettings.bedFadeDepth",
                     "bedDepthSettings.bedTintStrength",
-                    "bedDepthSettings.shoreShoalDepth",
+                    "bedDepthSettings.shoreShoalDepth");
+                WaterEditorUI.SubHeading("Shoal transform");
+                DrawFields(
+                    "bedDepthSettings.shoreRefraction",
+                    "bedDepthSettings.shoreCompression",
+                    "bedDepthSettings.shoreGreens");
+                WaterEditorUI.SubHeading("Surf breaker fronts");
+                DrawFields(
+                    "bedDepthSettings.surfEnabled",
+                    "bedDepthSettings.surfAmplitude",
+                    "bedDepthSettings.surfWavelength",
+                    "bedDepthSettings.surfPeriod",
+                    "bedDepthSettings.surfBandDepth",
+                    "bedDepthSettings.surfSetStrength",
+                    "bedDepthSettings.surfLean",
+                    "bedDepthSettings.surfAmbientFade",
+                    "bedDepthSettings.surfSwashAmplitude",
+                    "bedDepthSettings.surfFoamGain",
+                    "bedDepthSettings.surfWaterlineFoam");
+                WaterEditorUI.SubHeading("Shore SWE zone (experimental)");
+                DrawFields(
                     "bedDepthSettings.sweZoneMeters",
                     "bedDepthSettings.sweResolution",
                     "bedDepthSettings.swePumpGain",
-                    "bedDepthSettings.swePushGain"));
+                    "bedDepthSettings.swePushGain");
+            });
         }
 
         void DrawFoamSection()

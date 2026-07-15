@@ -1056,6 +1056,44 @@ namespace AbstractOcclusion.WebGpuWater
                      "reaches the calming further out into deeper water. 0 = no shoaling.")]
             [Range(0f, 30f)] public float shoreShoalDepth = 4f;
 
+            [Header("Shore waves (shoal transform + surf breaker fronts)")]
+            [Tooltip("Bend shoaling waves toward the shore so crests swing parallel to the beach. " +
+                     "0 = waves keep the wind heading everywhere.")]
+            [Range(0f, 1f)] public float shoreRefraction = 0.7f;
+            [Tooltip("Crest bunching near the waterline (waves slow down in the shallows, so the " +
+                     "spacing compresses). 0 = off; above ~1.5 crests start looking glued together.")]
+            [Range(0f, 1.5f)] public float shoreCompression = 0.6f;
+            [Tooltip("Green's-law growth cap: how much shoaling waves are allowed to GROW before " +
+                     "breaking/attenuation takes them. 1 = no growth (old behaviour).")]
+            [Range(1f, 2f)] public float shoreGreens = 1.35f;
+            [Tooltip("Run automatic surf breaker fronts along the shoreline (needs the bed depth + " +
+                     "SDF baked). Shore-parallel wave fronts shoal, break and run whitewash in.")]
+            public bool surfEnabled = true;
+            [Tooltip("Deep-water amplitude (metres) of the surf sets feeding the fronts.")]
+            [Range(0f, 3f)] public float surfAmplitude = 0.8f;
+            [Tooltip("Spacing (metres) between surf fronts offshore.")]
+            [Range(4f, 120f)] public float surfWavelength = 26f;
+            [Tooltip("Seconds between fronts arriving at a fixed point (the surf rhythm).")]
+            [Range(2f, 30f)] public float surfPeriod = 9f;
+            [Tooltip("Column depth (metres) at which fronts are fully developed; they fade in from " +
+                     "deeper water and break where the depth criterion says.")]
+            [Range(0.5f, 20f)] public float surfBandDepth = 6f;
+            [Tooltip("Amplitude variation between wave sets (waves come in sets). 0 = every front " +
+                     "identical; 1 = strong lulls between sets.")]
+            [Range(0f, 1f)] public float surfSetStrength = 0.55f;
+            [Tooltip("Forward lean of the cresting front (fraction of local height thrown shoreward).")]
+            [Range(0f, 1f)] public float surfLean = 0.35f;
+            [Tooltip("How much the ambient swell/FFT fades where the surf fronts own the surface " +
+                     "(prevents double crests). 1 = fronts fully replace the ambient waves near shore.")]
+            [Range(0f, 1f)] public float surfAmbientFade = 0.8f;
+            [Tooltip("Run-up height (metres) of the swash film above the still waterline (drives the " +
+                     "breathing waterline + wet-sand glaze). 0 = classic hard waterline.")]
+            [Range(0f, 3f)] public float surfSwashAmplitude = 0.5f;
+            [Tooltip("Whitewash + breaker foam injected into the interactive foam sim near shore.")]
+            [Range(0f, 4f)] public float surfFoamGain = 1.2f;
+            [Tooltip("Standing foam lace hugging the waterline, independent of the front rhythm.")]
+            [Range(0f, 2f)] public float surfWaterlineFoam = 0.5f;
+
             [Header("Shore SWE zone (Layer C, needs the SWE compute assigned)")]
             [Tooltip("World size (metres) of the camera-following shallow-water sim zone near the " +
                      "waterline. Larger reaches further offshore but resolves the surf more coarsely.")]
@@ -1078,6 +1116,25 @@ namespace AbstractOcclusion.WebGpuWater
         internal float bedFadeDepth => bedDepthSettings.bedFadeDepth;
         internal float bedTintStrength => bedDepthSettings.bedTintStrength;
         internal float shoreShoalDepth => bedDepthSettings.shoreShoalDepth;
+        internal float shoreRefraction => bedDepthSettings.shoreRefraction;
+        internal float shoreCompression => bedDepthSettings.shoreCompression;
+        internal float shoreGreens => bedDepthSettings.shoreGreens;
+        internal bool surfEnabled => bedDepthSettings.surfEnabled;
+        internal float surfAmplitude => bedDepthSettings.surfAmplitude;
+        /// <summary>Front amplitude actually fed to the surf layer: floored at the body's swell
+        /// height, so the fronts never carry LESS energy than the ambient swell they replace at
+        /// the hand-over line - otherwise waves visibly "grow then shrink" at the surf-band edge
+        /// instead of continuing in. One definition for the publisher, foam push and CPU mirror.</summary>
+        internal float SurfAmplitudeEffective => Mathf.Max(surfAmplitude, SwellHeight);
+        internal float surfWavelength => bedDepthSettings.surfWavelength;
+        internal float surfPeriod => bedDepthSettings.surfPeriod;
+        internal float surfBandDepth => bedDepthSettings.surfBandDepth;
+        internal float surfSetStrength => bedDepthSettings.surfSetStrength;
+        internal float surfLean => bedDepthSettings.surfLean;
+        internal float surfAmbientFade => bedDepthSettings.surfAmbientFade;
+        internal float surfSwashAmplitude => bedDepthSettings.surfSwashAmplitude;
+        internal float surfFoamGain => bedDepthSettings.surfFoamGain;
+        internal float surfWaterlineFoam => bedDepthSettings.surfWaterlineFoam;
         internal float sweZoneMeters => bedDepthSettings.sweZoneMeters;
         internal int sweResolution => bedDepthSettings.sweResolution;
         internal float swePumpGain => bedDepthSettings.swePumpGain;
@@ -2665,16 +2722,47 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
+        // Shore-transform + surf-front context for the CPU wave mirror: the SAME knobs the shaders
+        // read as globals, plus the baked field's CPU copies (WaterShoreDepthField). Inactive (all
+        // zero, null field) when the shore substrate isn't live, so open water is byte-identical.
+        internal ShoreWaveContext ShoreWaveCtx
+        {
+            get
+            {
+                WaterShoreDepthField shore = ShoreDepth;
+                if (!useBedDepth || !shore.DepthBaked) return ShoreWaveContext.Inactive;
+                ShoreWaveContext ctx = default;
+                ctx.Field = shore;
+                ctx.ShoalDepth = shoreShoalDepth;
+                ctx.Refraction = shoreRefraction;
+                ctx.Compression = shoreCompression;
+                ctx.Greens = shoreGreens;
+                ctx.SurfActive = shore.SurfLayerActive;
+                ctx.SurfAmplitude = SurfAmplitudeEffective;
+                ctx.SurfWavelength = surfWavelength;
+                ctx.SurfPeriod = surfPeriod;
+                ctx.SurfBandDepth = surfBandDepth;
+                ctx.SurfSetStrength = surfSetStrength;
+                ctx.SurfLean = surfLean;
+                ctx.SurfAmbientFade = surfAmbientFade;
+                return ctx;
+            }
+        }
+
         // Large-body wave field (height, dHeight/dx, dHeight/dz) at a world xz. Prefers the FFT ocean's
         // async height-field readback (so floaters ride the exact rendered swell) and falls back to the
         // analytic CPU mirror before the first readback lands or on non-FFT bodies - matching the shader's
         // own gated fallback in WaterLargeWaves.hlsl.
         Vector3 SampleLargeWaveField(float worldX, float worldZ)
         {
+            // The FFT readback bakes the RAW cascades; the shader's FFT branch additionally shoals
+            // them by depth, fades them under the surf fronts and adds the fronts on top - so the
+            // readback sample gets the same treatment (mirror of LargeBodyWaveHeight's FFT path).
             if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft))
-                return fft;
+                return LargeWaveField.ApplyShoreToFftSample(fft, worldX, worldZ, _waveTime,
+                    SwellWavelength, ShoreWaveCtx);
             return LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
-                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness);
+                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ShoreWaveCtx);
         }
 
         // Static-reflection tuning (fixed for v1; promote to per-body settings if scene tuning is needed).
@@ -2810,6 +2898,7 @@ namespace AbstractOcclusion.WebGpuWater
                 float foamActivityScale = 1f / Mathf.Max(_simDensityRatio, 0.05f);
                 // Min wave height is authored in WORLD metres; the sim's heights are pool units.
                 PushHeroWaveFoam(_water); // hero-wave whitewater source (inert without a hero wave)
+                PushShoreFoam(_water);    // surf-front whitewash source (inert without the surf layer)
                 _water.StepFoam(foamGenRate, foamGenThreshold,
                                 foamMinWaveHeight / VolumeExtentSafe.y, foamDecay,
                                 residualSurvival, foamSpread, foamFromSpeed * foamActivityScale,
@@ -2817,6 +2906,48 @@ namespace AbstractOcclusion.WebGpuWater
                                 _foamTimeDebt, foamDecayRate);
                 _foamTimeDebt = 0f;
             }
+        }
+
+        /// <summary>Push this frame's surf-front foam source to the ripple sim: the Layer A field
+        /// textures + frame, the sim-uv -> world-xz affine (same shape as the hero wave's), and the
+        /// front-field values the surface renders with - so the injected foam lands exactly where
+        /// the eye sees the fronts break. Inert unless the surf layer is live on this body.</summary>
+        void PushShoreFoam(WaterSimulation sim)
+        {
+            if (sim == null) return;
+            WaterShoreDepthField shore = ShoreDepth;
+            var state = new WaterSimulation.ShoreFoamState();
+            state.Active = shore.SurfLayerActive && surfFoamGain + surfWaterlineFoam > 0f;
+            if (state.Active)
+            {
+                // The sim domain is the scrolling window on windowed bodies, the whole footprint
+                // otherwise - the SAME frames the render side uses (mirrors PushHeroWaveFoam).
+                Vector3 domainCenter = IsWindowed ? SimWindowCenter : VolumeCenter;
+                Vector3 domainExtent = IsWindowed ? SimHalfExtent : VolumeExtentSafe;
+                Quaternion rotation = VolumeRotation;
+                Vector3 uvOrigin = domainCenter + rotation * new Vector3(-domainExtent.x, 0f, -domainExtent.z);
+                Vector3 uvAxisX = rotation * new Vector3(2f * domainExtent.x, 0f, 0f);
+                Vector3 uvAxisZ = rotation * new Vector3(0f, 0f, 2f * domainExtent.z);
+                state.DepthTex = shore.DepthTexture;
+                state.SdfTex = shore.SdfTexture;
+                state.FieldCenter = new Vector4(shore.FieldCenter.x, shore.FieldCenter.y, 0f, 0f);
+                state.FieldSize = new Vector4(shore.FieldHalfSize.x, shore.FieldHalfSize.y, 0f, 0f);
+                state.UvToWorldOrigin = new Vector4(uvOrigin.x, uvOrigin.z, 0f, 0f);
+                state.UvToWorldAxes = new Vector4(uvAxisX.x, uvAxisX.z, uvAxisZ.x, uvAxisZ.z);
+                state.Time = _waveTime;
+                state.FoamGain = surfFoamGain;
+                state.WaterlineGain = surfWaterlineFoam;
+                state.Amplitude = SurfAmplitudeEffective;
+                state.Wavelength = surfWavelength;
+                state.Period = surfPeriod;
+                state.BandDepth = surfBandDepth;
+                state.SetStrength = surfSetStrength;
+                state.Lean = surfLean;
+                state.Compression = shoreCompression;
+                state.Greens = shoreGreens;
+                state.AmbientFade = surfAmbientFade;
+            }
+            sim.SetShoreFoam(state);
         }
 
         // Choose the caustic path for this body: bounded bodies use the pool caustic (projected onto

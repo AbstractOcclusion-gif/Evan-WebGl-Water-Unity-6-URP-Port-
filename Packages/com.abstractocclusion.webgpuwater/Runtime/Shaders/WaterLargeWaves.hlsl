@@ -15,6 +15,10 @@
 
 // Layer B shoaling reads the world-frame seabed depth field (Layer A) to attenuate waves near shore.
 #include "WaterShore.hlsl"
+// Surf breaker wavefronts (Layer C-analytic): shore-parallel fronts driven by the SDF + depth,
+// composited here so EVERY consumer of the large-wave interface (vertex height/chop, fragment
+// normal, CPU mirror contract) gets the coastline through the same call sites.
+#include "WaterSurfWaves.hlsl"
 
 // Reuses _WaveTime (declared in WaterWaves.hlsl, published every frame) as the shared clock, so the
 // open-water waves animate in lockstep with the rest of the water.
@@ -87,7 +91,8 @@ struct LargeBodyWaveField
 // bands never align into ridges. Directions scatter within 'dirSpread' of the wind heading.
 void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wavelengthFalloff,
                        float baseAmplitude, float amplitudeFalloff, float dirSpread, float phaseSeed,
-                       float amplitudeScale, float minWavelength, float shoalDepth, inout LargeBodyWaveField f)
+                       float amplitudeScale, float minWavelength, ShoreData shore, float warpExtra,
+                       inout LargeBodyWaveField f)
 {
     float wavelength = baseWavelength;
     float amplitude = baseAmplitude;
@@ -101,9 +106,30 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
         float2 dir = float2(cos(heading), sin(heading));
         float phaseOffset = LbwHash(fn + phaseSeed + 16.0) * LBW_TWO_PI;
 
+        // Shoaling response of THIS component: 1 in deep water, falling toward 0 as the column
+        // depth drops below half its wavelength. Drives attenuation, refraction and compression
+        // together, so long waves feel the bottom sooner than short chop - exactly the cue that
+        // separates a coastline from a bathtub edge.
+        float shoalRaw = saturate(2.0 * max(shore.depth, 0.0) / max(wavelength, 1e-3));
+        float feel = (1.0 - shoalRaw) * shore.influence; // how much this component feels the bottom
+
+        // Refraction: bend the travel direction toward the shore as the component feels the
+        // bottom (Snell-flavoured heuristic - crests swing parallel to the beach). Off-field
+        // toShore is (0,0), so the lerp shrinks-then-renormalizes to the original direction.
+        float2 dirR = dir;
+        if (feel > 0.0 && _ShoreRefraction > 0.0)
+        {
+            float2 bent = lerp(dir, shore.toShore, _ShoreRefraction * feel);
+            float bentLen = length(bent);
+            dirR = bentLen > 1e-4 ? bent / bentLen : dir;
+        }
+
         float k = LBW_TWO_PI / max(wavelength, 1e-3);   // wavenumber
         float omega = sqrt(LBW_GRAVITY * k);            // deep-water dispersion
-        float phase = dot(dir, worldXZ) * k - omega * _WaveTime + phaseOffset;
+        // Phase compression: the shared shore-distance warp adds extra phase where waves slow in
+        // the shallows, scaled by how much this component feels the bottom - crests bunch.
+        float phase = dot(dirR, worldXZ) * k - omega * _WaveTime + phaseOffset
+                    + k * warpExtra * feel;
         float sinP = sin(phase);
         float cosP = cos(phase);
         // Distance band-limit: drop components the local mesh cannot resolve (short waves far out),
@@ -113,14 +139,14 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
                          : smoothstep(minWavelength * LBW_BANDLIMIT_LOW, minWavelength * LBW_BANDLIMIT_HIGH, wavelength);
         // Shoaling: attenuate this component by depth/wavelength so short waves die first and all
         // waves fall to zero as the water column runs out (no punching below the seabed near shore).
-        float a = amplitudeScale * amplitude * bandWeight * ShoalWeight(shoalDepth, wavelength);
+        float a = amplitudeScale * amplitude * bandWeight * ShoalWeight(shore.depth, wavelength);
 
         f.height    += a * sinP;
-        f.slope     += a * k * dir * cosP;              // d/dxz of A*sin(phase)
-        f.disp      += a * dir * cosP;                  // A*dir*cos(phase) (chop applied by caller)
+        f.slope     += a * k * dirR * cosP;             // d/dxz of A*sin(phase)
+        f.disp      += a * dirR * cosP;                 // A*dir*cos(phase) (chop applied by caller)
         // d/dxz of A*dir*cos(phase) = -A*k*dir*dir*sin(phase); only three unique 2x2 terms.
         float akSin = a * k * sinP;
-        f.dispDeriv += -akSin * float3(dir.x * dir.x, dir.x * dir.y, dir.y * dir.y);
+        f.dispDeriv += -akSin * float3(dirR.x * dirR.x, dirR.x * dirR.y, dirR.y * dirR.y);
 
         wavelength *= wavelengthFalloff;
         amplitude  *= amplitudeFalloff;
@@ -131,7 +157,11 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
 // summed: the wind CHOP band (short crests, scaled by the wind swell amplitude - unchanged from the
 // original single band) and the long-period SWELL band (rolling horizon, scaled by its height knob;
 // inert when that is 0). The Jacobian of the displaced position gives the correct normal under chop.
-LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
+// Core analytic evaluation with the shore substrate + surf front layer already sampled - the
+// public wrappers below sample them once and share across height/chop/normal so a vertex never
+// pays the shore fetches twice.
+LargeBodyWaveField EvaluateLargeBodyWaveShore(float2 worldXZ, float minWavelength,
+                                              ShoreData shore, SurfWaveSample surf)
 {
     LargeBodyWaveField f;
     f.height = 0.0;
@@ -139,17 +169,36 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
     f.disp = float2(0.0, 0.0);
     f.dispDeriv = float3(0.0, 0.0, 0.0); // (dDx/dx, dDx/dz, dDz/dz); dDz/dx == dDx/dz by symmetry
 
-    // Layer B shoaling: still-water depth under this world xz. One sample feeds both bands so height,
-    // chop and normal all attenuate together (a deep sentinel off-field leaves open water unchanged).
-    float shoalDepth = ShoreShoalDepth(worldXZ);
+    // Shore transform terms shared by both bands: Green's-law growth (waves RISE as the column
+    // shrinks, before attenuation/breaking takes them), the phase-compression warp, and the
+    // ambient fade where the surf fronts own the surface (anti-double-crest replace rule).
+    float green = ShoreGreenGain(shore);
+    float warpExtra = ShoreWarpExtra(shore);
+    float ambient = SurfAmbientWeight(surf.mask);
+    float bandScale = green * ambient;
 
     LbwAccumulateBand(worldXZ, LBW_WAVE_COUNT, LBW_BASE_WAVELENGTH, LBW_WAVELENGTH_FALLOFF,
                       LBW_BASE_AMPLITUDE, LBW_AMPLITUDE_FALLOFF, LBW_DIR_SPREAD, LBW_CHOP_PHASE_SEED,
-                      _LargeWaveAmplitude, minWavelength, shoalDepth, f);
+                      _LargeWaveAmplitude * bandScale, minWavelength, shore, warpExtra, f);
     LbwAccumulateBand(worldXZ, LBW_SWELL_COUNT, _LargeSwellWavelength, LBW_SWELL_WAVELENGTH_FALLOFF,
                       1.0, LBW_SWELL_AMPLITUDE_FALLOFF, LBW_SWELL_DIR_SPREAD, LBW_SWELL_PHASE_SEED,
-                      _LargeSwellHeight, minWavelength, shoalDepth, f);
+                      _LargeSwellHeight * bandScale, minWavelength, shore, warpExtra, f);
+
+    // Surf breaker fronts ride on top (they replaced the ambient share above). No horizontal
+    // displacement of their own: the lean is baked into the profile shape.
+    f.height += surf.height;
+    f.slope  += surf.slopeXZ;
     return f;
+}
+
+// Back-compat wrapper: sample the shore + surf here. Prefer the Shore variant when the caller
+// already has the samples.
+LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
+{
+    ShoreData shore = ShoreSample(worldXZ);
+    SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
+                                            shore.influence, _WaveTime);
+    return EvaluateLargeBodyWaveShore(worldXZ, minWavelength, shore, surf);
 }
 
 // --- FFT-cascade lookup (step 2) ------------------------------------------------------------------
@@ -168,9 +217,22 @@ float  _OceanFoamTileSize;     // metres per foam-pattern tile on the ocean surf
 float  _OceanFoamFeather;      // black-point dissolve softness (0..1) for the foam texture
 
 #define OCEAN_FFT_MAX_CASCADES 4
+// A tiled cascade has no per-component wavelength at sample time, so shore attenuation uses one
+// REPRESENTATIVE wavelength per cascade: the dominant energy of a tile sits around a quarter of
+// its domain (Crest attenuates per wave-band at input time; this is the sampled-cascade analogue).
+#define OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION 0.25
 
-// Sum the (x, height, z) displacement across the active cascades at a world xz.
-float3 OceanFftDisplacement(float2 worldXZ)
+// Depth attenuation for one cascade near shore (P0 fix B1: the FFT path never shoaled at all -
+// on the one body type a coastline is for, depth changed nothing).
+float OceanCascadeShoalWeight(int c, ShoreData shore)
+{
+    float wavelength = max(_OceanFftDomainSizes[c], 1e-3) * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION;
+    return lerp(1.0, ShoalWeight(shore.depth, wavelength), shore.influence);
+}
+
+// Sum the (x, height, z) displacement across the active cascades at a world xz, each cascade
+// attenuated by the shore depth (pass an inert ShoreData - influence 0 - for open water).
+float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
@@ -178,9 +240,16 @@ float3 OceanFftDisplacement(float2 worldXZ)
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);   // never index past the array depth
         float2 uv = worldXZ / max(_OceanFftDomainSizes[c], 1e-3);
-        sum += active * _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
+        sum += (active * OceanCascadeShoalWeight(c, shore))
+             * _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
     }
     return sum;
+}
+
+// Back-compat: samples the shore field itself (kept for any caller without a sample in hand).
+float3 OceanFftDisplacement(float2 worldXZ)
+{
+    return OceanFftDisplacementShore(worldXZ, ShoreSample(worldXZ));
 }
 
 // Sum the surface-normal tilt (xz of the per-cascade world normal) across the active cascades. This is
@@ -189,7 +258,7 @@ float3 OceanFftDisplacement(float2 worldXZ)
 // explicit DISTANCE LOD (not screen derivatives) so the same code is valid in the vertex programs that also
 // call this - e.g. the projected caustic grid - not just the fragment. A cubic distance fade then removes
 // each cascade past its visible range so the finest ripples don't shimmer far away.
-float2 OceanFftNormalTilt(float2 worldXZ)
+float2 OceanFftNormalTiltShore(float2 worldXZ, ShoreData shore)
 {
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
     float2 tilt = float2(0.0, 0.0);
@@ -202,9 +271,15 @@ float2 OceanFftNormalTilt(float2 worldXZ)
         float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
         float fade = 1.0 - f * f * f;   // full near the camera, 0 past the cascade's visible range
         float lod = log2(1.0 + camDist / domain); // farther -> coarser mip (distance anti-aliasing)
-        tilt += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).xz;
+        tilt += (active * fade * OceanCascadeShoalWeight(c, shore))
+              * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).xz;
     }
     return tilt;
+}
+
+float2 OceanFftNormalTilt(float2 worldXZ)
+{
+    return OceanFftNormalTiltShore(worldXZ, ShoreSample(worldXZ));
 }
 
 // Sum the accumulated whitecap foam (.w of the per-cascade normal target) across the active cascades,
@@ -214,6 +289,9 @@ float2 OceanFftNormalTilt(float2 worldXZ)
 // sum past 1 on a hard break, but foam coverage is a 0..1 mask.
 float OceanFftFoam(float2 worldXZ)
 {
+    // Shore attenuation keeps whitecaps off water the depth field has already flattened (the
+    // surf whitewash layer owns the foam story there instead).
+    ShoreData shore = ShoreSample(worldXZ);
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
     float foam = 0.0;
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
@@ -225,7 +303,8 @@ float OceanFftFoam(float2 worldXZ)
         float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
         float fade = 1.0 - f * f * f;
         float lod = log2(1.0 + camDist / domain);
-        foam += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
+        foam += (active * fade * OceanCascadeShoalWeight(c, shore))
+              * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
     }
     return saturate(foam);
 }
@@ -260,38 +339,56 @@ float LargeBodyWaveMinWavelength(float2 worldXZ)
 }
 
 // Wave HEIGHT (metres) only - for the vertex Y displacement. FFT cascades when active; the amplitude
-// knob still scales the swell so the inspector stays live.
+// knob still scales the swell so the inspector stays live. Both paths carry the shore transform:
+// per-cascade/per-component shoal attenuation, ambient fade under the surf fronts, and the fronts
+// themselves on top (the FFT keeps the deep-water texture; the front layer owns the coastline).
 float LargeBodyWaveHeight(float2 worldXZ)
 {
+    ShoreData shore = ShoreSample(worldXZ);
+    SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
+                                            shore.influence, _WaveTime);
     if (_OceanFftActive > 0.5)
-        return OceanFftDisplacement(worldXZ).y * _LargeWaveAmplitude;
-    return EvaluateLargeBodyWave(worldXZ, LargeBodyWaveMinWavelength(worldXZ)).height;
+        return OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
+               * SurfAmbientWeight(surf.mask) + surf.height;
+    return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).height;
 }
 
 // Horizontal Gerstner offset (metres) for the vertex xz displacement, choppiness baked in. Zero when
 // _LargeWaveChoppiness = 0, so the surface reduces to the pure vertical swell (unchanged).
 float2 LargeBodyWaveDisplacement(float2 worldXZ)
 {
+    ShoreData shore = ShoreSample(worldXZ);
+    SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
+                                            shore.influence, _WaveTime);
     if (_OceanFftActive > 0.5)
-        return OceanFftDisplacement(worldXZ).xz * _LargeWaveChoppiness * _LargeWaveAmplitude;
-    return EvaluateLargeBodyWave(worldXZ, LargeBodyWaveMinWavelength(worldXZ)).disp * _LargeWaveChoppiness;
+        return OceanFftDisplacementShore(worldXZ, shore).xz
+               * (_LargeWaveChoppiness * _LargeWaveAmplitude * SurfAmbientWeight(surf.mask));
+    return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).disp
+           * _LargeWaveChoppiness;
 }
 
 // Tilt a WORLD-space surface normal by the open-water wave shape at its SOURCE xz (the undisplaced
 // position the vertex carried through). 'strength' scales the effect (reuse the body's
 // _WaveNormalStrength so it stays art-directable). The tilt is the Jacobian normal of the displaced
 // Gerstner surface; at choppiness = 0 it equals -slope, i.e. the original smooth-swell normal.
-float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float strength)
+// Shore-aware variant: the caller has already sampled the shore substrate + surf-front layer at
+// the source xz (the fragment hoists ONE sample and shares it between the normal, the whitewash
+// foam, the crest glow and the swash - both cheaper and less inlining pressure on the compiler).
+float3 ApplyLargeBodyWaveNormalShore(float3 worldNormal, float2 sourceXZ, float strength,
+                                     ShoreData shore, SurfWaveSample surf)
 {
     // FFT path: the cascade normals already encode the surface tilt; blend their xz and lean the base
-    // normal by it. The per-pixel mipmapped detail (crisp ripples to the horizon) arrives in step 3.
+    // normal by it. Shore-attenuated + ambient-faded like the height, plus the surf fronts' own
+    // slope so breaker faces catch the light. A height gradient g contributes normal.xz = -g.
     if (_OceanFftActive > 0.5)
     {
-        float2 fftTilt = OceanFftNormalTilt(sourceXZ);
+        float2 fftTilt = OceanFftNormalTiltShore(sourceXZ, shore) * SurfAmbientWeight(surf.mask)
+                       - surf.slopeXZ;
         return normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength);
     }
 
-    LargeBodyWaveField f = EvaluateLargeBodyWave(sourceXZ, LargeBodyWaveMinWavelength(sourceXZ));
+    LargeBodyWaveField f = EvaluateLargeBodyWaveShore(sourceXZ, LargeBodyWaveMinWavelength(sourceXZ),
+                                                      shore, surf);
     float q = _LargeWaveChoppiness;
     float dDxdx = f.dispDeriv.x;
     float dDxdz = f.dispDeriv.y; // == dDz/dx
@@ -303,6 +400,16 @@ float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float stren
     float3 n = cross(tangentZ, tangentX);
     float2 tilt = n.xz / max(n.y, LBW_NORMAL_MIN_Y);
     return normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength);
+}
+
+// Back-compat wrapper: samples the shore + surf itself. Prefer the Shore variant when the caller
+// already holds the samples (the water-surface fragment does).
+float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float strength)
+{
+    ShoreData shore = ShoreSample(sourceXZ);
+    SurfWaveSample surf = EvaluateSurfWaves(sourceXZ, shore.depth, shore.sdfDist, shore.toShore,
+                                            shore.influence, _WaveTime);
+    return ApplyLargeBodyWaveNormalShore(worldNormal, sourceXZ, strength, shore, surf);
 }
 
 #endif // WEBGPUWATER_LARGE_WAVES_INCLUDED
