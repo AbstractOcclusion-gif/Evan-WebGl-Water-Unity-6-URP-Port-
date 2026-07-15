@@ -313,8 +313,11 @@ float OceanFftFoam(float2 worldXZ)
 // _OceanFftNormal.y by the FFT compute. Peaks on steep / breaking crests (the same fold that seeds foam),
 // so it drives the subsurface glow exactly where the surface is folding, rather than proxying it with
 // wave height. Same distance fade + mip LOD as the foam/tilt so it anti-aliases identically.
-float OceanFftJacobian(float2 worldXZ)
+float OceanFftJacobianShore(float2 worldXZ, ShoreData shore)
 {
+    // Per-cascade shore attenuation matches the DISPLACEMENT's: a wave the depth field has
+    // flattened must not keep emitting its full-strength pinch signal, or foam/glow appears
+    // over water that visibly carries no wave ("patches corresponding to nothing").
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
     float pinch = 0.0;
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
@@ -326,9 +329,15 @@ float OceanFftJacobian(float2 worldXZ)
         float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
         float fade = 1.0 - f * f * f;
         float lod = log2(1.0 + camDist / domain);
-        pinch += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).y;
+        pinch += (active * fade * OceanCascadeShoalWeight(c, shore))
+               * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).y;
     }
     return saturate(pinch);
+}
+
+float OceanFftJacobian(float2 worldXZ)
+{
+    return OceanFftJacobianShore(worldXZ, ShoreSample(worldXZ));
 }
 
 // Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera
@@ -371,20 +380,52 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
 // position the vertex carried through). 'strength' scales the effect (reuse the body's
 // _WaveNormalStrength so it stays art-directable). The tilt is the Jacobian normal of the displaced
 // Gerstner surface; at choppiness = 0 it equals -slope, i.e. the original smooth-swell normal.
-// Shore-aware variant: the caller has already sampled the shore substrate + surf-front layer at
-// the source xz (the fragment hoists ONE sample and shares it between the normal, the whitewash
-// foam, the crest glow and the swash - both cheaper and less inlining pressure on the compiler).
-float3 ApplyLargeBodyWaveNormalShore(float3 worldNormal, float2 sourceXZ, float strength,
-                                     ShoreData shore, SurfWaveSample surf)
+// Geometry-foam thresholds: a surface steeper than BREAK_SLOPE_MIN starts to whiten, fully white
+// by BREAK_SLOPE_MAX (a breaking face's slope ~ height / face length); PINCH_GAIN scales the
+// Jacobian fold. Foam derived from the RENDERED geometry can never detach from the waves - this
+// is Crest's whitecap (displacement-Jacobian) + KWS's breaking front (slope gate) computed from
+// the very field that displaces the vertices, gated to the near-shore band.
+#define LBW_BREAK_SLOPE_MIN 0.28
+#define LBW_BREAK_SLOPE_MAX 0.65
+#define LBW_PINCH_GAIN      1.5
+
+// Near-shore gate for the geometry foam: only inside the surf band of a surf-enabled body (deep
+// water keeps its own whitecap systems: FFT foam accumulation + wind whitecaps).
+float LbwGeometryFoamGate(ShoreData shore)
 {
+    if (_SurfActive < 0.5) return 0.0;
+    float band = max(_SurfBandDepth, 0.25);
+    return shore.influence * (1.0 - smoothstep(0.7 * band, 1.5 * band, max(shore.depth, 0.0)));
+}
+
+// Shore-aware normal + GEOMETRY FOAM: xyz = tilted world normal, w = breaker foam (0..1) derived
+// from the composite surface's own slope + displacement Jacobian. The caller has already sampled
+// the shore substrate + surf-front layer at the source xz (the fragment hoists ONE sample and
+// shares it between the normal, the foam, the crest glow and the swash).
+float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, float strength,
+                                         ShoreData shore, SurfWaveSample surf)
+{
+    float foamGate = LbwGeometryFoamGate(shore);
+
     // FFT path: the cascade normals already encode the surface tilt; blend their xz and lean the base
     // normal by it. Shore-attenuated + ambient-faded like the height, plus the surf fronts' own
     // slope so breaker faces catch the light. A height gradient g contributes normal.xz = -g.
+    // Geometry foam = the cascades' TRUE Jacobian pinch + the front layer's own face steepness.
     if (_OceanFftActive > 0.5)
     {
         float2 fftTilt = OceanFftNormalTiltShore(sourceXZ, shore) * SurfAmbientWeight(surf.mask)
                        - surf.slopeXZ;
-        return normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength);
+        float geomFoam = 0.0;
+        if (foamGate > 0.0)
+        {
+            // Shore-attenuated + ambient-faded pinch: only waves that are actually RENDERED at
+            // this depth may whiten (the raw Jacobian made foam patches over flattened water).
+            float pinch = OceanFftJacobianShore(sourceXZ, shore)
+                        * (LBW_PINCH_GAIN * SurfAmbientWeight(surf.mask));
+            float steep = smoothstep(LBW_BREAK_SLOPE_MIN, LBW_BREAK_SLOPE_MAX, length(fftTilt));
+            geomFoam = saturate(max(pinch, steep)) * foamGate;
+        }
+        return float4(normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength), geomFoam);
     }
 
     LargeBodyWaveField f = EvaluateLargeBodyWaveShore(sourceXZ, LargeBodyWaveMinWavelength(sourceXZ),
@@ -399,7 +440,25 @@ float3 ApplyLargeBodyWaveNormalShore(float3 worldNormal, float2 sourceXZ, float 
     float3 tangentZ = float3(q * dDxdz, f.slope.y, 1.0 + q * dDzdz);
     float3 n = cross(tangentZ, tangentX);
     float2 tilt = n.xz / max(n.y, LBW_NORMAL_MIN_Y);
-    return normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength);
+
+    float geomFoamA = 0.0;
+    if (foamGate > 0.0)
+    {
+        // Crest whitecap: determinant of the horizontal-displacement Jacobian folds below 1 where
+        // chop pinches a crest. KWS breaking front: the total surface slope (ambient + front face).
+        float jac = (1.0 + q * dDxdx) * (1.0 + q * dDzdz) - (q * dDxdz) * (q * dDxdz);
+        float pinch = saturate(1.0 - jac) * LBW_PINCH_GAIN;
+        float steep = smoothstep(LBW_BREAK_SLOPE_MIN, LBW_BREAK_SLOPE_MAX, length(f.slope));
+        geomFoamA = saturate(max(pinch, steep)) * foamGate;
+    }
+    return float4(normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength), geomFoamA);
+}
+
+// Normal-only wrapper (kept for callers that don't consume the geometry foam).
+float3 ApplyLargeBodyWaveNormalShore(float3 worldNormal, float2 sourceXZ, float strength,
+                                     ShoreData shore, SurfWaveSample surf)
+{
+    return ApplyLargeBodyWaveNormalFoamShore(worldNormal, sourceXZ, strength, shore, surf).xyz;
 }
 
 // Back-compat wrapper: samples the shore + surf itself. Prefer the Shore variant when the caller

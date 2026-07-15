@@ -30,6 +30,11 @@ namespace AbstractOcclusion.WebGpuWater
         public float SurfPeriod;           // _SurfPeriod
         public float SurfBandDepth;        // _SurfBandDepth
         public float SurfSetStrength;      // _SurfSetStrength
+        public float SurfCrestLength;      // _SurfCrestLength
+        public float SurfCrestVariation;   // _SurfCrestVariation
+        public float SurfDirectionality;   // _SurfDirectionality
+        public float SurfWindDirX;         // _SurfWindDirXZ.x (cos of the swell heading)
+        public float SurfWindDirZ;         // _SurfWindDirXZ.y (sin of the swell heading)
         public float SurfLean;             // _SurfLean
         public float SurfAmbientFade;      // _SurfAmbientFade
 
@@ -65,7 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float SurfMinDepth = 0.05f;
         const float SurfFaceFraction = 0.10f;
         const float SurfBackFraction = 0.24f;
-        const float SurfBoreHeightKeep = 0.45f;
+        const float SurfBoreHeightKeep = 0.6f;
         const float SurfSetWaves = 5.0f;
         const float SurfNearFade = 0.55f;
         const float SurfSechArgMax = 20.0f;
@@ -157,8 +162,29 @@ namespace AbstractOcclusion.WebGpuWater
             return s * (1f + ctx.Compression * Mathf.Exp(-Mathf.Max(s, 0f) / reach));
         }
 
+        // Mirrors SurfCrestFactor() in WaterSurfWaves.hlsl (alongshore crest segmentation).
+        static float SurfCrestFactor(in ShoreWaveContext ctx, float x, float z, float frontIndex)
+        {
+            if (ctx.SurfCrestVariation <= 0f) return 1f;
+            float invLen = 1f / Mathf.Max(ctx.SurfCrestLength, 4f);
+            float seed = Hash(frontIndex) * 37f;
+            float n = Mathf.Sin((x * 1f + z * 0.31f) * (TwoPi * invLen) + seed)
+                    + 0.5f * Mathf.Sin((x * -0.42f + z * 1f) * (TwoPi * invLen * 1.7f) + seed * 1.3f);
+            float n01 = Mathf.Clamp01(n / 1.5f * 0.5f + 0.5f);
+            return 1f - ctx.SurfCrestVariation * (1f - n01);
+        }
+
+        // Mirrors SurfExposure() in WaterSurfWaves.hlsl (surf gated by shore facing the swell).
+        static float SurfExposure(in ShoreWaveContext ctx, float dirX, float dirZ)
+        {
+            float facing = SmoothStep(-0.25f, 0.5f,
+                                      ctx.SurfWindDirX * dirX + ctx.SurfWindDirZ * dirZ);
+            return Mathf.Lerp(1f, facing, Mathf.Clamp01(ctx.SurfDirectionality));
+        }
+
         // Mirrors SurfFrontHeight() in WaterSurfWaves.hlsl (height only - buoyancy needs no foam).
-        static float SurfFrontHeight(in ShoreWaveContext ctx, float sWarp, float depth, float time)
+        static float SurfFrontHeight(in ShoreWaveContext ctx, float x, float z,
+                                     float sWarp, float depth, float time)
         {
             float wavelength = Mathf.Max(ctx.SurfWavelength, 1f);
             float period = Mathf.Max(ctx.SurfPeriod, 0.5f);
@@ -166,7 +192,7 @@ namespace AbstractOcclusion.WebGpuWater
             float frontIndex = Mathf.Floor(phase);
             float f = phase - frontIndex;
 
-            float setAmp = SurfSetAmp(ctx, frontIndex);
+            float setAmp = SurfSetAmp(ctx, frontIndex) * SurfCrestFactor(ctx, x, z, frontIndex);
             float d = Mathf.Max(depth, SurfMinDepth);
 
             float green = Mathf.Min(Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, 0.25f),
@@ -175,7 +201,7 @@ namespace AbstractOcclusion.WebGpuWater
             float capH = SurfBreakRatio * d;
             float overCap = height0 / Mathf.Max(capH, 1e-3f);
             float breaker = SmoothStep(0.75f, 1.05f, overCap);
-            float broken = SmoothStep(1f, 1.35f, overCap);
+            float broken = SmoothStep(1.05f, 1.5f, overCap);
             float amp = Mathf.Min(height0, capH);
 
             float dAcross = (f - 0.5f) * wavelength;
@@ -197,7 +223,8 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Mirrors EvaluateSurfWaves() height/slope/mask (foam terms omitted - physics only).
-        static void EvaluateSurf(in ShoreWaveContext ctx, in ShoreSampleCpu shore, float time,
+        static void EvaluateSurf(in ShoreWaveContext ctx, in ShoreSampleCpu shore,
+                                 float x, float z, float time,
                                  out float height, out float slopeX, out float slopeZ, out float mask)
         {
             height = 0f;
@@ -209,12 +236,14 @@ namespace AbstractOcclusion.WebGpuWater
             float band = Mathf.Max(ctx.SurfBandDepth, 0.25f);
             float develop = 1f - SmoothStep(SurfNearFade * band, band, Mathf.Max(shore.Depth, 0f));
             float wet = SmoothStep(-0.05f, 0.1f, shore.Depth); // keep lockstep with the HLSL wet fade
-            mask = develop * wet * shore.Influence;
+            float exposure = SurfExposure(ctx, shore.DirX, shore.DirZ);
+            mask = develop * wet * shore.Influence * exposure;
             if (mask <= 0.001f) { mask = 0f; return; }
 
             float s = Mathf.Max(shore.SdfDist, 0f);
-            float h0 = SurfFrontHeight(ctx, SurfWarpDistance(ctx, s), shore.Depth, time);
-            float h1 = SurfFrontHeight(ctx, SurfWarpDistance(ctx, s + SurfSlopeEpsilon), shore.Depth, time);
+            float h0 = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth, time);
+            float h1 = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s + SurfSlopeEpsilon),
+                                       shore.Depth, time);
             float dhds = (h1 - h0) / SurfSlopeEpsilon;
 
             height = h0 * mask;
@@ -237,8 +266,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (ctx.Field == null) return fft;
             ShoreSampleCpu shore = SampleShore(ctx, worldX, worldZ);
             if (shore.Influence <= 0f) return fft;
-            EvaluateSurf(ctx, shore, time, out float surfHeight, out float surfSlopeX,
-                         out float surfSlopeZ, out float surfMask);
+            EvaluateSurf(ctx, shore, worldX, worldZ, time, out float surfHeight,
+                         out float surfSlopeX, out float surfSlopeZ, out float surfMask);
             float weight = Mathf.Lerp(1f, ShoalWeight(ctx, shore.Depth, dominantWavelength),
                                       shore.Influence)
                          * SurfAmbientWeight(ctx, surfMask);
@@ -319,8 +348,8 @@ namespace AbstractOcclusion.WebGpuWater
             in ShoreWaveContext ctx)
         {
             ShoreSampleCpu shore = SampleShore(ctx, x, z);
-            EvaluateSurf(ctx, shore, time, out float surfHeight, out float surfSlopeX,
-                         out float surfSlopeZ, out float surfMask);
+            EvaluateSurf(ctx, shore, x, z, time, out float surfHeight,
+                         out float surfSlopeX, out float surfSlopeZ, out float surfMask);
             float green = GreenGain(ctx, shore);
             float ambient = SurfAmbientWeight(ctx, surfMask);
             float bandScale = green * ambient;
@@ -343,7 +372,7 @@ namespace AbstractOcclusion.WebGpuWater
                 a.SlopeZ += surfSlopeZ;
                 const float velocityDt = 1f / 60f;
                 float s = Mathf.Max(shore.SdfDist, 0f);
-                float hNext = SurfFrontHeight(ctx, SurfWarpDistance(ctx, s), shore.Depth,
+                float hNext = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
                                               time + velocityDt) * surfMask;
                 a.HeightVelocity += (hNext - surfHeight) / velocityDt;
             }

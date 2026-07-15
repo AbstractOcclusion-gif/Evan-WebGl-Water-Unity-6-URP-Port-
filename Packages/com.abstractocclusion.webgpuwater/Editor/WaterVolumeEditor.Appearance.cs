@@ -102,11 +102,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.surfPeriod",
                     "bedDepthSettings.surfBandDepth",
                     "bedDepthSettings.surfSetStrength",
+                    "bedDepthSettings.surfCrestLength",
+                    "bedDepthSettings.surfCrestVariation",
+                    "bedDepthSettings.surfDirectionality",
                     "bedDepthSettings.surfLean",
                     "bedDepthSettings.surfAmbientFade",
                     "bedDepthSettings.surfSwashAmplitude",
                     "bedDepthSettings.surfFoamGain",
                     "bedDepthSettings.surfWaterlineFoam");
+                WaterEditorUI.SubHeading("Surf foam look");
+                DrawFields(
+                    "bedDepthSettings.surfFoamStrength",
+                    "bedDepthSettings.surfFoamFeather",
+                    "bedDepthSettings.surfFoamTileSize",
+                    "bedDepthSettings.surfFoamColor");
                 WaterEditorUI.SubHeading("Shore SWE zone (experimental)");
                 DrawFields(
                     "bedDepthSettings.sweZoneMeters",

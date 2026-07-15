@@ -54,6 +54,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfAmbientFade = Shader.PropertyToID("_SurfAmbientFade");
         static readonly int ID_SurfSwashAmplitude = Shader.PropertyToID("_SurfSwashAmplitude");
         static readonly int ID_SurfWaterlineFoam = Shader.PropertyToID("_SurfWaterlineFoam");
+        static readonly int ID_SurfCrestLength = Shader.PropertyToID("_SurfCrestLength");
+        static readonly int ID_SurfCrestVariation = Shader.PropertyToID("_SurfCrestVariation");
+        static readonly int ID_SurfDirectionality = Shader.PropertyToID("_SurfDirectionality");
+        static readonly int ID_SurfWindDirXZ = Shader.PropertyToID("_SurfWindDirXZ");
+        static readonly int ID_SurfFoamStrength = Shader.PropertyToID("_SurfFoamStrength");
+        static readonly int ID_SurfFoamFeather = Shader.PropertyToID("_SurfFoamFeather");
+        static readonly int ID_SurfFoamTileSize = Shader.PropertyToID("_SurfFoamTileSize");
+        static readonly int ID_SurfFoamColor = Shader.PropertyToID("_SurfFoamColor");
 
         // How many box-blur passes smooth the SDF direction field (see the header note).
         const int DirectionSmoothPasses = 2;
@@ -391,6 +399,15 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfAmbientFade, _body.surfAmbientFade);
             Shader.SetGlobalFloat(ID_SurfSwashAmplitude, _body.surfSwashAmplitude);
             Shader.SetGlobalFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
+            Shader.SetGlobalFloat(ID_SurfCrestLength, _body.surfCrestLength);
+            Shader.SetGlobalFloat(ID_SurfCrestVariation, _body.surfCrestVariation);
+            Shader.SetGlobalFloat(ID_SurfDirectionality, _body.surfDirectionality);
+            Shader.SetGlobalVector(ID_SurfWindDirXZ,
+                new Vector4(Mathf.Cos(_body.LargeWaveHeadingRad), Mathf.Sin(_body.LargeWaveHeadingRad), 0f, 0f));
+            Shader.SetGlobalFloat(ID_SurfFoamStrength, _body.surfFoamStrength);
+            Shader.SetGlobalFloat(ID_SurfFoamFeather, _body.surfFoamFeather);
+            Shader.SetGlobalFloat(ID_SurfFoamTileSize, _body.surfFoamTileSize);
+            Shader.SetGlobalColor(ID_SurfFoamColor, _body.surfFoamColor);
         }
 
         /// <summary>True when the surf breaker-front layer runs on this body: bed depth on, surf

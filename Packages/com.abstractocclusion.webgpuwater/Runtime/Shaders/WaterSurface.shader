@@ -454,21 +454,29 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // reading as a grid toward the horizon. min() of the two octaves as they blend keeps foam only
             // where BOTH agree, which also breaks the round patches into more whitecap-like shapes. Returns
             // the pattern rgb; .r drives the coverage dissolve.
-            float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist)
+            // tileSize is a PARAMETER so the surf whitewash can reuse this exact pipeline with its
+            // own dedicated tiling (decoupled from the ocean whitecap knob); the no-arg wrappers
+            // below keep the ocean call sites unchanged.
+            float3 SampleOceanWhitecapPatternTiled(float2 worldXZ, float camDist, float tileSize)
             {
                 // Dedicated whitecap: a single seamless tiling texture sampled with hardware Repeat wrap -
                 // no frac/flipbook cell, so no atlas mip-bleed and no tile-edge seam. The rotated second
                 // octave still hides the texture's own repeat toward the horizon.
-                float2 uv0 = worldXZ / max(_OceanFoamTileSize, 1e-3);
+                float2 uv0 = worldXZ / max(tileSize, 1e-3);
                 float3 octave0 = tex2D(_OceanWhitecapTex, uv0).rgb;
 
                 float2 rotated = float2(
                     worldXZ.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - worldXZ.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
                     worldXZ.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + worldXZ.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS);
-                float3 octave1 = tex2D(_OceanWhitecapTex, rotated / max(_OceanFoamTileSize * OCEAN_WHITECAP_OCTAVE2_SCALE, 1e-3)).rgb;
+                float3 octave1 = tex2D(_OceanWhitecapTex, rotated / max(tileSize * OCEAN_WHITECAP_OCTAVE2_SCALE, 1e-3)).rgb;
 
                 float blend = saturate(camDist / OCEAN_WHITECAP_OCTAVE_BLEND_DIST);
                 return lerp(octave0, min(octave0, octave1), blend);
+            }
+
+            float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist)
+            {
+                return SampleOceanWhitecapPatternTiled(worldXZ, camDist, _OceanFoamTileSize);
             }
 
             // Relief tilt (xy) of the whitecap, derived PROCEDURALLY from the albedo tile by finite
@@ -476,14 +484,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // negated gradient tilts the shading normal away from raised foam. Self-flattening - where
             // there is no foam the gradient is ~0 - and it retires the separate normal-map texture
             // (_OceanWhitecapNormalTex kept only as an unused asset on disk).
-            float2 SampleOceanWhitecapTilt(float2 worldXZ)
+            float2 SampleOceanWhitecapTiltTiled(float2 worldXZ, float tileSize)
             {
-                float tile = max(_OceanFoamTileSize, 1e-3);
+                float tile = max(tileSize, 1e-3);
                 float dd = tile * OCEAN_FOAM_NORMAL_DELTA;
                 float c  = tex2D(_OceanWhitecapTex, worldXZ / tile).r;
                 float cx = tex2D(_OceanWhitecapTex, (worldXZ + float2(dd, 0.0)) / tile).r;
                 float cz = tex2D(_OceanWhitecapTex, (worldXZ + float2(0.0, dd)) / tile).r;
                 return -OCEAN_FOAM_NORMAL_GAIN * float2(cx - c, cz - c);
+            }
+
+            float2 SampleOceanWhitecapTilt(float2 worldXZ)
+            {
+                return SampleOceanWhitecapTiltTiled(worldXZ, _OceanFoamTileSize);
             }
 
             struct appdata { float4 vertex : POSITION; };
@@ -603,7 +616,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float beachRise = -shoreVert.depth; // metres the sand sits above the still level
                     if (shoreVert.influence > 0.0 && beachRise > 0.0)
                     {
-                        float2 swashVert = EvaluateSurfSwash(shoreVert.influence, _WaveTime);
+                        float2 swashVert = EvaluateSurfSwash(worldPos.xz, shoreVert.toShore,
+                                                             shoreVert.influence, _WaveTime);
                         if (swashVert.y > 1e-3)
                             worldPos.y = max(worldPos.y, _ShoreWaterLevel
                                              + min(beachRise, swashVert.y) + SURF_FILM_THICKNESS);
@@ -792,9 +806,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // flattening the surface so screen-space refraction collapses on big bodies. Add a
                 // WORLD-space wave slope here (after that division) so open water keeps real normals
                 // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
+                // .w = GEOMETRY foam: breaking whiteness derived from the composite surface's own
+                // Jacobian pinch + slope (Crest/KWS style) - glued to the rendered waves by
+                // construction, so foam can never detach from what the eye tracks.
+                float surfGeomFoam = 0.0;
                 if (_LargeBody > 0.5)
-                    normal = ApplyLargeBodyWaveNormalShore(normal, i.largeWaveSourceXZ,
-                                                           _WaveNormalStrength, shoreFrag, surfFrag);
+                {
+                    float4 normalFoam = ApplyLargeBodyWaveNormalFoamShore(normal, i.largeWaveSourceXZ,
+                                                                          _WaveNormalStrength,
+                                                                          shoreFrag, surfFrag);
+                    normal = normalFoam.xyz;
+                    surfGeomFoam = normalFoam.w;
+                }
                 // Hero wave: tilt by the base wave slope everywhere (matches the base vertex offset);
                 // on the lip sheet, blend toward its interpolated geometric normal by curl weight so
                 // the overturned surface shades correctly while its foot inherits the detailed normal.
@@ -904,7 +927,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float sssBoost = 0.0;
                     if (_SssEnabled > 0.5 && _OceanFftActive > 0.5)
                     {
-                        float fold = OceanFftJacobian(i.largeWaveSourceXZ);
+                        // Shore-attenuated fold: no crest glow from waves the depth field has
+                        // flattened (shoreFrag is inert off surf bodies - deep ocean unchanged).
+                        float fold = OceanFftJacobianShore(i.largeWaveSourceXZ, shoreFrag);
                         float ramp = saturate((fold - _SssPinchMin)
                                               / max(_SssPinchMax - _SssPinchMin, SSS_AMPLITUDE_EPSILON));
                         float pinch = pow(ramp, _SssPinchFalloff);
@@ -981,7 +1006,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
                     if (_OceanFftActive > 0.5)
                     {
-                        float coverage = OceanFftFoam(i.largeWaveSourceXZ);
+                        // The surf band is the surf system's territory: the FFT foam ACCUMULATOR
+                        // is depth-blind (its small cascades still whitecap at 2 m of water), so
+                        // accumulated ocean whitecaps fade out where the fronts/whitewash own the
+                        // shallows. Inert off surf bodies (the gate is 0 there).
+                        float coverage = OceanFftFoam(i.largeWaveSourceXZ)
+                                       * (1.0 - LbwGeometryFoamGate(shoreFrag));
                         if (coverage > FOAM_MASK_EPSILON)
                         {
                             // Parallax: sample the PATTERN where a layer floating just above the surface
@@ -1105,29 +1135,47 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     }
 
                     // ---- Surf whitewash look: ANALYTIC coverage from the breaker-front layer (broken
-                    // bores + trailing churn), textured through the same pond-foam pattern pipeline so
-                    // the lace/lighting language matches. Analytic coverage works at ANY distance - the
-                    // sim-injected shore foam (near field, advected + organic) rides the pond layer
-                    // above; this layer keeps distant breakers white. ----
+                    // bores + trailing churn) + GEOMETRY foam (the surface's own Jacobian/slope,
+                    // computed beside the normal above - white glued to whatever the rendered waves
+                    // actually do). Rendered through the OCEAN WHITECAP pipeline, not the pond
+                    // flipbook: whitewash IS seawater whitecap foam, so the surf shares the deep
+                    // caps' texture + KWS contrast law (one material language from open ocean to
+                    // the beach) - but through its own DEDICATED _SurfFoam* knobs, fully decoupled
+                    // from both the ripple-foam and the ocean-whitecap sliders. ----
                     float surfFoamAlpha = 0.0;
                     float3 surfFoamLook = float3(0.0, 0.0, 0.0);
-                    if (surfFrag.whitewash > FOAM_MASK_EPSILON)
+                    float surfCoverage = saturate((surfFrag.whitewash + surfGeomFoam) * _SurfFoamStrength);
+                    if (surfCoverage > FOAM_MASK_EPSILON)
                     {
-                        float2 surfUv = i.largeWaveSourceXZ / max(_FoamTileSize, 1e-3)
-                                      + normal.xz * FOAM_NORMAL_NUDGE;
-                        float surfDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
-                        float3 surfPattern; float surfCore, surfLace, surfAlpha; float2 surfTilt;
-                        EvaluateFoam(surfUv, nxz, saturate(surfFrag.whitewash), surfDist,
-                                     surfPattern, surfCore, surfLace, surfAlpha, surfTilt);
-                        float3 surfFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
-                        float3 surfFoamBitangent = cross(normal, surfFoamTangent);
-                        float3 surfFoamNormal = normalize(normal + surfFoamTangent * surfTilt.x
-                                                                 + surfFoamBitangent * surfTilt.y);
-                        float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
-                        float3 surfAlbedo = _FoamColor.rgb
-                            * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfCore * FOAM_CORE_WHITEN);
-                        surfFoamLook = FoamLitColor(surfAlbedo, _SunColor, surfWrapped);
-                        surfFoamAlpha = surfAlpha;
+                        // Same parallax lift as the ocean caps: foam reads as sitting ON the water.
+                        float3 surfViewToCam = -incomingRay;
+                        float2 surfSampleXZ = i.largeWaveSourceXZ + surfViewToCam.xz
+                            * (OCEAN_FOAM_PARALLAX_HEIGHT / max(surfViewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
+                        float surfDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
+                        float surfTile = max(_SurfFoamTileSize, 1e-3);
+                        float3 surfPattern = SampleOceanWhitecapPatternTiled(surfSampleXZ, surfDist, surfTile);
+                        // KWS contrast law: dense coverage relaxes the contrast (heavy whitewash
+                        // goes solid) and the dissolve threshold falls with sqrt(coverage).
+                        float surfContrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, surfCoverage);
+                        float surfSharpened = pow(saturate(surfPattern.r), surfContrast);
+                        float surfThreshold = 1.0 - sqrt(surfCoverage);
+                        float surfFoam = smoothstep(surfThreshold,
+                                                    surfThreshold + max(_SurfFoamFeather, 1e-3),
+                                                    surfSharpened);
+                        if (surfFoam > FOAM_MASK_EPSILON)
+                        {
+                            float2 surfTiltXY = SampleOceanWhitecapTiltTiled(surfSampleXZ, surfTile)
+                                              * (_FoamNormalStrength * surfFoam);
+                            float3 surfFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+                            float3 surfFoamBitangent = cross(normal, surfFoamTangent);
+                            float3 surfFoamNormal = normalize(normal + surfFoamTangent * surfTiltXY.x
+                                                                     + surfFoamBitangent * surfTiltXY.y);
+                            float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
+                            float3 surfTint = _SurfFoamColor.rgb
+                                * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfFoam);
+                            surfFoamLook = FoamLitColor(surfTint, _SunColor, surfWrapped);
+                            surfFoamAlpha = surfFoam * _SurfFoamColor.a;
+                        }
                     }
 
                     // Foam is matte: the combined coverage knocks the specular reflection down before
@@ -1172,8 +1220,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float2 bedUV = i.position.xz * 0.5 + 0.5;
                         float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
                         float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
+                        // ONE WATERLINE: on surf bodies the fronts/lace/swash/debug all read the
+                        // world-frame shore field, but the clip/tint here read the pool-frame
+                        // _BedTex - two bakes on different texel grids whose zero crossings
+                        // disagree by up to a texel. That strip is the "continuous dry line" the
+                        // SDF debug shows at the shore: water still renders there while the shore
+                        // field already says land, so it gets no waves, no lace and a confused
+                        // swash. Use the SAME depth for the clip/tint/swash so every waterline
+                        // consumer agrees (feather-blended so leaving the field stays seamless).
+                        if (_SurfActive > 0.5 && shoreFrag.influence > 0.0)
+                            colDepth = lerp(colDepth, shoreFrag.depth, saturate(shoreFrag.influence));
                         float2 swash = (_SurfActive > 0.5)
-                            ? EvaluateSurfSwash(shoreFrag.influence, _WaveTime)
+                            ? EvaluateSurfSwash(i.largeWaveSourceXZ, shoreFrag.toShore,
+                                                shoreFrag.influence, _WaveTime)
                             : float2(0.0, 0.0);
                         float swashLevel = swash.x;
                         float wetLevel = swash.y;

@@ -572,9 +572,10 @@ void Foam(uint3 id : SV_DispatchThreadID)
             SurfWaveSample surfSim = EvaluateSurfWaves(shoreWorldXZ, shoreDepth, shoreSdf.b,
                                                        toShore, influence, _ShoreFoamTime);
             // Waterline lace: peaks just offshore of the waterline and dies both ways - the
-            // standing white edge every coast has, independent of the front rhythm.
+            // standing white edge every coast has, independent of the front rhythm. Gated by the
+            // shore's exposure to the swell like everything else, so the lee side stays clean.
             float waterline = (1.0 - smoothstep(0.0, 1.0, shoreDepth))
-                            * saturate(shoreDepth * 8.0) * influence;
+                            * saturate(shoreDepth * 8.0) * influence * SurfExposure(toShore);
             foam += (surfSim.whitewash + 0.6 * surfSim.breaker) * (_ShoreFoamGain * _FoamDtSteps);
             foam += waterline * (_ShoreWaterlineFoamGain * _FoamDtSteps);
         }

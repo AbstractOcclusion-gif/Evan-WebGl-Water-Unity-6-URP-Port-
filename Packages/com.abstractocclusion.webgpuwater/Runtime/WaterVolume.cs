@@ -1081,6 +1081,15 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Amplitude variation between wave sets (waves come in sets). 0 = every front " +
                      "identical; 1 = strong lulls between sets.")]
             [Range(0f, 1f)] public float surfSetStrength = 0.55f;
+            [Tooltip("Alongshore length (metres) of individual crest segments. Long bands break " +
+                     "into finite crests of roughly this size, with calm gaps between them.")]
+            [Range(10f, 300f)] public float surfCrestLength = 60f;
+            [Tooltip("How deeply the crest segmentation modulates the fronts. 0 = endless " +
+                     "shore-long bands (old look); 1 = strongly broken-up individual crests.")]
+            [Range(0f, 1f)] public float surfCrestVariation = 0.6f;
+            [Tooltip("Gate surf by shore exposure to the swell direction: the coast facing the " +
+                     "wind gets the surf, the lee side calms down. 0 = surf everywhere.")]
+            [Range(0f, 1f)] public float surfDirectionality = 0.7f;
             [Tooltip("Forward lean of the cresting front (fraction of local height thrown shoreward).")]
             [Range(0f, 1f)] public float surfLean = 0.35f;
             [Tooltip("How much the ambient swell/FFT fades where the surf fronts own the surface " +
@@ -1093,6 +1102,17 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 4f)] public float surfFoamGain = 1.2f;
             [Tooltip("Standing foam lace hugging the waterline, independent of the front rhythm.")]
             [Range(0f, 2f)] public float surfWaterlineFoam = 0.5f;
+
+            [Header("Surf foam look (dedicated - decoupled from ripple & ocean foam)")]
+            [Tooltip("Coverage scale of the surf whitewash layer (bores, trails, geometry foam).")]
+            [Range(0f, 2f)] public float surfFoamStrength = 1f;
+            [Tooltip("Dissolve softness of the whitewash lace at its coverage threshold. Small = " +
+                     "crisp hard-edged foam shapes; larger = softer, mistier edges.")]
+            [Range(0.01f, 1f)] public float surfFoamFeather = 0.2f;
+            [Tooltip("Metres per foam-pattern tile on the surf whitewash.")]
+            [Range(0.5f, 30f)] public float surfFoamTileSize = 8f;
+            [Tooltip("Whitewash tint (RGB) and master opacity (A).")]
+            public Color surfFoamColor = Color.white;
 
             [Header("Shore SWE zone (Layer C, needs the SWE compute assigned)")]
             [Tooltip("World size (metres) of the camera-following shallow-water sim zone near the " +
@@ -1130,11 +1150,18 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfPeriod => bedDepthSettings.surfPeriod;
         internal float surfBandDepth => bedDepthSettings.surfBandDepth;
         internal float surfSetStrength => bedDepthSettings.surfSetStrength;
+        internal float surfCrestLength => bedDepthSettings.surfCrestLength;
+        internal float surfCrestVariation => bedDepthSettings.surfCrestVariation;
+        internal float surfDirectionality => bedDepthSettings.surfDirectionality;
         internal float surfLean => bedDepthSettings.surfLean;
         internal float surfAmbientFade => bedDepthSettings.surfAmbientFade;
         internal float surfSwashAmplitude => bedDepthSettings.surfSwashAmplitude;
         internal float surfFoamGain => bedDepthSettings.surfFoamGain;
         internal float surfWaterlineFoam => bedDepthSettings.surfWaterlineFoam;
+        internal float surfFoamStrength => bedDepthSettings.surfFoamStrength;
+        internal float surfFoamFeather => bedDepthSettings.surfFoamFeather;
+        internal float surfFoamTileSize => bedDepthSettings.surfFoamTileSize;
+        internal Color surfFoamColor => bedDepthSettings.surfFoamColor;
         internal float sweZoneMeters => bedDepthSettings.sweZoneMeters;
         internal int sweResolution => bedDepthSettings.sweResolution;
         internal float swePumpGain => bedDepthSettings.swePumpGain;
@@ -2743,6 +2770,11 @@ namespace AbstractOcclusion.WebGpuWater
                 ctx.SurfPeriod = surfPeriod;
                 ctx.SurfBandDepth = surfBandDepth;
                 ctx.SurfSetStrength = surfSetStrength;
+                ctx.SurfCrestLength = surfCrestLength;
+                ctx.SurfCrestVariation = surfCrestVariation;
+                ctx.SurfDirectionality = surfDirectionality;
+                ctx.SurfWindDirX = Mathf.Cos(LargeWaveHeadingRad);
+                ctx.SurfWindDirZ = Mathf.Sin(LargeWaveHeadingRad);
                 ctx.SurfLean = surfLean;
                 ctx.SurfAmbientFade = surfAmbientFade;
                 return ctx;
@@ -2942,6 +2974,11 @@ namespace AbstractOcclusion.WebGpuWater
                 state.Period = surfPeriod;
                 state.BandDepth = surfBandDepth;
                 state.SetStrength = surfSetStrength;
+                state.CrestLength = surfCrestLength;
+                state.CrestVariation = surfCrestVariation;
+                state.Directionality = surfDirectionality;
+                state.WindDir = new Vector4(Mathf.Cos(LargeWaveHeadingRad),
+                                            Mathf.Sin(LargeWaveHeadingRad), 0f, 0f);
                 state.Lean = surfLean;
                 state.Compression = shoreCompression;
                 state.Greens = shoreGreens;

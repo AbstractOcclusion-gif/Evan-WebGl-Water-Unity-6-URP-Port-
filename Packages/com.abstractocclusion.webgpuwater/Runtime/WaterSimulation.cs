@@ -298,7 +298,9 @@ namespace AbstractOcclusion.WebGpuWater
             // The WaterSurfWaves.hlsl front-field uniforms (the same values the surface renders
             // with, so the injected foam lands exactly where the eye sees the fronts break).
             public float Amplitude, Wavelength, Period, BandDepth, SetStrength, Lean,
-                         Compression, Greens, AmbientFade;
+                         Compression, Greens, AmbientFade,
+                         CrestLength, CrestVariation, Directionality;
+            public Vector4 WindDir; // xy = (cos, sin) of the swell heading
         }
 
         ShoreFoamState _shoreFoam;
@@ -328,6 +330,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfGreensSim = Shader.PropertyToID("_SurfGreens");
         static readonly int ID_SurfAmbientFadeSim = Shader.PropertyToID("_SurfAmbientFade");
         static readonly int ID_SurfWaterlineFoamSim = Shader.PropertyToID("_SurfWaterlineFoam");
+        static readonly int ID_SurfCrestLengthSim = Shader.PropertyToID("_SurfCrestLength");
+        static readonly int ID_SurfCrestVariationSim = Shader.PropertyToID("_SurfCrestVariation");
+        static readonly int ID_SurfDirectionalitySim = Shader.PropertyToID("_SurfDirectionality");
+        static readonly int ID_SurfWindDirXZSim = Shader.PropertyToID("_SurfWindDirXZ");
 
         // Push the surf-front foam uniforms + the Layer A field textures onto the Foam kernel.
         // Textures are ALWAYS bound (black fallback) so the WebGPU backend never sees an unbound
@@ -358,6 +364,10 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_SurfCompressionSim, _shoreFoam.Compression);
             _cs.SetFloat(ID_SurfGreensSim, _shoreFoam.Greens);
             _cs.SetFloat(ID_SurfAmbientFadeSim, _shoreFoam.AmbientFade);
+            _cs.SetFloat(ID_SurfCrestLengthSim, _shoreFoam.CrestLength);
+            _cs.SetFloat(ID_SurfCrestVariationSim, _shoreFoam.CrestVariation);
+            _cs.SetFloat(ID_SurfDirectionalitySim, _shoreFoam.Directionality);
+            _cs.SetVector(ID_SurfWindDirXZSim, _shoreFoam.WindDir);
             // Zero on the sim on purpose: the Foam kernel injects its OWN waterline term
             // (_ShoreWaterlineFoamGain); letting the analytic lace through too would double it.
             _cs.SetFloat(ID_SurfWaterlineFoamSim, 0f);
