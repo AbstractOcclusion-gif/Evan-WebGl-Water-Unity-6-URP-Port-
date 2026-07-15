@@ -66,7 +66,13 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         static readonly (string Hlsl, string CSharp)[] SurfWavesConstantPairs =
         {
             ("SURF_MIN_DEPTH",              "SurfMinDepth"),
-            ("SURF_CREST_SEED_DRIFT",       "SurfCrestSeedDrift"),
+            // Master-beat wrap + the two beat-periodic segmentation drifts (BEAT-1: the old
+            // single SURF_CREST_SEED_DRIFT split into per-octave drifts, each an exact multiple
+            // of 2pi/SURF_BEAT_WRAP_FRONTS). WaterVolume.SurfBeatWrapFronts carries a third copy
+            // of the wrap for the clock itself - not parsed here; keep it lockstep by hand.
+            ("SURF_BEAT_WRAP_FRONTS",       "SurfBeatWrapFronts"),
+            ("SURF_CREST_SEED_DRIFT_A",     "SurfCrestSeedDriftA"),
+            ("SURF_CREST_SEED_DRIFT_B",     "SurfCrestSeedDriftB"),
             ("SURF_FACE_FRACTION",          "SurfFaceFraction"),
             ("SURF_BACK_FRACTION",          "SurfBackFraction"),
             ("SURF_SET_WAVES",              "SurfSetWaves"),

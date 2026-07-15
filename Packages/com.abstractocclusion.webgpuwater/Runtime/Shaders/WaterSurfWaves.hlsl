@@ -37,6 +37,16 @@ float _SurfCrestPersistence; // 0..1 how anchored the segmentation is across fro
                           // at nearly the same alongshore spots (bathymetry-anchored read)
 float _SurfDirectionality;// 0..1 gate surf by shore exposure to the swell (lee side goes calm)
 float4 _SurfWindDirXZ;    // xy = (cos, sin) of the swell/wind heading (the wave travel direction)
+// THE MASTER SURF BEAT. The body's wave clock wrapped to SURF_BEAT_WRAP_FRONTS front periods
+// (WaterVolume.SurfBeatTime), published every frame. EVERY surf consumer - surface vertex +
+// fragment, swash, curl sheet, foam-sim injection (_ShoreFoamTime carries the same value) and
+// the CPU buoyancy mirror (ShoreWaveContext.SurfBeatTime) - evaluates the front field on THIS
+// clock, never raw _WaveTime: the raw clock grows without bound, so the per-front hash argument
+// grows into the range where GPU float32 sin() and CPU double sin() disagree (the render and the
+// buoyancy mirror slowly stop agreeing on set amplitudes) and t/T itself loses fractional
+// precision (front positions step). The field is EXACTLY periodic in the wrap (see
+// SurfWrapIndex), so the wrap instant is seamless by construction.
+float _SurfBeatTime;
 // Dedicated surf-foam LOOK controls (decoupled from BOTH the ripple/pond foam sliders and the
 // ocean whitecap sliders - tuning either must never restyle the surf whitewash). The surf renders
 // through the ocean-whitecap pipeline (same texture + contrast law: whitewash IS whitecap foam)
@@ -48,10 +58,18 @@ float4 _SurfFoamColor;    // rgb tint, a = master opacity
 
 #define SURF_TWO_PI            6.28318530718
 #define SURF_MIN_DEPTH         0.05  // metre floor under every depth divide
+// Fronts per master-beat wrap (WaterVolume.SurfBeatTime = waveTime mod period*WRAP). MUST be a
+// multiple of SURF_SET_WAVES so the set envelope (sin(frontIndex / SURF_SET_WAVES * 2pi)) is
+// exactly periodic across the wrap. 1280 fronts ~= 3.2 h of surf at the default 9 s period.
+#define SURF_BEAT_WRAP_FRONTS  1280.0
 // Radians the crest-segmentation seed advances per front at FULL persistence: the alongshore
 // pattern slides ~5% of a noise cycle each wave, so break spots migrate over minutes like a real
 // sandbank instead of teleporting (mirrored in LargeWaveField.cs - segmentation moves the height).
-#define SURF_CREST_SEED_DRIFT  0.35
+// Both drifts are EXACT multiples of 2pi / SURF_BEAT_WRAP_FRONTS (2pi*71/1280 and 2pi*92/1280,
+// the closest such values to the original 0.35 and 0.35*1.3), so the anchored pattern is exactly
+// beat-periodic - no teleport at the wrap instant. Persistence 0 (the default) never reads them.
+#define SURF_CREST_SEED_DRIFT_A 0.34852044
+#define SURF_CREST_SEED_DRIFT_B 0.45160394
 #define SURF_FACE_FRACTION     0.10  // steep shoreward face length, as a fraction of front spacing
 #define SURF_BACK_FRACTION     0.24  // long offshore back length, as a fraction of front spacing
 #define SURF_SET_WAVES         5.0   // pseudo-period (in fronts) of the set envelope
@@ -127,12 +145,23 @@ float SurfHash(float n)
     return frac(sin(n * 12.9898) * 43758.5453);
 }
 
+// Wrap a front index onto the master beat: every per-front quantity (hash, set envelope,
+// segmentation seed) derives from the WRAPPED index, so (a) the frac-sin hash argument stays
+// small enough that GPU float32 sin() and the CPU mirror's double sin() agree forever, and
+// (b) the whole field is exactly periodic in the beat wrap - the _SurfBeatTime rollover lands on
+// an identical field. Mirrored in LargeWaveField.SurfWrapIndex.
+float SurfWrapIndex(float frontIndex)
+{
+    return frontIndex - SURF_BEAT_WRAP_FRONTS * floor(frontIndex / SURF_BEAT_WRAP_FRONTS);
+}
+
 // Per-front set amplitude: a slow sine over SURF_SET_WAVES fronts (waves arrive in sets) plus a
 // per-front hash jitter. _SurfSetStrength 0 = every front identical.
 float SurfSetAmp(float frontIndex)
 {
-    float h = SurfHash(frontIndex);
-    float setWave = 0.5 + 0.5 * sin((frontIndex / SURF_SET_WAVES) * SURF_TWO_PI + h * 2.4);
+    float wrapped = SurfWrapIndex(frontIndex);
+    float h = SurfHash(wrapped);
+    float setWave = 0.5 + 0.5 * sin((wrapped / SURF_SET_WAVES) * SURF_TWO_PI + h * 2.4);
     return lerp(1.0, lerp(0.35, 1.0, setWave), _SurfSetStrength) * lerp(0.9, 1.1, h);
 }
 
@@ -154,13 +183,18 @@ float SurfCrestFactor(float2 worldXZ, float frontIndex)
 {
     if (_SurfCrestVariation <= 0.0) return 1.0;
     float invLen = 1.0 / max(_SurfCrestLength, 4.0);
+    float wrapped = SurfWrapIndex(frontIndex);
     // Seed persistence: lerp between a fresh hash per front (0 - the classic wandering hot spots)
     // and a slow constant drift per front (1 - anchored break spots). Continuous in the knob, and
-    // byte-identical to the original at 0.
-    float seed = lerp(SurfHash(frontIndex) * 37.0, frontIndex * SURF_CREST_SEED_DRIFT,
-                      saturate(_SurfCrestPersistence));
-    float n = sin(dot(worldXZ, float2(1.0, 0.31)) * (SURF_TWO_PI * invLen) + seed)
-            + 0.5 * sin(dot(worldXZ, float2(-0.42, 1.0)) * (SURF_TWO_PI * invLen * 1.7) + seed * 1.3);
+    // byte-identical to the original at 0. The two octaves carry separate drift constants (both
+    // exact multiples of 2pi/SURF_BEAT_WRAP_FRONTS - see the constants block) instead of the old
+    // seed * 1.3, so the anchored pattern is exactly beat-periodic.
+    float persistence = saturate(_SurfCrestPersistence);
+    float seedFresh = SurfHash(wrapped) * 37.0;
+    float seedA = lerp(seedFresh, wrapped * SURF_CREST_SEED_DRIFT_A, persistence);
+    float seedB = lerp(seedFresh * 1.3, wrapped * SURF_CREST_SEED_DRIFT_B, persistence);
+    float n = sin(dot(worldXZ, float2(1.0, 0.31)) * (SURF_TWO_PI * invLen) + seedA)
+            + 0.5 * sin(dot(worldXZ, float2(-0.42, 1.0)) * (SURF_TWO_PI * invLen * 1.7) + seedB);
     float n01 = saturate(n / 1.5 * 0.5 + 0.5);
     return 1.0 - _SurfCrestVariation * (1.0 - n01);
 }

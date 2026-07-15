@@ -630,7 +630,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     {
                         float2 swashVert = EvaluateSurfSwash(worldPos.xz, shoreVert.toShore,
                                                              shoreVert.slopeTan,
-                                                             shoreVert.influence, _WaveTime);
+                                                             shoreVert.influence, _SurfBeatTime);
                         if (swashVert.y > 1e-3)
                             worldPos.y = max(worldPos.y, _ShoreWaterLevel
                                              + min(beachRise, swashVert.y) + SURF_FILM_THICKNESS);
@@ -814,7 +814,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     surfFrag = EvaluateSurfWaves(i.largeWaveSourceXZ, shoreFrag.depth,
                                                  shoreFrag.sdfDist, shoreFrag.toShore,
                                                  shoreFrag.slopeTan,
-                                                 shoreFrag.influence, _WaveTime);
+                                                 shoreFrag.influence, _SurfBeatTime);
                 }
                 // Surf-curl lip dressing (live sheet only): inject the sheet's curl weight into
                 // the SAME whitewash/breaker signals the base water consumes downstream (surf foam
@@ -1266,7 +1266,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float2 swash = (_SurfActive > 0.5)
                             ? EvaluateSurfSwash(i.largeWaveSourceXZ, shoreFrag.toShore,
                                                 shoreFrag.slopeTan,
-                                                shoreFrag.influence, _WaveTime)
+                                                shoreFrag.influence, _SurfBeatTime)
                             : float2(0.0, 0.0);
                         float swashLevel = swash.x;
                         float wetLevel = swash.y;

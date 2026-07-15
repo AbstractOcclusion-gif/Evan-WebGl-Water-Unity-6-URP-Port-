@@ -37,6 +37,10 @@ float _ShoreBodyGate;
 float _ShoreRefraction;   // 0..1: how hard shoaling waves bend toward the shore (crests align to beach)
 float _ShoreCompression;  // phase-compression gain near shore (crests bunch as waves slow)
 float _ShoreGreens;       // Green's-law amplification cap (1 = off; shoaling waves GROW before dying)
+float _ShoreWarpReach;    // compression e-folding reach (m) = 2 x the surf front wavelength - ONE
+                          // curve shared with SurfWarpDistance (WaterSurfWaves.hlsl), so the ambient
+                          // swell and the surf fronts bunch identically instead of sliding against
+                          // each other in the hand-over band. Published by WaterShoreDepthField.
 
 // Deep-water sentinel: a depth this large attenuates nothing (used off-field / when no field is baked).
 #define SHORE_DEEP_SENTINEL 1e9
@@ -155,11 +159,13 @@ float ShoreGreenGain(ShoreData shore)
 // bunch together. Implemented as a smooth warp of the shore-distance field (monotonic for gains
 // up to ~2, so crests never fold back), added to a component's plane phase scaled by its own
 // shoaling response - long waves feel the bottom (and compress) sooner than short ones.
+// The reach is the SAME curve the surf fronts use (SurfWarpDistance adds s*c*exp(-s/(2L)) of
+// extra distance) - one warp, so swell crests and front crests bunch in lockstep near the beach.
 float ShoreWarpExtra(ShoreData shore)
 {
     if (shore.influence <= 0.0 || _ShoreCompression <= 0.0) return 0.0;
     float s = max(shore.sdfDist, 0.0);
-    float reach = max(4.0 * _ShoreShoalDepth, 8.0); // compression reach scales with the shoal band
+    float reach = max(_ShoreWarpReach, 1.0);
     return _ShoreCompression * s * exp(-s / reach) * shore.influence;
 }
 

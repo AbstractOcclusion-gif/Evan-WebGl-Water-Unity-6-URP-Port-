@@ -302,7 +302,7 @@ bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
 // evaluation can never drift from the injected whitewash the spawns ride on. Textures are
 // always bound (black fallback); every read gates on _ShoreFoamActive.
 float _ShoreFoamActive;
-float _ShoreFoamTime;
+float _ShoreFoamTime; // THE MASTER SURF BEAT (matches the surface _SurfBeatTime)
 float _ShoreShoalDepth;      // shoal band depth (m) - drives the ShoalWeightSim replica below
 float4 _ShoreFieldCenterSim; // xy = world XZ centre of the Layer A field
 float4 _ShoreFieldSizeSim;   // xy = world XZ half-extent of the Layer A field

@@ -1067,8 +1067,18 @@ namespace AbstractOcclusion.WebGpuWater
             public bool surfEnabled = true;
             [Tooltip("Deep-water amplitude (metres) of the surf sets feeding the fronts.")]
             [Range(0f, 3f)] public float surfAmplitude = 0.8f;
-            [Tooltip("Spacing (metres) between surf fronts offshore.")]
-            [Range(4f, 120f)] public float surfWavelength = 26f;
+            [Tooltip("Derive the front spacing from the period by deep-water dispersion " +
+                     "(L = 0.2 x 1.56 x T^2), so one Period knob drives both the rhythm and the " +
+                     "spacing and fronts move at a physically-linked speed. At the default 9 s " +
+                     "period the derived spacing (~25 m) matches the old 26 m default. Off = tune " +
+                     "the spacing by hand below.")]
+            public bool surfWavelengthAuto = true;
+            [Tooltip("Spacing (metres) between surf fronts offshore. Manual - only read when the " +
+                     "Auto toggle above is off.")]
+            [Range(SurfWavelengthMin, SurfWavelengthMax)] public float surfWavelength = 26f;
+            // Slider bounds, shared with the auto-derived clamp in SurfWavelengthEffective.
+            public const float SurfWavelengthMin = 4f;
+            public const float SurfWavelengthMax = 120f;
             [Tooltip("Seconds between fronts arriving at a fixed point (the surf rhythm).")]
             [Range(2f, 30f)] public float surfPeriod = 9f;
             [Tooltip("Column depth (metres) at which fronts are fully developed; they fade in from " +
@@ -1138,6 +1148,37 @@ namespace AbstractOcclusion.WebGpuWater
         internal float SurfAmplitudeEffective => Mathf.Max(surfAmplitude, SwellHeight);
         internal float surfWavelength => bedDepthSettings.surfWavelength;
         internal float surfPeriod => bedDepthSettings.surfPeriod;
+
+        // Deep-water dispersion: L0 = g/(2 pi) * T^2 = 1.56 * T^2 - LOCKSTEP with
+        // SURF_DEEPWATER_LENGTH_COEF in WaterSurfWaves.hlsl / SurfDeepwaterLengthCoef in
+        // LargeWaveField.cs. The auto spacing is this fraction of L0 (0.2 lands the default
+        // 9 s period on ~25 m, matching the historical hand default of 26 m).
+        const float SurfDispersionLengthCoef = 1.56f;
+        const float SurfAutoWavelengthFraction = 0.2f;
+        // Fronts per master-beat wrap - LOCKSTEP with SURF_BEAT_WRAP_FRONTS in WaterSurfWaves.hlsl
+        // (must stay a multiple of SURF_SET_WAVES so the set envelope is beat-periodic).
+        internal const float SurfBeatWrapFronts = 1280f;
+        // Same period floor as max(_SurfPeriod, 0.5) in the shader - one definition of "a period".
+        internal float SurfPeriodFloored => Mathf.Max(surfPeriod, 0.5f);
+
+        /// <summary>THE MASTER SURF BEAT: the body's wave clock wrapped to SurfBeatWrapFronts
+        /// front periods. Every surf consumer - the _SurfBeatTime global (surface, swash, curl
+        /// sheet), the foam state's Time (_ShoreFoamTime: sim injection + particle spray) and the
+        /// CPU buoyancy mirror (ShoreWaveContext.SurfBeatTime) - runs on this one clock. Wrapping
+        /// keeps the per-front hash argument and the t/T fraction inside float32 precision forever
+        /// (the unwrapped clock slowly desynced the render from the CPU mirror); the front field
+        /// is exactly periodic in the wrap, so the rollover is seamless.</summary>
+        internal float SurfBeatTime => Mathf.Repeat(_waveTime, SurfPeriodFloored * SurfBeatWrapFronts);
+
+        /// <summary>Front spacing actually fed to the surf layer: dispersion-derived from the
+        /// period when Auto is on (clamped to the manual slider's bounds), the hand-tuned value
+        /// otherwise. One definition for the publisher, warp reach, foam push and CPU mirror.</summary>
+        internal float SurfWavelengthEffective
+            => bedDepthSettings.surfWavelengthAuto
+                ? Mathf.Clamp(SurfAutoWavelengthFraction * SurfDispersionLengthCoef
+                              * SurfPeriodFloored * SurfPeriodFloored,
+                              BedDepthSettings.SurfWavelengthMin, BedDepthSettings.SurfWavelengthMax)
+                : surfWavelength;
         internal float surfBandDepth => bedDepthSettings.surfBandDepth;
         internal float surfSetStrength => bedDepthSettings.surfSetStrength;
         internal float surfCrestLength => bedDepthSettings.surfCrestLength;
@@ -2742,8 +2783,9 @@ namespace AbstractOcclusion.WebGpuWater
                 ctx.Greens = shoreGreens;
                 ctx.SurfActive = shore.SurfLayerActive;
                 ctx.SurfAmplitude = SurfAmplitudeEffective;
-                ctx.SurfWavelength = surfWavelength;
+                ctx.SurfWavelength = SurfWavelengthEffective;
                 ctx.SurfPeriod = surfPeriod;
+                ctx.SurfBeatTime = SurfBeatTime;
                 ctx.SurfBandDepth = surfBandDepth;
                 ctx.SurfSetStrength = surfSetStrength;
                 ctx.SurfCrestLength = surfCrestLength;
@@ -2951,11 +2993,11 @@ namespace AbstractOcclusion.WebGpuWater
                 state.FieldSize = new Vector4(shore.FieldHalfSize.x, shore.FieldHalfSize.y, 0f, 0f);
                 state.UvToWorldOrigin = new Vector4(uvOrigin.x, uvOrigin.z, 0f, 0f);
                 state.UvToWorldAxes = new Vector4(uvAxisX.x, uvAxisX.z, uvAxisZ.x, uvAxisZ.z);
-                state.Time = _waveTime;
+                state.Time = SurfBeatTime; // the master beat, same clock the surface renders with
                 state.FoamGain = surfFoamGain;
                 state.WaterlineGain = surfWaterlineFoam;
                 state.Amplitude = SurfAmplitudeEffective;
-                state.Wavelength = surfWavelength;
+                state.Wavelength = SurfWavelengthEffective;
                 state.Period = surfPeriod;
                 state.BandDepth = surfBandDepth;
                 state.SetStrength = surfSetStrength;

@@ -220,7 +220,7 @@ float  _HeroWaveFoamStrength;   // master gain on the injected whitewater (compo
 float  _ShoreFoamActive;        // 1 = inject surf foam this step
 float  _ShoreFoamGain;          // master gain on breaker + whitewash injection
 float  _ShoreWaterlineFoamGain; // standing waterline lace gain
-float  _ShoreFoamTime;          // the body's wave clock (matches the surface _WaveTime)
+float  _ShoreFoamTime;          // THE MASTER SURF BEAT (matches the surface _SurfBeatTime)
 float4 _ShoreSimUvToWorldOrigin; // xy = world xz of sim uv (0, 0) - the sim's own affine
 float4 _ShoreSimUvToWorldAxes;   // xy = world xz span across uv.x, zw = span across uv.y
 float4 _ShoreFieldCenterSim;    // xy = world XZ centre of the Layer A field

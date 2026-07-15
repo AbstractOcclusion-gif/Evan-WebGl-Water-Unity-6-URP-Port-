@@ -66,6 +66,12 @@ float4 _SurfCurlField;   // x = still-water depth (m) at the ribbon centre (synt
 #define SURF_CURL_ROLL_START     0.75
 // Geometry eases exactly onto the base surface before the discard line: at the old hard cut the
 // delta was still ~10 cm at weight = MIN_WEIGHT, printing a visible stitch against the water.
+// The ease is driven by the SPATIAL gates only (rollGates) - NEVER by the temporal lifecycle fade
+// (cresting * (1 - broken)). Driving it by the full visibility weight made the whole rolled lip
+// geometrically retract back onto the base surface as the bore took the wave - the same
+// "un-rolls / folds on itself" failure SURF_CURL_ROLL_START exists to prevent, reintroduced
+// through the foot. Now the finished roll holds its shape and only FADES (discard sweep +
+// whitewash dressing) through the hand-over, like a tube closing out.
 #define SURF_CURL_FOOT_BLEND_END 0.10
 // CURL-3 lip dressing (render-only): the sheet's curl weight feeds the surf whitewash coverage
 // and the cresting-lip SSS glow the fragment already consumes - the lip whitens toward its tip
@@ -146,7 +152,7 @@ void SurfCurlEvaluate(float2 uv, out float3 worldOffset, out float weight)
     }
 
     SurfFrontTerms t = SurfComputeFrontTerms(worldXZ, SurfWarpDistance(shoreDist), depth, tanBeta,
-                                             _WaveTime);
+                                             _SurfBeatTime);
     // The base surface renders front.x * mask (EvaluateSurfWaves) - the sheet composes the SAME
     // masked height so delta mode's foot lands on the rendered water, not the raw profile.
     // (fieldMask is 1 on the synthetic test beach.)
@@ -212,9 +218,11 @@ void SurfCurlEvaluate(float2 uv, out float3 worldOffset, out float weight)
             float2 rotated = pivot + float2(rel.x * cosT + rel.y * sinT,
                                             -rel.x * sinT + rel.y * cosT);
             deltaLocal = rotated - q;
-            // Ease the geometry exactly onto the base surface before the discard line: at a hard
-            // cut the delta was still ~10 cm at MIN_WEIGHT - the visible stitch against the water.
-            deltaLocal *= smoothstep(SURF_CURL_MIN_WEIGHT, SURF_CURL_FOOT_BLEND_END, weight);
+            // Ease the geometry onto the base surface at the sheet's SPATIAL edges only (see the
+            // SURF_CURL_FOOT_BLEND_END note): rollGates carries every spatial mask but not the
+            // temporal cresting*(1-broken) fade, so the finished roll never retracts - it holds
+            // its curled shape while the visibility fade takes it out through the break.
+            deltaLocal *= smoothstep(SURF_CURL_MIN_WEIGHT, SURF_CURL_FOOT_BLEND_END, rollGates);
         }
     }
 

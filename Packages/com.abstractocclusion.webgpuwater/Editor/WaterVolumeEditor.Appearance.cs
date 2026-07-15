@@ -98,7 +98,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "bedDepthSettings.surfEnabled",
                     "bedDepthSettings.surfAmplitude",
-                    "bedDepthSettings.surfWavelength",
+                    "bedDepthSettings.surfWavelengthAuto");
+                // Manual spacing only applies with Auto off; greyed (not hidden) so the stored
+                // hand-tuned value stays visible. With Auto on, show the derived spacing readout.
+                bool wavelengthAuto = Prop("bedDepthSettings.surfWavelengthAuto").boolValue;
+                DrawFieldsIf(!wavelengthAuto, "bedDepthSettings.surfWavelength");
+                if (wavelengthAuto && target is WaterVolume surfVolume)
+                    EditorGUILayout.LabelField(" ",
+                        $"Derived spacing: {surfVolume.SurfWavelengthEffective:0.#} m",
+                        EditorStyles.miniLabel);
+                DrawFields(
                     "bedDepthSettings.surfPeriod",
                     "bedDepthSettings.surfBandDepth",
                     "bedDepthSettings.surfSetStrength",

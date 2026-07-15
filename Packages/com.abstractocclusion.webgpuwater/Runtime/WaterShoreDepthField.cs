@@ -42,6 +42,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Refraction = Shader.PropertyToID("_ShoreRefraction");
         static readonly int ID_Compression = Shader.PropertyToID("_ShoreCompression");
         static readonly int ID_Greens = Shader.PropertyToID("_ShoreGreens");
+        static readonly int ID_WarpReach = Shader.PropertyToID("_ShoreWarpReach");
+        static readonly int ID_SurfBeatTime = Shader.PropertyToID("_SurfBeatTime");
         static readonly int ID_SurfActive = Shader.PropertyToID("_SurfActive");
         static readonly int ID_SurfAmplitude = Shader.PropertyToID("_SurfAmplitude");
         static readonly int ID_SurfWavelength = Shader.PropertyToID("_SurfWavelength");
@@ -447,13 +449,19 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_Refraction, _body.shoreRefraction);
             Shader.SetGlobalFloat(ID_Compression, _body.shoreCompression);
             Shader.SetGlobalFloat(ID_Greens, _body.shoreGreens);
+            // ONE compression curve: the ambient swell's warp reach is the same 2 x front spacing
+            // the surf fronts use (SurfWarpDistance), so both wave families bunch in lockstep.
+            Shader.SetGlobalFloat(ID_WarpReach, 2f * Mathf.Max(_body.SurfWavelengthEffective, 1f));
 
             // P2 surf breaker fronts: active only with BOTH fields baked (they steer by the SDF)
             // and the body opted in. The same values feed the ripple-sim foam injection through
             // WaterSimulation.BindShoreFoam - one source, two consumers.
             Shader.SetGlobalFloat(ID_SurfActive, SurfLayerActive ? 1f : 0f);
+            // THE MASTER SURF BEAT (see WaterVolume.SurfBeatTime): every surf consumer evaluates
+            // the front field on this wrapped clock, never raw _WaveTime.
+            Shader.SetGlobalFloat(ID_SurfBeatTime, _body.SurfBeatTime);
             Shader.SetGlobalFloat(ID_SurfAmplitude, _body.SurfAmplitudeEffective);
-            Shader.SetGlobalFloat(ID_SurfWavelength, _body.surfWavelength);
+            Shader.SetGlobalFloat(ID_SurfWavelength, _body.SurfWavelengthEffective);
             Shader.SetGlobalFloat(ID_SurfPeriod, _body.surfPeriod);
             Shader.SetGlobalFloat(ID_SurfBandDepth, _body.surfBandDepth);
             Shader.SetGlobalFloat(ID_SurfSetStrength, _body.surfSetStrength);

@@ -197,7 +197,7 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.slopeTan, shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _SurfBeatTime);
     return EvaluateLargeBodyWaveShore(worldXZ, minWavelength, shore, surf);
 }
 
@@ -355,7 +355,7 @@ float LargeBodyWaveHeight(float2 worldXZ)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.slopeTan, shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _SurfBeatTime);
     if (_OceanFftActive > 0.5)
         return OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
                * SurfAmbientWeight(surf.mask) + surf.height;
@@ -368,7 +368,7 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.slopeTan, shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _SurfBeatTime);
     if (_OceanFftActive > 0.5)
         return OceanFftDisplacementShore(worldXZ, shore).xz
                * (_LargeWaveChoppiness * _LargeWaveAmplitude * SurfAmbientWeight(surf.mask));
@@ -389,13 +389,16 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
 #define LBW_BREAK_SLOPE_MAX 0.65
 #define LBW_PINCH_GAIN      1.5
 
-// Near-shore gate for the geometry foam: only inside the surf band of a surf-enabled body (deep
-// water keeps its own whitecap systems: FFT foam accumulation + wind whitecaps).
+// Near-shore gate for the geometry foam - and the whitecap-suppression weight in the fragment
+// (accumulated FFT whitecaps fade by 1 - gate where the surf owns the shallows). This is EXACTLY
+// SurfFieldMask: the same window, wet fade and shore-exposure gate the surf whitewash itself uses,
+// so whitecaps are only ever suppressed where whitewash actually replaces them. The old wider
+// depth-only window (0.7..1.5 x band, no exposure) killed whitecaps on the lee side of an island
+// and in the outer band ring where NO surf foam appears - a visibly barren strip of clean water.
 float LbwGeometryFoamGate(ShoreData shore)
 {
     if (_SurfActive < 0.5) return 0.0;
-    float band = max(_SurfBandDepth, 0.25);
-    return shore.influence * (1.0 - smoothstep(0.7 * band, 1.5 * band, max(shore.depth, 0.0)));
+    return SurfFieldMask(shore.depth, shore.toShore, shore.influence);
 }
 
 // Shore-aware normal + GEOMETRY FOAM: xyz = tilted world normal, w = breaker foam (0..1) derived
@@ -467,7 +470,7 @@ float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float stren
 {
     ShoreData shore = ShoreSample(sourceXZ);
     SurfWaveSample surf = EvaluateSurfWaves(sourceXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.slopeTan, shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _SurfBeatTime);
     return ApplyLargeBodyWaveNormalShore(worldNormal, sourceXZ, strength, shore, surf);
 }
 

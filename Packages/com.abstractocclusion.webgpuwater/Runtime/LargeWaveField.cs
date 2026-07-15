@@ -26,8 +26,14 @@ namespace AbstractOcclusion.WebGpuWater
         public float Greens;               // _ShoreGreens / _SurfGreens (one knob)
         public bool SurfActive;            // _SurfActive
         public float SurfAmplitude;        // _SurfAmplitude
-        public float SurfWavelength;       // _SurfWavelength
+        public float SurfWavelength;       // _SurfWavelength (the EFFECTIVE spacing - auto-derived
+                                           // from the period when the body's Auto toggle is on)
         public float SurfPeriod;           // _SurfPeriod
+        public float SurfBeatTime;         // _SurfBeatTime - THE MASTER SURF BEAT (the body's wave
+                                           // clock wrapped to SurfBeatWrapFronts periods). Every
+                                           // surf term below uses THIS, never the ambient time, so
+                                           // the mirror and the render agree forever (the unwrapped
+                                           // clock let float32 sin() drift away from Mathf.Sin).
         public float SurfBandDepth;        // _SurfBandDepth
         public float SurfSetStrength;      // _SurfSetStrength
         public float SurfCrestLength;      // _SurfCrestLength
@@ -70,7 +76,9 @@ namespace AbstractOcclusion.WebGpuWater
         // WaterWaveConstantsValidator). Only height-affecting constants are mirrored; the
         // whitewash/breaker foam shaping is render-only and has no CPU counterpart.
         const float SurfMinDepth = 0.05f;
-        const float SurfCrestSeedDrift = 0.35f;
+        const float SurfBeatWrapFronts = 1280f;      // SURF_BEAT_WRAP_FRONTS
+        const float SurfCrestSeedDriftA = 0.34852044f; // SURF_CREST_SEED_DRIFT_A (2pi*71/1280)
+        const float SurfCrestSeedDriftB = 0.45160394f; // SURF_CREST_SEED_DRIFT_B (2pi*92/1280)
         const float SurfFaceFraction = 0.10f;
         const float SurfBackFraction = 0.24f;
         const float SurfSetWaves = 5.0f;
@@ -154,21 +162,29 @@ namespace AbstractOcclusion.WebGpuWater
             return Mathf.Lerp(1f, green, shore.Influence);
         }
 
-        // Mirrors ShoreWarpExtra() in WaterShore.hlsl.
+        // Mirrors ShoreWarpExtra() in WaterShore.hlsl - ONE compression curve with the surf
+        // fronts: reach = 2 x front spacing, the same value published as _ShoreWarpReach.
         static float WarpExtra(in ShoreWaveContext ctx, in ShoreSampleCpu shore)
         {
             if (shore.Influence <= 0f || ctx.Compression <= 0f) return 0f;
             float s = Mathf.Max(shore.SdfDist, 0f);
-            float reach = Mathf.Max(4f * ctx.ShoalDepth, 8f);
+            float reach = Mathf.Max(2f * Mathf.Max(ctx.SurfWavelength, 1f), 1f);
             return ctx.Compression * s * Mathf.Exp(-s / reach) * shore.Influence;
         }
 
         // --- Surf breaker fronts (mirrors WaterSurfWaves.hlsl) --------------------------------
 
+        // Mirrors SurfWrapIndex() in WaterSurfWaves.hlsl: every per-front quantity derives from
+        // the WRAPPED index so hash arguments stay small (float32-sin-safe) and the field is
+        // exactly periodic in the master beat wrap.
+        static float SurfWrapIndex(float frontIndex)
+            => frontIndex - SurfBeatWrapFronts * Mathf.Floor(frontIndex / SurfBeatWrapFronts);
+
         static float SurfSetAmp(in ShoreWaveContext ctx, float frontIndex)
         {
-            float h = Hash(frontIndex);
-            float setWave = 0.5f + 0.5f * Mathf.Sin((frontIndex / SurfSetWaves) * TwoPi + h * 2.4f);
+            float wrapped = SurfWrapIndex(frontIndex);
+            float h = Hash(wrapped);
+            float setWave = 0.5f + 0.5f * Mathf.Sin((wrapped / SurfSetWaves) * TwoPi + h * 2.4f);
             return Mathf.Lerp(1f, Mathf.Lerp(0.35f, 1f, setWave), ctx.SurfSetStrength)
                  * Mathf.Lerp(0.9f, 1.1f, h);
         }
@@ -184,10 +200,13 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (ctx.SurfCrestVariation <= 0f) return 1f;
             float invLen = 1f / Mathf.Max(ctx.SurfCrestLength, 4f);
-            float seed = Mathf.Lerp(Hash(frontIndex) * 37f, frontIndex * SurfCrestSeedDrift,
-                                    Mathf.Clamp01(ctx.SurfCrestPersistence));
-            float n = Mathf.Sin((x * 1f + z * 0.31f) * (TwoPi * invLen) + seed)
-                    + 0.5f * Mathf.Sin((x * -0.42f + z * 1f) * (TwoPi * invLen * 1.7f) + seed * 1.3f);
+            float wrapped = SurfWrapIndex(frontIndex);
+            float persistence = Mathf.Clamp01(ctx.SurfCrestPersistence);
+            float seedFresh = Hash(wrapped) * 37f;
+            float seedA = Mathf.Lerp(seedFresh, wrapped * SurfCrestSeedDriftA, persistence);
+            float seedB = Mathf.Lerp(seedFresh * 1.3f, wrapped * SurfCrestSeedDriftB, persistence);
+            float n = Mathf.Sin((x * 1f + z * 0.31f) * (TwoPi * invLen) + seedA)
+                    + 0.5f * Mathf.Sin((x * -0.42f + z * 1f) * (TwoPi * invLen * 1.7f) + seedB);
             float n01 = Mathf.Clamp01(n / 1.5f * 0.5f + 0.5f);
             return 1f - ctx.SurfCrestVariation * (1f - n01);
         }
@@ -332,7 +351,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (ctx.Field == null) return fft;
             ShoreSampleCpu shore = SampleShore(ctx, worldX, worldZ);
             if (shore.Influence <= 0f) return fft;
-            EvaluateSurf(ctx, shore, worldX, worldZ, time, out float surfHeight,
+            // Surf terms run on the master beat (ctx.SurfBeatTime), never the ambient clock.
+            EvaluateSurf(ctx, shore, worldX, worldZ, ctx.SurfBeatTime, out float surfHeight,
                          out float surfSlopeX, out float surfSlopeZ, out float surfMask);
             float weight = Mathf.Lerp(1f, ShoalWeight(ctx, shore.Depth, dominantWavelength),
                                       shore.Influence)
@@ -414,7 +434,9 @@ namespace AbstractOcclusion.WebGpuWater
             in ShoreWaveContext ctx)
         {
             ShoreSampleCpu shore = SampleShore(ctx, x, z);
-            EvaluateSurf(ctx, shore, x, z, time, out float surfHeight,
+            // Surf terms run on the master beat (ctx.SurfBeatTime); the ambient bands keep the
+            // body's unwrapped wave clock (their omega*t phases are not beat-periodic).
+            EvaluateSurf(ctx, shore, x, z, ctx.SurfBeatTime, out float surfHeight,
                          out float surfSlopeX, out float surfSlopeZ, out float surfMask);
             float green = GreenGain(ctx, shore);
             float ambient = SurfAmbientWeight(ctx, surfMask);
@@ -439,7 +461,7 @@ namespace AbstractOcclusion.WebGpuWater
                 const float velocityDt = 1f / 60f;
                 float s = Mathf.Max(shore.SdfDist, 0f);
                 float hNext = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
-                                              shore.SlopeTan, time + velocityDt) * surfMask;
+                                              shore.SlopeTan, ctx.SurfBeatTime + velocityDt) * surfMask;
                 a.HeightVelocity += (hNext - surfHeight) / velocityDt;
             }
             return a;

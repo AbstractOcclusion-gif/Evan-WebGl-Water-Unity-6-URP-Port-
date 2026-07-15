@@ -292,7 +292,7 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector4 FieldSize;      // xy = world XZ half-extent of the Layer A field
             public Vector4 UvToWorldOrigin;// sim-uv -> world-xz affine (same shape as the hero's)
             public Vector4 UvToWorldAxes;
-            public float Time;             // the body's wave clock (matches the surface _WaveTime)
+            public float Time;             // THE MASTER SURF BEAT (WaterVolume.SurfBeatTime - matches _SurfBeatTime)
             public float FoamGain;         // whitewash + breaker injection gain
             public float WaterlineGain;    // standing waterline lace gain
             // The WaterSurfWaves.hlsl front-field uniforms (the same values the surface renders
