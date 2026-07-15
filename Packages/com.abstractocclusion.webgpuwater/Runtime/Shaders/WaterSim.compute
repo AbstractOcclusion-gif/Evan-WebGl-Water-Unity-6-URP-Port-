@@ -226,7 +226,7 @@ float4 _ShoreSimUvToWorldAxes;   // xy = world xz span across uv.x, zw = span ac
 float4 _ShoreFieldCenterSim;    // xy = world XZ centre of the Layer A field
 float4 _ShoreFieldSizeSim;      // xy = world XZ half-extent of the Layer A field
 Texture2D<float>  _ShoreDepthTexSim;  SamplerState sampler_ShoreDepthTexSim; // column depth (m), half
-Texture2D<float4> _ShoreSDFTexSim;    SamplerState sampler_ShoreSDFTexSim;   // dir(0..1), dist, mask
+Texture2D<float4> _ShoreSDFTexSim;    SamplerState sampler_ShoreSDFTexSim;   // dir(0..1), dist, slope tan(beta)
 // Matches SHORE_BORDER_FEATHER in WaterShore.hlsl (compute cannot include that header - see above).
 #define SHORE_FOAM_BORDER_FEATHER 0.08
 
@@ -570,7 +570,8 @@ void Foam(uint3 id : SV_DispatchThreadID)
             float toShoreLen = length(toShore);
             toShore = toShoreLen > 1e-4 ? toShore / toShoreLen : float2(0.0, 0.0);
             SurfWaveSample surfSim = EvaluateSurfWaves(shoreWorldXZ, shoreDepth, shoreSdf.b,
-                                                       toShore, influence, _ShoreFoamTime);
+                                                       toShore, shoreSdf.a, influence,
+                                                       _ShoreFoamTime);
             // Waterline lace: peaks just offshore of the waterline and dies both ways - the
             // standing white edge every coast has, independent of the front rhythm. Gated by the
             // shore's exposure to the swell like everything else, so the lee side stays clean.

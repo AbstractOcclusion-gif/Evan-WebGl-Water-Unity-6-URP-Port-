@@ -65,16 +65,28 @@ namespace AbstractOcclusion.WebGpuWater
         const float Gravity = 9.81f;
         const float TwoPi = 6.28318530718f;
 
-        // Surf-front constants - MUST match the SURF_* defines in WaterSurfWaves.hlsl.
-        const float SurfBreakRatio = 0.78f;
+        // Surf-front constants - MUST match the SURF_* defines in WaterSurfWaves.hlsl (guarded by
+        // WaterWaveConstantsValidator). Only height-affecting constants are mirrored; the
+        // whitewash/breaker foam shaping is render-only and has no CPU counterpart.
         const float SurfMinDepth = 0.05f;
         const float SurfFaceFraction = 0.10f;
         const float SurfBackFraction = 0.24f;
-        const float SurfBoreHeightKeep = 0.6f;
         const float SurfSetWaves = 5.0f;
         const float SurfNearFade = 0.55f;
         const float SurfSechArgMax = 20.0f;
         const float SurfSlopeEpsilon = 0.5f;
+        // SURF-PHYS breaker physics (Iribarren / Weggel / Dally-Dean-Dalrymple - see the HLSL
+        // constants block for the science + the documented approximations).
+        const float SurfXiSpillEndLo = 0.45f;
+        const float SurfXiSpillEndHi = 0.60f;
+        const float SurfXiSurgeStartLo = 2.8f;
+        const float SurfXiSurgeStartHi = 3.6f;
+        const float SurfDeepwaterLengthCoef = 1.56f;
+        const float SurfXiHeightEpsilon = 1e-3f;
+        const float SurfGammaBase = 0.6f;
+        const float SurfGammaSlopeGain = 5.0f;
+        const float SurfGammaMax = 1.1f;
+        const float SurfBoreStableGamma = 0.40f;
 
         // Matches LBW_INVERSION_ITERATIONS in WaterLargeWaves.hlsl (Crest's SampleInvertedDisplacement
         // uses 4). Inverting the horizontal Gerstner displacement is how a fixed world xz maps back to
@@ -99,6 +111,7 @@ namespace AbstractOcclusion.WebGpuWater
             public float Depth;
             public float SdfDist;
             public float DirX, DirZ; // toward shore, unit
+            public float SlopeTan;   // local beach slope tan(beta) (SURF-PHYS)
             public float Influence;
         }
 
@@ -109,10 +122,11 @@ namespace AbstractOcclusion.WebGpuWater
             s.SdfDist = 0f;
             s.DirX = 0f;
             s.DirZ = 0f;
+            s.SlopeTan = 0f;
             s.Influence = 0f;
             if (ctx.Field == null) return s;
             ctx.Field.TrySampleShore(x, z, out s.Depth, out s.SdfDist, out s.DirX, out s.DirZ,
-                                     out s.Influence);
+                                     out s.SlopeTan, out s.Influence);
             return s;
         }
 
@@ -182,9 +196,27 @@ namespace AbstractOcclusion.WebGpuWater
             return Mathf.Lerp(1f, facing, Mathf.Clamp01(ctx.SurfDirectionality));
         }
 
+        // Mirrors SurfIribarren() in WaterSurfWaves.hlsl (surf-similarity number, Battjes 1974).
+        static float SurfIribarren(in ShoreWaveContext ctx, float tanBeta, float deepHeight)
+        {
+            float period = Mathf.Max(ctx.SurfPeriod, 0.5f); // matches the HLSL _SurfPeriod floor
+            float deepLength = SurfDeepwaterLengthCoef * period * period;
+            return tanBeta / Mathf.Sqrt(Mathf.Max(deepHeight, SurfXiHeightEpsilon)
+                                        / Mathf.Max(deepLength, 1e-3f));
+        }
+
+        // Mirrors SurfBreakerWeights().z in WaterSurfWaves.hlsl. Only the SURGING weight moves the
+        // surface (it kills the bore hand-over); spill/plunge shape foam, which has no CPU side.
+        static float SurfSurgeWeight(float xi)
+            => SmoothStep(SurfXiSurgeStartLo, SurfXiSurgeStartHi, xi);
+
+        // Mirrors SurfGamma() in WaterSurfWaves.hlsl (Weggel-simplified breaker index).
+        static float SurfGamma(float tanBeta)
+            => Mathf.Clamp(SurfGammaBase + SurfGammaSlopeGain * tanBeta, SurfGammaBase, SurfGammaMax);
+
         // Mirrors SurfFrontHeight() in WaterSurfWaves.hlsl (height only - buoyancy needs no foam).
         static float SurfFrontHeight(in ShoreWaveContext ctx, float x, float z,
-                                     float sWarp, float depth, float time)
+                                     float sWarp, float depth, float tanBeta, float time)
         {
             float wavelength = Mathf.Max(ctx.SurfWavelength, 1f);
             float period = Mathf.Max(ctx.SurfPeriod, 0.5f);
@@ -195,25 +227,32 @@ namespace AbstractOcclusion.WebGpuWater
             float setAmp = SurfSetAmp(ctx, frontIndex) * SurfCrestFactor(ctx, x, z, frontIndex);
             float d = Mathf.Max(depth, SurfMinDepth);
 
+            float deepHeight = ctx.SurfAmplitude * setAmp;
+            float surge = SurfSurgeWeight(SurfIribarren(ctx, tanBeta, deepHeight));
+
             float green = Mathf.Min(Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, 0.25f),
                                     Mathf.Max(ctx.Greens, 1f));
             float height0 = ctx.SurfAmplitude * setAmp * green;
-            float capH = SurfBreakRatio * d;
+            float capH = SurfGamma(tanBeta) * d;
             float overCap = height0 / Mathf.Max(capH, 1e-3f);
-            float breaker = SmoothStep(0.75f, 1.05f, overCap);
-            float broken = SmoothStep(1.05f, 1.5f, overCap);
+            float cresting = SmoothStep(0.75f, 1.05f, overCap);
+            float broken = SmoothStep(1.05f, 1.5f, overCap) * (1f - surge);
             float amp = Mathf.Min(height0, capH);
 
             float dAcross = (f - 0.5f) * wavelength;
-            float lean = ctx.SurfLean * amp * breaker;
+            float lean = ctx.SurfLean * amp * cresting;
             dAcross += lean * Mathf.Exp(-Mathf.Abs(dAcross) / (0.25f * wavelength));
             float faceLen = SurfFaceFraction * wavelength;
             float backLen = SurfBackFraction * wavelength;
             float profLen = dAcross < 0f ? faceLen : backLen;
             float sech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / profLen, SurfSechArgMax));
             float profile = sech * sech;
-            float boreSech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / (backLen * 2f), SurfSechArgMax));
-            return amp * Mathf.Lerp(profile, boreSech * SurfBoreHeightKeep, broken);
+            // Parity fix: the bore sech width is backLen * 1.4 in the shader; this mirror had
+            // drifted to * 2 (inline literals dodge the constants validator - keep them lockstep
+            // by hand). Bore amplitude relaxes onto the Dally-Dean-Dalrymple stable height.
+            float boreSech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / (backLen * 1.4f), SurfSechArgMax));
+            float boreAmp = Mathf.Lerp(amp, SurfBoreStableGamma * d, broken);
+            return Mathf.Lerp(amp * profile, boreAmp * boreSech, broken);
         }
 
         static float Cosh(float x)
@@ -241,9 +280,10 @@ namespace AbstractOcclusion.WebGpuWater
             if (mask <= 0.001f) { mask = 0f; return; }
 
             float s = Mathf.Max(shore.SdfDist, 0f);
-            float h0 = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth, time);
+            float h0 = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
+                                       shore.SlopeTan, time);
             float h1 = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s + SurfSlopeEpsilon),
-                                       shore.Depth, time);
+                                       shore.Depth, shore.SlopeTan, time);
             float dhds = (h1 - h0) / SurfSlopeEpsilon;
 
             height = h0 * mask;
@@ -373,7 +413,7 @@ namespace AbstractOcclusion.WebGpuWater
                 const float velocityDt = 1f / 60f;
                 float s = Mathf.Max(shore.SdfDist, 0f);
                 float hNext = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
-                                              time + velocityDt) * surfMask;
+                                              shore.SlopeTan, time + velocityDt) * surfMask;
                 a.HeightVelocity += (hNext - surfHeight) / velocityDt;
             }
             return a;

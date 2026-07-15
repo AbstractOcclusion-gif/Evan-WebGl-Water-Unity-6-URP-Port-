@@ -27,7 +27,7 @@ float _SurfLean;          // forward-lean shear (fraction of local height thrown
 float _SurfCompression;   // front-spacing compression toward the waterline (crests bunch as they slow)
 float _SurfGreens;        // Green's-law growth cap for the fronts (1 = no growth)
 float _SurfAmbientFade;   // 0..1 how much the ambient swell/FFT fades where fronts own the surface
-float _SurfSwashAmplitude;// run-up height (m) of the swash film above the still waterline
+float _SurfSwashAmplitude;// MULTIPLIER on the physical Hunt run-up (1 = physics; 0 = swash off)
 float _SurfWaterlineFoam; // standing lace hugging the waterline (fills the last metres to the sand)
 float _SurfCrestLength;   // alongshore length scale (m) of crest segments (finite crests, not bands)
 float _SurfCrestVariation;// 0..1 how deeply the crest noise modulates amplitude (0 = endless bands)
@@ -43,13 +43,9 @@ float _SurfFoamTileSize;  // metres per foam-pattern tile on the surf
 float4 _SurfFoamColor;    // rgb tint, a = master opacity
 
 #define SURF_TWO_PI            6.28318530718
-// H/d breaking criterion (McCowan's solitary-wave limit ~0.78): a front whose height exceeds this
-// fraction of the local column depth cannot stand and collapses into a bore.
-#define SURF_BREAK_RATIO       0.78
 #define SURF_MIN_DEPTH         0.05  // metre floor under every depth divide
 #define SURF_FACE_FRACTION     0.10  // steep shoreward face length, as a fraction of front spacing
 #define SURF_BACK_FRACTION     0.24  // long offshore back length, as a fraction of front spacing
-#define SURF_BORE_HEIGHT_KEEP  0.6   // height fraction a broken front keeps as the whitewash bore
 #define SURF_SET_WAVES         5.0   // pseudo-period (in fronts) of the set envelope
 #define SURF_NEAR_FADE         0.55  // fraction of _SurfBandDepth where fronts are fully developed
 #define SURF_SECH_ARG_MAX      20.0  // cosh overflow clamp (WGSL float overflow is impl-defined)
@@ -61,6 +57,48 @@ float4 _SurfFoamColor;    // rgb tint, a = master opacity
 // The swash film rides this far (m) proud of the sand, so the film/glaze fragments WIN the depth
 // test against the opaque beach (a flat plane under the terrain would be entirely occluded).
 #define SURF_FILM_THICKNESS    0.03
+
+// --- Slope-aware breaker physics (SURF-PHYS) -----------------------------------------------------
+// The bathymetry now diversifies the coastline by itself: the baked beach slope (SDF texture A
+// channel, tan(beta) = |grad depth|) drives the Iribarren surf-similarity classification, the
+// slope-dependent breaker index and the Hunt run-up. Height-affecting constants below are mirrored
+// in LargeWaveField.cs (lockstep) and guarded by WaterWaveConstantsValidator.
+//
+// Iribarren number xi0 = tanBeta / sqrt(H0/L0) (Battjes 1974, "surf similarity"): classifies the
+// breaker type. xi < ~0.5 spilling, ~0.5..~3.3 plunging, > ~3.3 surging/collapsing. The bands blend
+// over smoothstep windows (never branches) so the coastline morphs continuously with the slope.
+#define SURF_XI_SPILL_END_LO   0.45  // spilling fades out / plunging fades in across this window
+#define SURF_XI_SPILL_END_HI   0.60
+#define SURF_XI_SURGE_START_LO 2.8   // plunging fades out / surging fades in across this window
+#define SURF_XI_SURGE_START_HI 3.6
+// Deep-water wavelength L0 = g/(2 pi) * T^2 = 1.56 * T^2 (linear dispersion, metres).
+#define SURF_DEEPWATER_LENGTH_COEF 1.56
+#define SURF_XI_HEIGHT_EPSILON 1e-3  // H0 floor inside the Iribarren sqrt (crest-segment gaps)
+// Slope-dependent breaker index gamma = Hb/db, replacing the fixed McCowan 0.78. Simplified from
+// Weggel (1972) gamma = b(m) - a(m)*Hb/(g T^2): the linear ramp approximates b(m)'s initial rise
+// (db/dm ~ 7.6 at m = 0, softened to 5.0 over the playable slope range) and the sub-McCowan base
+// 0.6 consciously folds in the finite-steepness a(m) reduction, so flat shelves break EARLY and
+// soft while steep beaches hold on later (relatively shallower, more violent). Cap 1.1 spans the
+// measured field range (~0.6..1.2).
+#define SURF_GAMMA_BASE        0.6
+#define SURF_GAMMA_SLOPE_GAIN  5.0
+#define SURF_GAMMA_MAX         1.1
+// Broken-bore decay target: Dally, Dean & Dalrymple (1985) - a broken bore decays toward a STABLE
+// height ~0.4 * local depth, it does not keep a fixed fraction of its break height. The reference
+// form is an ODE in travel distance; a stateless field cannot integrate it, so the bore amplitude
+// RELAXES onto the 0.4*d envelope with the existing 'broken' blend (documented approximation:
+// matches the reference behaviour's direction and end state, skips the exponential transient).
+#define SURF_BORE_STABLE_GAMMA 0.40
+// Hunt (1959) run-up R = xi * H0, valid up to xi ~ 2.3 where measured run-up saturates - the cap
+// doubles as the cliff guard (xi is unbounded on near-vertical shores). Swash is render-only.
+#define SURF_RUNUP_XI_CAP      2.3
+#define SURF_SURGE_RUNUP_BOOST 1.35  // surging waves route their unbroken energy into the swash
+// Breaker-type foam shaping (render-only - foam never moves the surface, so no CPU mirror):
+// plunging breaks throw a NARROWER, more intense whitewash and a stronger, wider cresting lip.
+#define SURF_PLUNGE_TRAIL_NARROW   0.55 // trail length factor at full plunge (1 = spilling width)
+#define SURF_PLUNGE_WHITEWASH_GAIN 0.5  // extra whitewash intensity at full plunge
+#define SURF_PLUNGE_BREAKER_GAIN   0.8  // extra cresting-lip signal at full plunge
+#define SURF_PLUNGE_BREAKER_WIDEN  0.6  // lip profile exponent at full plunge (< 1 widens the lobe)
 
 // Matches LbwHash in WaterLargeWaves.hlsl / Hash in LargeWaveField.cs (same constants, so the CPU
 // mirror stays byte-for-byte).
@@ -112,6 +150,33 @@ float SurfExposure(float2 toShore)
     return lerp(1.0, facing, saturate(_SurfDirectionality));
 }
 
+// Iribarren / surf-similarity number xi0 for a deep-water set height H0 on a beach of slope
+// tanBeta (Battjes 1974). L0 from linear deep-water dispersion. Mirrored in LargeWaveField.cs.
+float SurfIribarren(float tanBeta, float deepHeight)
+{
+    float T = max(_SurfPeriod, 0.5); // same floor as every other period use (CPU mirror lockstep)
+    float deepLength = SURF_DEEPWATER_LENGTH_COEF * T * T;
+    return tanBeta / sqrt(max(deepHeight, SURF_XI_HEIGHT_EPSILON) / max(deepLength, 1e-3));
+}
+
+// Breaker-type weights from the Iribarren number: x = spilling, y = plunging, z = surging.
+// Smooth partition of unity (the three always sum to 1), so every lifecycle SHAPE term below can
+// blend by them with no branches. Mirrored in LargeWaveField.cs.
+float3 SurfBreakerWeights(float xi)
+{
+    float pastSpill = smoothstep(SURF_XI_SPILL_END_LO, SURF_XI_SPILL_END_HI, xi);
+    float surge = smoothstep(SURF_XI_SURGE_START_LO, SURF_XI_SURGE_START_HI, xi);
+    return float3(1.0 - pastSpill, pastSpill * (1.0 - surge), surge);
+}
+
+// Slope-dependent breaker index gamma = Hb/db (Weggel-simplified, see the constants block):
+// steep beaches break later, in relatively shallower water, more violently; flat beaches break
+// early and soft. Mirrored in LargeWaveField.cs.
+float SurfGamma(float tanBeta)
+{
+    return clamp(SURF_GAMMA_BASE + SURF_GAMMA_SLOPE_GAIN * tanBeta, SURF_GAMMA_BASE, SURF_GAMMA_MAX);
+}
+
 // Core front shape at a warped shore distance + local depth. Returns (height m, whitewash,
 // breaker) as a plain float3 - NO out parameters: FXC's inliner is fragile around out-params in
 // deeply nested calls (the editor's shader-compiler process died on the first build of this file),
@@ -119,7 +184,7 @@ float SurfExposure(float2 toShore)
 // (LargeWaveField.SurfFrontHeight) reproduces exactly the .x math.
 //   .y whitewash: 0..1 broken-bore coverage (foam fuel, trails behind the moving front)
 //   .z breaker:   0..1 "cresting/about to break" signal (thin line at the lip - foam + SSS fuel)
-float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float time)
+float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float tanBeta, float time)
 {
     float L = max(_SurfWavelength, 1.0);
     float T = max(_SurfPeriod, 0.5);
@@ -134,13 +199,21 @@ float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float time)
     float setAmp = SurfSetAmp(frontIndex) * SurfCrestFactor(worldXZ, frontIndex);
     float d = max(depth, SURF_MIN_DEPTH);
 
-    // Local height: Green's-law growth toward the shore, capped by the breaking criterion.
+    // Breaker-type classification for THIS front on THIS beach (SURF-PHYS): the deep-water set
+    // height (pre-Green) feeds the Iribarren number; the local slope picks the breaking regime.
+    float deepHeight = _SurfAmplitude * setAmp;
+    float3 breakType = SurfBreakerWeights(SurfIribarren(tanBeta, deepHeight)); // spill/plunge/surge
+
+    // Local height: Green's-law growth toward the shore, capped by the breaking criterion -
+    // the slope-dependent Weggel gamma now, not the fixed McCowan 0.78.
     float green = min(pow(max(_SurfBandDepth, d) / d, 0.25), max(_SurfGreens, 1.0));
     float H = _SurfAmplitude * setAmp * green;
-    float capH = SURF_BREAK_RATIO * d;
+    float capH = SurfGamma(tanBeta) * d;
     float overCap = H / max(capH, 1e-3);
     float cresting = smoothstep(0.75, 1.05, overCap); // cresting: approaching/at the limit
-    float broken = smoothstep(1.05, 1.5, overCap);    // fully broken -> whitewash bore
+    // Fully broken -> whitewash bore. Surging waves SKIP the bore entirely (their weight kills the
+    // hand-over): the unbroken face runs to the waterline and hands its energy to the swash.
+    float broken = smoothstep(1.05, 1.5, overCap) * (1.0 - breakType.z);
     // (Later hand-over than v1: the cresting face stays tall further in, so the wave is
     // still VISIBLY a wave when it arrives instead of collapsing to a flat foam smear.)
     H = min(H, capH);
@@ -159,8 +232,11 @@ float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float time)
 
     // Broken front: collapse toward a LOWER, WIDER whitewash bore (rounded step of churned water
     // that keeps running shoreward). sech (not sech^2) at 1.4x the back length reads as the mound.
+    // The bore amplitude relaxes onto the Dally-Dean-Dalrymple STABLE height (0.4 * depth) instead
+    // of keeping a fixed fraction of its break height - see SURF_BORE_STABLE_GAMMA.
     float boreSech = 1.0 / cosh(min(abs(dAcross) / (backLen * 1.4), SURF_SECH_ARG_MAX));
-    float height = H * lerp(profile, boreSech * SURF_BORE_HEIGHT_KEEP, broken);
+    float boreAmp = lerp(H, SURF_BORE_STABLE_GAMMA * d, broken);
+    float height = lerp(H * profile, boreAmp * boreSech, broken);
 
     // Whitewash: rides the bore and TRAILS OFFSHORE behind the shoreward-moving front (the churned
     // water is left behind as the front travels on; the shoreward side gets its foam from the sim
@@ -168,10 +244,18 @@ float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float time)
     // clearly smaller than the compressed front spacing (~L/(1+c)), or neighbouring bores' foam
     // overlaps into one solid static-looking carpet and the march toward shore becomes invisible -
     // exactly the "big slow band" failure. Gated by the set amplitude so lulls stay clean.
-    float trail = (dAcross > 0.0) ? exp(-dAcross / backLen) : 0.0;
-    float whitewash = broken * max(boreSech, 0.4 * trail) * saturate(setAmp);
+    // Breaker-type shaping (render-only): plunging throws a narrower, more intense whitewash;
+    // surging produces none at all (its 'broken' is already killed above).
+    float trailLen = backLen * lerp(1.0, SURF_PLUNGE_TRAIL_NARROW, breakType.y);
+    float trail = (dAcross > 0.0) ? exp(-dAcross / trailLen) : 0.0;
+    float whitewash = broken * max(boreSech, 0.4 * trail) * saturate(setAmp)
+                    * (1.0 + SURF_PLUNGE_WHITEWASH_GAIN * breakType.y);
     // Thin cresting line right at the lip while the front is breaking (not yet fully broken).
-    float breaker = cresting * (1.0 - broken) * profile;
+    // Plunging amplifies AND widens the lip (this signal gates the future curl sheet); surging
+    // has no lip at all - the face never overturns.
+    float lipProfile = pow(profile, lerp(1.0, SURF_PLUNGE_BREAKER_WIDEN, breakType.y));
+    float breaker = cresting * (1.0 - broken) * lipProfile
+                  * (1.0 + SURF_PLUNGE_BREAKER_GAIN * breakType.y) * (1.0 - breakType.z);
 
     return float3(height, whitewash, breaker);
 }
@@ -200,10 +284,11 @@ SurfWaveSample SurfWaveSampleInert()
 }
 
 // Evaluate the breaker-front layer. The caller provides the Layer A samples: still-water column
-// depth (m), signed shore distance (m, + in water), unit direction toward shore, and the feathered
-// in-field influence. Inert (all zeros) when inactive, off-field, offshore of the band, or on land.
+// depth (m), signed shore distance (m, + in water), unit direction toward shore, the local beach
+// slope tan(beta) (SDF texture A channel), and the feathered in-field influence. Inert (all
+// zeros) when inactive, off-field, offshore of the band, or on land.
 SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, float2 toShore,
-                                 float influence, float time)
+                                 float tanBeta, float influence, float time)
 {
     SurfWaveSample o = SurfWaveSampleInert();
     if (_SurfActive < 0.5 || influence <= 0.001) return o;
@@ -233,18 +318,18 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
     if (mask <= 0.001 && lace <= 0.001) return o;
 
     float s = max(sdfDist, 0.0);
-    float3 front = SurfFrontHeight(worldXZ, SurfWarpDistance(s), depth, time); // (height, whitewash, breaker)
+    float3 front = SurfFrontHeight(worldXZ, SurfWarpDistance(s), depth, tanBeta, time); // (height, whitewash, breaker)
 
     // Slope by finite difference ALONG the shore-distance axis (the front varies along it by
     // construction; the crest noise is held fixed across the step so it never spikes the normal).
     // grad(sdfDist) = -toShore, since distance grows offshore.
-    float h1 = SurfFrontHeight(worldXZ, SurfWarpDistance(s + SURF_SLOPE_EPSILON), depth, time).x;
+    float h1 = SurfFrontHeight(worldXZ, SurfWarpDistance(s + SURF_SLOPE_EPSILON), depth, tanBeta, time).x;
     float dhds = (h1 - front.x) / SURF_SLOPE_EPSILON;
 
     o.height = front.x * mask;
     o.slopeXZ = -toShore * (dhds * mask);
     o.whitewash = saturate(front.y * mask + lace);
-    o.breaker = front.z * mask;
+    o.breaker = saturate(front.z * mask);
     o.mask = mask;
     return o;
 }
@@ -264,7 +349,7 @@ float SurfAmbientWeight(float surfMask)
 //   .y wetLevel:   metres up to which the sand still glistens (recent max, drying through the cycle)
 // The surface shader keeps beach fragments alive up to max(.x, .y) and renders the zone above the
 // current film as the dark wet-sand glaze - wet sand with zero extra state.
-float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float influence, float time)
+float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float tanBeta, float influence, float time)
 {
     if (_SurfActive < 0.5 || influence <= 0.001 || _SurfSwashAmplitude <= 0.0)
         return float2(0.0, 0.0);
@@ -281,8 +366,17 @@ float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float influence, float 
     float f = frac(phase - 0.5);               // 0 = crest arrival at the waterline
 
     float exposure = SurfExposure(toShore);
-    float run = _SurfSwashAmplitude * SurfSetAmp(arrivalIndex) * influence
-              * SurfCrestFactor(worldXZ, arrivalIndex) * exposure;
+    // Hunt (1959) run-up from physics: R = xi * H0 (capped at Hunt's validity bound), where H0 is
+    // the arriving front's own deep-water set height - so a flat dissipative beach gets a short
+    // swash and a steep beach a long surge, per point, from the bathymetry. Surging waves put
+    // their whole unbroken energy into the run-up (the boost). _SurfSwashAmplitude is a
+    // MULTIPLIER on the physical result (1 = physics) so scenes stay tunable.
+    float deepHeight = _SurfAmplitude * SurfSetAmp(arrivalIndex)
+                     * SurfCrestFactor(worldXZ, arrivalIndex);
+    float xi = SurfIribarren(tanBeta, deepHeight);
+    float surge = SurfBreakerWeights(xi).z;
+    float run = min(xi, SURF_RUNUP_XI_CAP) * deepHeight * _SurfSwashAmplitude
+              * lerp(1.0, SURF_SURGE_RUNUP_BOOST, surge) * influence * exposure;
     // Quick uprush, slower backwash (real swash is strongly asymmetric).
     float upDown = (f < SURF_SWASH_UPRUSH)
         ? smoothstep(0.0, SURF_SWASH_UPRUSH, f)
@@ -298,8 +392,12 @@ float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float influence, float 
     //  - the sand shows whichever is higher. Continuous everywhere, including cycle rollover:
     //    at f->1 this cycle ends at run*FLOOR, and at f=0 the next cycle's "previous" term
     //    starts at exactly run*FLOOR.
-    float runPrev = _SurfSwashAmplitude * SurfSetAmp(arrivalIndex - 1.0) * influence
-                  * SurfCrestFactor(worldXZ, arrivalIndex - 1.0) * exposure;
+    float deepHeightPrev = _SurfAmplitude * SurfSetAmp(arrivalIndex - 1.0)
+                         * SurfCrestFactor(worldXZ, arrivalIndex - 1.0);
+    float xiPrev = SurfIribarren(tanBeta, deepHeightPrev);
+    float runPrev = min(xiPrev, SURF_RUNUP_XI_CAP) * deepHeightPrev * _SurfSwashAmplitude
+                  * lerp(1.0, SURF_SURGE_RUNUP_BOOST, SurfBreakerWeights(xiPrev).z)
+                  * influence * exposure;
     float thisCycleWet = (f < SURF_SWASH_UPRUSH)
         ? swashLevel
         : run * lerp(1.0, SURF_SWASH_WET_FLOOR, smoothstep(SURF_SWASH_UPRUSH, 1.0, f));

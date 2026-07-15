@@ -56,10 +56,6 @@ namespace AbstractOcclusion.WebGpuWater
         // analytic large-wave path (WaterLargeWaves.hlsl) is used unchanged. Deliberately NOT part of
         // HasRequiredWiring - a body must run without it so pools/bounded bodies are unaffected.
         [SerializeField] internal ComputeShader oceanFftCompute;
-        // Optional, shoreline-only: the shallow-water (SWE) sim-zone compute (Layer C). Unassigned, or
-        // on a body without a bed terrain, the shore zone is skipped and the body is unchanged.
-        // Deliberately NOT part of HasRequiredWiring - bodies must run without it.
-        [SerializeField] internal ComputeShader sweCompute;
         [SerializeField] internal Shader causticsShader;
         [SerializeField] internal Shader largeBodyCausticsShader; // AbstractOcclusion/WebGpuWater/LargeBodyCaustics - near-field ocean caustics in the sim-window frame (optional; oceans only)
         [SerializeField] internal Shader obstacleShader; // AbstractOcclusion/WebGpuWater/ObstacleDepth - footprint of interactable objects
@@ -1095,9 +1091,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("How much the ambient swell/FFT fades where the surf fronts own the surface " +
                      "(prevents double crests). 1 = fronts fully replace the ambient waves near shore.")]
             [Range(0f, 1f)] public float surfAmbientFade = 0.8f;
-            [Tooltip("Run-up height (metres) of the swash film above the still waterline (drives the " +
-                     "breathing waterline + wet-sand glaze). 0 = classic hard waterline.")]
-            [Range(0f, 3f)] public float surfSwashAmplitude = 0.5f;
+            [Tooltip("Multiplier on the physical Hunt run-up (swash height = Iribarren x deep-water " +
+                     "set height, from the baked beach slope). 1 = physics; 0 = classic hard " +
+                     "waterline. Pre-SURF-PHYS scenes tuned in metres should reset this to 1.")]
+            [Range(0f, 3f)] public float surfSwashAmplitude = 1f;
             [Tooltip("Whitewash + breaker foam injected into the interactive foam sim near shore.")]
             [Range(0f, 4f)] public float surfFoamGain = 1.2f;
             [Tooltip("Standing foam lace hugging the waterline, independent of the front rhythm.")]
@@ -1114,18 +1111,6 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Whitewash tint (RGB) and master opacity (A).")]
             public Color surfFoamColor = Color.white;
 
-            [Header("Shore SWE zone (Layer C, needs the SWE compute assigned)")]
-            [Tooltip("World size (metres) of the camera-following shallow-water sim zone near the " +
-                     "waterline. Larger reaches further offshore but resolves the surf more coarsely.")]
-            [Range(16f, 256f)] public float sweZoneMeters = 96f;
-            [Tooltip("Grid resolution of the SWE zone (rounded to a multiple of 8). Higher = crisper " +
-                     "breaking, more GPU cost.")]
-            [Range(64, 512)] public int sweResolution = 256;
-            [Tooltip("How hard the incoming swell is pumped into the near-shore band (relax rate toward " +
-                     "the shoaled swell target). 0 = no pump.")]
-            [Range(0f, 1f)] public float swePumpGain = 0.05f;
-            [Tooltip("Shoreward velocity push from the incoming swell (drives run-up). 0 = none.")]
-            [Range(0f, 2f)] public float swePushGain = 0.3f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -1162,10 +1147,6 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfFoamFeather => bedDepthSettings.surfFoamFeather;
         internal float surfFoamTileSize => bedDepthSettings.surfFoamTileSize;
         internal Color surfFoamColor => bedDepthSettings.surfFoamColor;
-        internal float sweZoneMeters => bedDepthSettings.sweZoneMeters;
-        internal int sweResolution => bedDepthSettings.sweResolution;
-        internal float swePumpGain => bedDepthSettings.swePumpGain;
-        internal float swePushGain => bedDepthSettings.swePushGain;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -1405,7 +1386,6 @@ namespace AbstractOcclusion.WebGpuWater
         SurfaceSamplerModule _surfaceSamplerModule;
         OceanFftModule _oceanFftModule;
         SimWindowModule _simWindowModule;
-        ShoreSweModule _shoreSweModule;
         IWaterModule[] _modules;   // ordered registry over the modules above
         WaterContext _context;     // shared seam handed to the modules at Initialize
 
@@ -1415,7 +1395,6 @@ namespace AbstractOcclusion.WebGpuWater
         WaterSurfaceSampler _sampler => _surfaceSamplerModule?.Sampler;
         WaterOceanFft _oceanFft => _oceanFftModule?.OceanFft; // ocean-only FFT wave pass; null on pools/bounded bodies
         WaterSimWindow _simWindow => _simWindowModule?.SimWindow;
-        WaterShoreSwe _swe => _shoreSweModule?.Swe; // shoreline SWE zone (Layer C); null unless wired
 
         // The lazy trio stays as-is: each already uses a clean lazy pattern and serves even an
         // uninitialized body (context-menu rebake, defensive uniform writes), so it is not part of
@@ -1797,11 +1776,10 @@ namespace AbstractOcclusion.WebGpuWater
             _obstacleModule = new ObstacleModule(this);
             _causticsModule = new CausticsModule(this);
             _oceanFftModule = new OceanFftModule(this);
-            _shoreSweModule = new ShoreSweModule(this);
             _modules = new IWaterModule[]
             {
                 _simulationModule, _surfaceSamplerModule, _simWindowModule,
-                _obstacleModule, _causticsModule, _oceanFftModule, _shoreSweModule,
+                _obstacleModule, _causticsModule, _oceanFftModule,
             };
 
             for (int i = 0; i < _modules.Length; i++)
@@ -2150,14 +2128,6 @@ namespace AbstractOcclusion.WebGpuWater
             EnsureWaveBank();
             BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
             ShoreDepth.EnsureBakedAndPublish(); // Layer A: keep the seabed field + globals live
-            // Layer C: advance the shoreline SWE zone when live (like the ocean FFT, driven by the shared
-            // clock, not gated on _simulate), else keep its globals published so the debug view/surface
-            // never sample an unbound texture. No-op until Layer A's field is baked (gated in the driver).
-            if (!_paused)
-                _swe?.Step(dt, ShoreDepth, SwellHeight, SwellWavelength, LargeWaveHeadingRad,
-                           _waveTime, shoreShoalDepth, swePumpGain, swePushGain);
-            else
-                _swe?.Publish();
             // Bounded bodies render the pool caustic; the windowed OCEAN renders the large-body caustic
             // in the sim-window's world frame (other windowed bodies still skip - see RenderCausticsForThisBody).
             // The tier can amortise the pass over N frames (the caustic RT simply holds).
@@ -3426,13 +3396,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             WaterShoreDepthField.ToggleSdfDebug();
             ShoreDepth.EnsureBakedAndPublish(); // push the flag now so it shows without waiting for a tick
-        }
-
-        [ContextMenu("Toggle Shore SWE Debug (Layer C)")]
-        public void ToggleShoreSweDebug()
-        {
-            WaterShoreSwe.ToggleDebug();
-            _swe?.Publish(); // push the flag now so it shows without waiting for a tick
         }
 
         // ---- edit-mode preview ------------------------------------------------

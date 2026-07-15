@@ -197,7 +197,7 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _WaveTime);
     return EvaluateLargeBodyWaveShore(worldXZ, minWavelength, shore, surf);
 }
 
@@ -355,7 +355,7 @@ float LargeBodyWaveHeight(float2 worldXZ)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _WaveTime);
     if (_OceanFftActive > 0.5)
         return OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
                * SurfAmbientWeight(surf.mask) + surf.height;
@@ -368,7 +368,7 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _WaveTime);
     if (_OceanFftActive > 0.5)
         return OceanFftDisplacementShore(worldXZ, shore).xz
                * (_LargeWaveChoppiness * _LargeWaveAmplitude * SurfAmbientWeight(surf.mask));
@@ -467,7 +467,7 @@ float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float stren
 {
     ShoreData shore = ShoreSample(sourceXZ);
     SurfWaveSample surf = EvaluateSurfWaves(sourceXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.influence, _WaveTime);
+                                            shore.slopeTan, shore.influence, _WaveTime);
     return ApplyLargeBodyWaveNormalShore(worldNormal, sourceXZ, strength, shore, surf);
 }
 

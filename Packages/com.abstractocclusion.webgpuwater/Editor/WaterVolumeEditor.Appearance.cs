@@ -116,12 +116,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.surfFoamFeather",
                     "bedDepthSettings.surfFoamTileSize",
                     "bedDepthSettings.surfFoamColor");
-                WaterEditorUI.SubHeading("Shore SWE zone (experimental)");
-                DrawFields(
-                    "bedDepthSettings.sweZoneMeters",
-                    "bedDepthSettings.sweResolution",
-                    "bedDepthSettings.swePumpGain",
-                    "bedDepthSettings.swePushGain");
             });
         }
 

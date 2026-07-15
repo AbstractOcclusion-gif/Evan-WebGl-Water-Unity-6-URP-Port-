@@ -74,7 +74,7 @@ namespace AbstractOcclusion.WebGpuWater
         readonly WaterVolume _body;
 
         Texture2D _depthTex;         // R = still-water column depth (m, + water / - land), half-float
-        Texture2D _sdfTex;           // RG = toward-shore dir (0..1), B = signed distance (m), A = mask
+        Texture2D _sdfTex;           // RG = toward-shore dir (0..1), B = signed distance (m), A = beach slope tan(beta)
         Vector2 _center, _halfSize;  // world XZ centre / half-extent of the baked field
         float _waterLevel;           // still-water plane world Y at bake time (for shoaling depth)
         int _res;                    // baked resolution (texels per side)
@@ -88,6 +88,7 @@ namespace AbstractOcclusion.WebGpuWater
         float[] _cpuSdfDist;         // signed distance per texel
         float[] _cpuSdfDirX;         // toward-shore direction per texel (unit, world xz)
         float[] _cpuSdfDirZ;
+        float[] _cpuSlope;           // local beach slope tan(beta) per texel (SURF-PHYS)
 
         internal WaterShoreDepthField(WaterVolume body)
             => _body = body ?? throw new System.ArgumentNullException(nameof(body));
@@ -279,10 +280,14 @@ namespace AbstractOcclusion.WebGpuWater
                 else { dirX[i] = 0f; dirZ[i] = 0f; }
             }
 
-            // Pack: RG = toward-shore unit direction (0..1), B = signed distance (m), A = 1.
+            float[] slope = BuildSlope(depth, res);
+
+            // Pack: RG = toward-shore unit direction (0..1), B = signed distance (m), A = local
+            // beach slope tan(beta) (SURF-PHYS; validity stays implicit in _ShoreSDFValid - no
+            // reader ever used A as a mask).
             var sdfPixels = new Color[n];
             for (int i = 0; i < n; i++)
-                sdfPixels[i] = new Color(dirX[i] * 0.5f + 0.5f, dirZ[i] * 0.5f + 0.5f, dist[i], 1f);
+                sdfPixels[i] = new Color(dirX[i] * 0.5f + 0.5f, dirZ[i] * 0.5f + 0.5f, dist[i], slope[i]);
 
             EnsureTexture(ref _sdfTex, res, TextureFormat.RGBAHalf, "ShoreSdfWorld");
             _sdfTex.SetPixels(sdfPixels);
@@ -291,6 +296,60 @@ namespace AbstractOcclusion.WebGpuWater
             _cpuSdfDist = dist;
             _cpuSdfDirX = dirX;
             _cpuSdfDirZ = dirZ;
+            _cpuSlope = slope;
+        }
+
+        // SURF-PHYS 1a: local beach slope tan(beta) = |grad(depth)| per texel, central differences
+        // over the world texel size (grad(depth) = -grad(seabed), so the magnitude IS the beach
+        // slope), then the same 3x3 box-smooth (and pass count) the direction field gets - raw
+        // terrain gradients are noisy and the breaker physics wants the beach's TREND, not every
+        // heightmap step. The slope that matters is the one under the surf zone; consumers sample
+        // it at the same uv as depth, which is exactly this field.
+        float[] BuildSlope(float[] depth, int res)
+        {
+            int n = res * res;
+            float texelSizeX = (2f * _halfSize.x) / res;
+            float texelSizeZ = (2f * _halfSize.y) / res;
+            var slope = new float[n];
+            for (int z = 0; z < res; z++)
+            {
+                int zm = Mathf.Max(z - 1, 0);
+                int zp = Mathf.Min(z + 1, res - 1);
+                for (int x = 0; x < res; x++)
+                {
+                    int xm = Mathf.Max(x - 1, 0);
+                    int xp = Mathf.Min(x + 1, res - 1);
+                    float dDepthDx = (depth[z * res + xp] - depth[z * res + xm])
+                                   / ((xp - xm) * texelSizeX);
+                    float dDepthDz = (depth[zp * res + x] - depth[zm * res + x])
+                                   / ((zp - zm) * texelSizeZ);
+                    slope[z * res + x] = Mathf.Sqrt(dDepthDx * dDepthDx + dDepthDz * dDepthDz);
+                }
+            }
+
+            var blur = new float[n];
+            for (int pass = 0; pass < DirectionSmoothPasses; pass++)
+            {
+                for (int z = 0; z < res; z++)
+                {
+                    for (int x = 0; x < res; x++)
+                    {
+                        float sum = 0f;
+                        for (int oz = -1; oz <= 1; oz++)
+                        {
+                            int zz = Mathf.Clamp(z + oz, 0, res - 1);
+                            for (int ox = -1; ox <= 1; ox++)
+                            {
+                                int xx = Mathf.Clamp(x + ox, 0, res - 1);
+                                sum += slope[zz * res + xx];
+                            }
+                        }
+                        blur[z * res + x] = sum / 9f;
+                    }
+                }
+                (slope, blur) = (blur, slope);
+            }
+            return slope;
         }
 
         static float SeedDistanceSq(int seed, int x, int z, int res, float[] worldX, float[] worldZ)
@@ -312,14 +371,17 @@ namespace AbstractOcclusion.WebGpuWater
         const float BorderFeather = 0.08f;
 
         /// <summary>Sample the shore field at a world xz for the CPU wave mirror. Returns false
-        /// (deep-water behaviour) when unbaked or outside the feathered field.</summary>
+        /// (deep-water behaviour) when unbaked or outside the feathered field. <paramref name="slopeTan"/>
+        /// is the local beach slope tan(beta) (0 when the SDF is unbaked).</summary>
         internal bool TrySampleShore(float worldX, float worldZ, out float depth, out float sdfDist,
-                                     out float dirX, out float dirZ, out float influence)
+                                     out float dirX, out float dirZ, out float slopeTan,
+                                     out float influence)
         {
             depth = float.MaxValue;
             sdfDist = 0f;
             dirX = 0f;
             dirZ = 0f;
+            slopeTan = 0f;
             influence = 0f;
             if (!_depthBaked || _cpuDepth == null) return false;
 
@@ -336,6 +398,7 @@ namespace AbstractOcclusion.WebGpuWater
                 sdfDist = BilinearCpu(_cpuSdfDist, u, v);
                 dirX = BilinearCpu(_cpuSdfDirX, u, v);
                 dirZ = BilinearCpu(_cpuSdfDirZ, u, v);
+                slopeTan = BilinearCpu(_cpuSlope, u, v);
                 float len = Mathf.Sqrt(dirX * dirX + dirZ * dirZ);
                 if (len > 1e-4f) { dirX /= len; dirZ /= len; }
                 else { dirX = 0f; dirZ = 0f; }
@@ -442,6 +505,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cpuSdfDist = null;
             _cpuSdfDirX = null;
             _cpuSdfDirZ = null;
+            _cpuSlope = null;
         }
 
         static void DestroyTexture(ref Texture2D tex)

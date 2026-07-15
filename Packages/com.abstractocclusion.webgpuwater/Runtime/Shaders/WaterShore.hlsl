@@ -10,14 +10,14 @@
 // - = dry land above the level) instead of the seabed's absolute world Y. Half-float precision is
 // spent on the small numbers near the waterline - where every consumer needs it - instead of on a
 // large absolute height, which banded the shallows (depth = level - seabed subtracted two similar
-// big numbers). Every reader (this file, WaterShoreSwe.compute, the surface debug) uses the new
+// big numbers). Every reader (this file, the surface debug, the foam-sim injection) uses the new
 // semantics; _ShoreWaterLevel remains published for consumers that need the absolute plane.
 #ifndef WEBGPUWATER_SHORE_INCLUDED
 #define WEBGPUWATER_SHORE_INCLUDED
 
 // Depth field: R = still-water column depth (m), + in water / - on dry land. SDF field: RG =
-// toward-shore direction (0..1), B = signed distance to shore (m, + in water / - on land), A = mask.
-// Both share one world frame.
+// toward-shore direction (0..1), B = signed distance to shore (m, + in water / - on land), A =
+// local beach slope tan(beta) (SURF-PHYS breaker physics). Both share one world frame.
 sampler2D _ShoreDepthTex;
 float4 _ShoreDepthCenter; // world XZ centre of the field (.xy)
 float4 _ShoreDepthSize;   // world XZ half-extent of the field (.xy)
@@ -25,7 +25,7 @@ float _ShoreDepthValid;   // 1 = a seabed field is baked
 float _ShoreDepthDebug;   // 1 = visualize seabed depth on the surface (debug only)
 float _ShoreWaterLevel;   // still-water plane world Y used when the field was baked
 float _ShoreShoalDepth;   // depth (m) over which waves shoal; full strength beyond it (0 = no shoaling)
-sampler2D _ShoreSDFTex;   // RG = toward-shore dir (0..1), B = signed distance (m), A = mask
+sampler2D _ShoreSDFTex;   // RG = toward-shore dir (0..1), B = signed distance (m), A = slope tan(beta)
 float _ShoreSDFValid;     // 1 = a shoreline SDF is baked
 float _ShoreSDFDebug;     // 1 = visualize the SDF on the surface (debug only)
 // PER-BODY gate on this shared substrate (published via the property block, default 0): only the
@@ -52,6 +52,7 @@ struct ShoreData
     float depth;      // still-water column depth (m); DEEP sentinel off-field / unbaked
     float sdfDist;    // signed distance to shore (m, + in water); 0 off-field / unbaked
     float2 toShore;   // unit direction toward the waterline ((0,0) off-field / unbaked)
+    float slopeTan;   // local beach slope tan(beta) (SURF-PHYS); 0 off-field / unbaked
     float influence;  // 1 fully inside the field .. 0 at/outside the feathered border
 };
 
@@ -78,6 +79,7 @@ ShoreData ShoreDataInert()
     s.depth = SHORE_DEEP_SENTINEL;
     s.sdfDist = 0.0;
     s.toShore = float2(0.0, 0.0);
+    s.slopeTan = 0.0;
     s.influence = 0.0;
     return s;
 }
@@ -102,6 +104,7 @@ ShoreData ShoreSample(float2 worldXZ)
         float len = length(dir);
         s.toShore = len > 1e-4 ? dir / len : float2(0.0, 0.0);
         s.sdfDist = sdf.b;
+        s.slopeTan = sdf.a;
     }
     return s;
 }

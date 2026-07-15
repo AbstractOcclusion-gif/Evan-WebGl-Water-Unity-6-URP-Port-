@@ -703,13 +703,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 4.61, z: -10}
+  m_LocalRotation: {x: 0, y: 0.7541368, z: 0, w: 0.6567174}
+  m_LocalPosition: {x: 169.9, y: 1.7, z: 107.7}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 97.9, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -884,7 +884,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 7200000, guid: a72790f9172cdc8418a85c91acdb0a2d, type: 3}
-  sweCompute: {fileID: 7200000, guid: d88f5f32627ea2949b1013415f68ec6b, type: 3}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 4800000, guid: 20ef2245624802e47920d7462ca2609d, type: 3}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -963,7 +962,7 @@ MonoBehaviour:
   isPrimary: 1
   autoLinkReceivers: 1
   quality: {fileID: 0}
-  enableCulling: 1
+  enableCulling: 0
   activationDistance: 100
   reflectionSettings:
     useScreenSpaceReflection: 0
@@ -1040,24 +1039,27 @@ MonoBehaviour:
     bedFadeDepth: 3
     bedTintStrength: 0.8
     shoreShoalDepth: 4
-    shoreRefraction: 0.23
-    shoreCompression: 0.437
-    shoreGreens: 1.196
+    shoreRefraction: 0.1
+    shoreCompression: 0.799
+    shoreGreens: 1.114
     surfEnabled: 1
-    surfAmplitude: 0.76
-    surfWavelength: 6.4
-    surfPeriod: 4.9
-    surfBandDepth: 1.85
+    surfAmplitude: 0.78
+    surfWavelength: 10
+    surfPeriod: 4
+    surfBandDepth: 12.93
     surfSetStrength: 0.68
-    surfLean: 0.222
-    surfAmbientFade: 0.241
+    surfCrestLength: 60
+    surfCrestVariation: 0.581
+    surfDirectionality: 0.088
+    surfLean: 0.293
+    surfAmbientFade: 0.735
     surfSwashAmplitude: 0.05
-    surfFoamGain: 3.39
-    surfWaterlineFoam: 0.28
-    sweZoneMeters: 96
-    sweResolution: 512
-    swePumpGain: 0.342
-    swePushGain: 2
+    surfFoamGain: 2.46
+    surfWaterlineFoam: 0.774
+    surfFoamStrength: 1
+    surfFoamFeather: 0.2
+    surfFoamTileSize: 8
+    surfFoamColor: {r: 1, g: 1, b: 1, a: 1}
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -1082,7 +1084,7 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 2
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 1
+    foam: 0
     foamGenRate: 2
     foamDecay: 0.96
     foamDecayResidual: 0.993

@@ -617,6 +617,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     if (shoreVert.influence > 0.0 && beachRise > 0.0)
                     {
                         float2 swashVert = EvaluateSurfSwash(worldPos.xz, shoreVert.toShore,
+                                                             shoreVert.slopeTan,
                                                              shoreVert.influence, _WaveTime);
                         if (swashVert.y > 1e-3)
                             worldPos.y = max(worldPos.y, _ShoreWaterLevel
@@ -799,6 +800,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     shoreFrag = ShoreSample(i.largeWaveSourceXZ);
                     surfFrag = EvaluateSurfWaves(i.largeWaveSourceXZ, shoreFrag.depth,
                                                  shoreFrag.sdfDist, shoreFrag.toShore,
+                                                 shoreFrag.slopeTan,
                                                  shoreFrag.influence, _WaveTime);
                 }
 
@@ -1232,6 +1234,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                             colDepth = lerp(colDepth, shoreFrag.depth, saturate(shoreFrag.influence));
                         float2 swash = (_SurfActive > 0.5)
                             ? EvaluateSurfSwash(i.largeWaveSourceXZ, shoreFrag.toShore,
+                                                shoreFrag.slopeTan,
                                                 shoreFrag.influence, _WaveTime)
                             : float2(0.0, 0.0);
                         float swashLevel = swash.x;
@@ -1330,7 +1333,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float band = frac(abs(signedDist) / SHORE_SDF_DEBUG_BAND);
                         float3 sdfDbg = (signedDist >= 0.0) ? float3(0.1, 0.7, 1.0) : float3(1.0, 0.5, 0.1);
                         sdfDbg *= 0.55 + 0.45 * band;
-                        float sdfInField = all(sdfUV == saturate(sdfUV)) ? sdfSample.a : 0.0;
+                        // A now stores the beach slope (SURF-PHYS), not a mask - in-field validity
+                        // comes from the UV test + _ShoreSDFValid gate above.
+                        float sdfInField = all(sdfUV == saturate(sdfUV)) ? 1.0 : 0.0;
                         outColor = lerp(outColor, sdfDbg, sdfInField);
                     }
 
