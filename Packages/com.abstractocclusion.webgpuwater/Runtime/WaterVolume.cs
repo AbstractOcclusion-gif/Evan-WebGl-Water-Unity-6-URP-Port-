@@ -3177,9 +3177,10 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Detect whether the camera is submerged in THIS (primary) body and publish the globals the
-        // underwater fog shader needs. U1 uses the flat surface plane (VolumeCenter.y); a wave-accurate
-        // waterline is a later step. Bounded bodies require the camera inside their footprint; an ocean
-        // clipmap spans everywhere, so only the height test applies.
+        // underwater fog shader needs. The surface height is wave-aware at the camera's xz (swell + shoal
+        // + surf front on the master beat; see SurfaceHeightAtCamera), so the gate tracks the rendered
+        // surface. Bounded bodies require the camera inside their footprint; an ocean clipmap spans
+        // everywhere, so only the height test applies.
         void UpdateUnderwaterState()
         {
             bool submerged = ComputeCameraSubmerged(out float surfaceY);
@@ -3257,7 +3258,15 @@ namespace AbstractOcclusion.WebGpuWater
             // plain field / analytic sample when extrapolation isn't available (non-FFT body, first frames,
             // or the camera outside the readback region).
             if (OceanFftActive && _oceanFft.TrySampleHeightExtrapolated(p.x, p.z, _waveTime, out float fftHeight))
-                y += fftHeight;
+                // Run the extrapolated (current-time) swell through the SAME shore/surf treatment the
+                // readback path (SampleLargeWaveField) and the GPU FFT branch (LargeBodyWaveHeight) use, so
+                // the submerge gate matches the rendered shore surface near shore: shoal attenuation +
+                // ambient fade + the surf-front height on the master beat (ShoreWaveCtx.SurfBeatTime).
+                // Without it the gate saw bare swell and the fog popped on/off against the wrong height
+                // wherever surf fronts lift the surface. Height uses only fft.x (ApplyShoreToFftSample), so
+                // zero derivs are correct for this height-only gate. Identity offshore (no shore field).
+                y += LargeWaveField.ApplyShoreToFftSample(new Vector3(fftHeight, 0f, 0f),
+                         p.x, p.z, _waveTime, SwellWavelength, ShoreWaveCtx).x;
             else
                 y += SampleLargeWaveField(p.x, p.z).x;
             return y;

@@ -7,11 +7,7 @@
 //      between sparse splats and grows connected foam),
 //   2. maps density -> foam with a two-term curve (KWS: a soft "low" film plus a
 //      quadratic "high" core, so overlapping particles read as dense white patches),
-//   3. occludes: the fragment WRITES the splatted min depth to SV_Depth and z-tests
-//      LEqual against the live depth buffer - the ZWrite-On water surface (Transparent+0)
-//      has already rasterized every wave crest by the time this pass (+5) runs, so foam
-//      behind a nearer crest is rejected per pixel, exactly (KWS parity: their splat
-//      rejects against the water depth). The opaque soft fade below stays for rocks, and
+//   3. occludes against the opaque scene using the splatted min depth (soft), and
 //   4. lights the result with the shared foam model, cool-tinted like sea foam.
 // Drawn per body via Graphics.RenderPrimitives (3 vertices) after the water surface -
 // no render feature, no scene-colour copy, WebGPU-safe (read-only structured buffers
@@ -42,11 +38,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             // alone could only brighten, washing out over bright sky reflections).
             Blend One OneMinusSrcAlpha
             ZWrite Off
-            // LEqual against the live depth buffer, using the per-fragment SV_Depth written
-            // from the splatted min particle depth: waves (ZWrite-On water surface), terrain
-            // and props all occlude the veil in one hardware test. ZWrite stays Off - the
-            // veil only TESTS, it never blocks anything drawn after it.
-            ZTest LEqual
+            ZTest Always
             Cull Off
 
             CGPROGRAM
@@ -65,12 +57,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             // Inverse of DEPTH_TO_MM in WaterFoamParticles.compute - KEEP IN SYNC (the splat
             // quantizes eye depth to millimetres; this turns it back into metres).
             #define DEPTH_MM_TO_METERS   0.001
-            // The foam layer sits ON the water surface, so its splatted depth lands within
-            // quantization noise of the wave depth at the same pixel - bias the z-test depth
-            // this much toward the camera so on-surface foam never self-occludes against the
-            // surface it decorates. Behind-crest foam is metres deeper along the ray; a few
-            // centimetres of bias cannot leak it through.
-            #define VEIL_ZTEST_BIAS_METERS 0.05
 
             StructuredBuffer<uint> _FoamDensity;      // fixed-point accumulated weight per texel
             StructuredBuffer<uint> _FoamDensityDepth; // min eye depth per texel (millimetres)
@@ -135,21 +121,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 return _FoamDensityDepth[(uint)p.y * (uint)_DensitySize.x + (uint)p.x];
             }
 
-            // Perspective eye depth (metres) -> raw device depth, the exact inverse of
-            // LinearEyeDepth: raw = (1/eye - _ZBufferParams.w) / _ZBufferParams.z. Handles
-            // reversed-Z via the params themselves; saturate clamps the empty-texel far case.
-            float EyeDepthToRawDepth(float eyeDepth)
+            fixed4 frag(v2f i) : SV_Target
             {
-                return saturate((1.0 / max(eyeDepth, 1e-4) - _ZBufferParams.w) / _ZBufferParams.z);
-            }
-
-            fixed4 frag(v2f i, out float outDepth : SV_Depth) : SV_Target
-            {
-                // Empty/rejected texels z-test at the far plane (alpha 0 anyway; the far
-                // depth lets the hardware reject them before blending). Overwritten with
-                // the real foam depth once a splat is found below.
-                outDepth = EyeDepthToRawDepth(1e8);
-
                 int2 px = (int2)(i.uv01 * _DensitySize);
 
                 // MAX dilation over the 4-neighbourhood (KWS pass 1): closes pinholes and
@@ -175,11 +148,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 float foamHigh = saturate(density * density * _DensityHighGain) * DENSITY_HIGH_WEIGHT;
                 float alpha = saturate(foamLow + foamHigh) * _ParticleOpacity;
                 float foamEye = depthMm * DEPTH_MM_TO_METERS;
-
-                // Per-pixel wave/scene occlusion: hand the foam layer's own depth to the
-                // hardware z-test (see the ZTest note above). Biased slightly camera-ward so
-                // the veil never fights the very surface it sits on.
-                outDepth = EyeDepthToRawDepth(max(foamEye - VEIL_ZTEST_BIAS_METERS, 1e-4));
 
                 // World-anchored breakup lace: reconstruct the foam layer's world position
                 // from the splatted min depth along this pixel's camera ray, then erode the

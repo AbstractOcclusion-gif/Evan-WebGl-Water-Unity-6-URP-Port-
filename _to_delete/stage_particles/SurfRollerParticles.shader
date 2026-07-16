@@ -51,7 +51,7 @@ Shader "AbstractOcclusion/WebGpuWater/SurfRollerParticles"
             // Corner expansion + flipbook cell come from WaterParticleCommon.hlsl (shared
             // with FoamParticles.shader).
 
-            // MUST match RollerParticle in WaterSurfRoller.compute (64 bytes).
+            // MUST match RollerParticle in WaterSurfRoller.compute (80 bytes).
             struct RollerParticle
             {
                 float3 worldPos;
@@ -60,12 +60,14 @@ Shader "AbstractOcclusion/WebGpuWater/SurfRollerParticles"
                 float  life;
                 float  frontIndex;
                 float  crestDist;
+                float  dAcross;
+                float  birthOverCap;
                 float  size;
                 float  seed;
                 float  kind;
                 float  strength;
                 float  brokenTimer;
-                float  pad;
+                float3 pad;
             };
             StructuredBuffer<RollerParticle> _Particles;
 
@@ -146,15 +148,12 @@ Shader "AbstractOcclusion/WebGpuWater/SurfRollerParticles"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                // Negative mip bias keeps the lace from averaging into a round blob at
-                // distance (FOAM_SPRITE_MIP_BIAS, shared foam-look constant).
-                float4 sprite = tex2Dbias(_ParticleTex, float4(i.uv, 0.0, FOAM_SPRITE_MIP_BIAS));
+                float4 sprite = tex2D(_ParticleTex, i.uv);
                 float envelope = i.envelope;
 
-                // Texture-preserving erosion (shared with the ambient foam): the sprite
-                // always shows its lace, and the thin regions dissolve first as the envelope
+                // Erosion fade: the sprite's thin regions dissolve first as the envelope
                 // decays - the roller foam dies ragged, exactly like the ambient foam.
-                float alpha = FoamErosionLace(sprite.a, envelope);
+                float alpha = FoamErosionAlpha(sprite.a, envelope);
                 alpha *= envelope * _ParticleOpacity;
 
                 // No scene-depth soft fade: these quads ride on/above the wave crest, never

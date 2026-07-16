@@ -30,8 +30,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int UpdateThreadGroupSize = 64;
 
         const int VerticesPerParticle = 6;
-        const int CounterCount = 3; // ring cursor + frame spawn count + frame burst count
-                                    // (MUST match the COUNTER_* layout in the compute)
+        const int CounterCount = 2; // ring cursor + per-frame spawn count
 
         // ---- Screen-space density foam (KWS). MUST match WaterFoamParticles.compute. ----
         const int TileGrid = 16;                    // spray-budget screen tiles per axis
@@ -118,6 +117,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DensityProj11 = Shader.PropertyToID("_DensityProj11");
         static readonly int ID_DensityWeightScale = Shader.PropertyToID("_DensityWeightScale");
         static readonly int ID_SpawnCameraXZ = Shader.PropertyToID("_SpawnCameraXZ");
+        static readonly int ID_DensityCamWorld = Shader.PropertyToID("_DensityCamWorld");
         static readonly int ID_SpawnMaxDistance = Shader.PropertyToID("_SpawnMaxDistance");
         static readonly int ID_TileBudgetEnabled = Shader.PropertyToID("_TileBudgetEnabled");
         static readonly int ID_SprayTileCap = Shader.PropertyToID("_SprayTileCap");
@@ -152,11 +152,6 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamDensityComposite shader. Required " +
                  "for Screen Space Density mode; the Water Wizard creates and assigns it.")]
         [SerializeField] internal Material densityMaterial;
-        [Tooltip("Optional master foam profile: when assigned, its driven sections override the " +
-                 "fields below every frame and push the shared look (tint/opacity/atlas, veil " +
-                 "values) over the materials via the property block - ONE asset to tune a body's " +
-                 "whole foam. None = this component's own values, exactly as before.")]
-        [SerializeField] internal WaterFoamProfile profile;
 
         [Header("Pool")]
         [Tooltip("Particle pool size; rounded up to a power of two. Oldest particles are recycled when full.")]
@@ -353,10 +348,6 @@ namespace AbstractOcclusion.WebGpuWater
             // Spawn when the 2D foam sim is on OR this is an ocean (whose FFT crests are the source).
             if (!volume.Foam && !volume.OceanFftActive) return;
 
-            // Master profile: re-applied every frame (a handful of field copies), so retuning
-            // the asset is live in play mode and no editor plumbing is needed.
-            if (profile != null) profile.ApplyTo(this);
-
             // The density splat + spawn-quality projections follow the body's target camera when
             // one is assigned (same resolution as WaterSurfRollerParticles/WaterSurfCurl), else
             // the main camera. In views without one (or with the sim paused) the density field
@@ -520,6 +511,7 @@ namespace AbstractOcclusion.WebGpuWater
             Matrix4x4 viewProj = gpuProj * cam.worldToCameraMatrix;
             cs.SetMatrix(ID_DensityViewProj, viewProj);
             cs.SetFloat(ID_DensityProj11, Mathf.Abs(gpuProj.m11));
+            cs.SetVector(ID_DensityCamWorld, cam.transform.position); // wave-occlusion ray origin
 
             int texelCount = _densitySize.x * _densitySize.y;
             cs.SetBuffer(_kClearDensity, ID_DensityBuffer, _density);
@@ -596,8 +588,6 @@ namespace AbstractOcclusion.WebGpuWater
             volume.WriteBodyProps(_mpb);
             _mpb.SetBuffer(ID_ParticlesShader, _particles);
             WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
-            // Shared look from the master profile rides over the material (assets stay clean).
-            if (profile != null) profile.WriteLook(_mpb);
             // When the density splat is armed for this frame, the quad draw carries ONLY the
             // ballistic spray; otherwise (quads mode, no camera, paused sim) it draws everything.
             _mpb.SetFloat(ID_SurfaceQuadsEnabled, _densityPending ? 0f : 1f);
@@ -631,8 +621,6 @@ namespace AbstractOcclusion.WebGpuWater
             Transform densityCamTransform = _densityCamera.transform;
             _densityMpb.SetVector(ID_DensityCamPos, densityCamTransform.position);
             _densityMpb.SetVector(ID_DensityCamForward, densityCamTransform.forward);
-            // Veil values from the master profile ride over the material (assets stay clean).
-            if (profile != null) profile.WriteVeil(_densityMpb);
 
             var rp = new RenderParams(densityMaterial)
             {

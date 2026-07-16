@@ -43,32 +43,10 @@ float3 FoamLitColor(float3 albedo, float3 sunColor, float wrappedDiffuse)
 // surface foam's lace, applied to particle alpha.
 #define EROSION_SOFTNESS 0.35
 
-// Pure erosion GATE (0..1 threshold response). Use this when the shape/opacity is
-// carried by ANOTHER channel (KWS packed splash: R = mass is the shape, B = this
-// dissolve noise). Do NOT use it as the sprite's alpha directly: at a fresh envelope
-// it collapses to saturate(a / EROSION_SOFTNESS), which clamps most of a lacy sprite's
-// interior to fully opaque - the lace becomes a solid disc (the "round semi-transparent
-// sphere" bug; measured 57% of the foam atlas' in-shape pixels saturated at env = 1).
 float FoamErosionAlpha(float spriteAlpha, float envelope)
 {
     return saturate((spriteAlpha - (1.0 - envelope)) / EROSION_SOFTNESS);
 }
-
-// Texture-preserving erosion for sprites whose alpha IS the shape (foam quads, roller
-// foam, legacy splash sheets): the sprite always shows its own lace (x spriteAlpha),
-// and the gate then dissolves the thin regions first as the envelope decays. Fresh
-// particles look like the texture; dying particles crumble through it.
-float FoamErosionLace(float spriteAlpha, float envelope)
-{
-    return spriteAlpha * FoamErosionAlpha(spriteAlpha, envelope);
-}
-
-// ---- Sprite sampling --------------------------------------------------------------
-// Negative mip bias for foam sprite lookups (KWS uses -1.5): plain trilinear averages
-// the lace into a featureless radial blob two mips down, so distant particles read as
-// round semi-transparent balls. The bias keeps the lace crisp at distance for a little
-// shimmer, which foam can afford.
-#define FOAM_SPRITE_MIP_BIAS -1.5
 
 // ---- Foam particle life envelope ----------------------------------------------------
 // Quick fade-in, smooth fade-out beginning at a fraction of the particle's life. Shared

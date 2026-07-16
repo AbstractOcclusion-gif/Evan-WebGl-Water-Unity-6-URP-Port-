@@ -123,9 +123,8 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 }
                 else
                 {
-                    // ---- Legacy path: shape in A, texture-preserving erosion driven by the
-                    // lifetime alpha (gate-only erosion saturated the sheet into a disc). ----
-                    alpha = FoamErosionLace(sprite.a, envelope);
+                    // ---- Legacy path: shape in A, erosion dissolve driven by the lifetime alpha. ----
+                    alpha = FoamErosionAlpha(sprite.a, envelope);
                     alpha *= envelope * _ParticleOpacity;
                     alpha *= saturate(behind / _SoftFadeDistance);
                 }

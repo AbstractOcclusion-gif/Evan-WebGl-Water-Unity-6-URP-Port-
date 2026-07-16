@@ -54,11 +54,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             // Below this speed a quad is not stretched (avoids jitter around zero).
             #define STRETCH_MIN_SPEED    0.02
             #define STRETCH_MAX          4.0
-            // Slow/apex spray still gets this fixed elongation along a per-seed direction:
-            // a camera-facing quad with radial alpha is a perfect circle by construction,
-            // and spray hangs at ~zero velocity exactly when you look at it - the one case
-            // the velocity stretch can never break up.
-            #define SPRAY_IDLE_STRETCH   1.3
 
             // Lift surface-foam quads slightly off the water so they never z-fight it.
             #define SURFACE_LIFT         0.004
@@ -175,6 +170,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // camera-facing, stretched along the screen-projected velocity
                     float3 camRight = UNITY_MATRIX_V[0].xyz;
                     float3 camUp = UNITY_MATRIX_V[1].xyz;
+                    axisX = camRight; axisY = camUp;
                     float2 vScreen = float2(dot(particle.velocity, camRight),
                                             dot(particle.velocity, camUp));
                     float vLen = length(vScreen);
@@ -183,18 +179,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                         float2 d = vScreen / vLen;
                         axisX = camRight * d.x + camUp * d.y;
                         axisY = camRight * (-d.y) + camUp * d.x;
-                        stretch = max(1.0 + min(STRETCH_MAX, speed * _VelocityStretch),
-                                      SPRAY_IDLE_STRETCH);
-                    }
-                    else
-                    {
-                        // Apex/slow droplet: fixed per-seed elongation so it never renders
-                        // as a perfect circle (see SPRAY_IDLE_STRETCH).
-                        float idleYaw = particle.seed * PARTICLE_TWO_PI;
-                        float2 d = float2(cos(idleYaw), sin(idleYaw));
-                        axisX = camRight * d.x + camUp * d.y;
-                        axisY = camRight * (-d.y) + camUp * d.x;
-                        stretch = SPRAY_IDLE_STRETCH;
+                        stretch = 1.0 + min(STRETCH_MAX, speed * _VelocityStretch);
                     }
                 }
                 else
@@ -238,15 +223,11 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                // Negative mip bias keeps the lace from averaging into a round blob at
-                // distance (FOAM_SPRITE_MIP_BIAS, shared foam-look constant).
-                float4 sprite = tex2Dbias(_ParticleTex, float4(i.uv, 0.0, FOAM_SPRITE_MIP_BIAS));
+                float4 sprite = tex2D(_ParticleTex, i.uv);
                 float envelope = i.fade.x;
 
-                // Texture-preserving erosion: fresh sprites show their own lace, dying ones
-                // crumble through it (the old gate-only form saturated the interior into a
-                // solid disc - the "round semi-transparent spheres").
-                float alpha = FoamErosionLace(sprite.a, envelope);
+                // erosion fade: the sprite's thin regions dissolve first as the envelope decays
+                float alpha = FoamErosionAlpha(sprite.a, envelope);
                 alpha *= envelope * _ParticleOpacity;
 
                 // soft fade against the opaque scene (pool walls, floating objects)

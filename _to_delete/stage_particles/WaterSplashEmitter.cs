@@ -71,9 +71,6 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Tooltip("The particle system to emit from. Auto-created if left empty.")]
         [SerializeField] internal ParticleSystem particles;
-        [Tooltip("Optional master foam profile: when assigned, its Splash section overrides " +
-                 "the burst/crown fields below on every emit. None = this component's own values.")]
-        [SerializeField] internal WaterFoamProfile profile;
 
         [Header("Burst shaping")]
         [Range(1, 128)] [SerializeField] internal int maxParticlesPerBurst = 48;
@@ -177,9 +174,6 @@ namespace AbstractOcclusion.WebGpuWater
         public void EmitSplash(Vector3 surfacePos, float strength, float radius)
         {
             if (particles == null) return;
-            // Master profile: applied at emit time (splashes are event-driven; there is no
-            // per-frame dispatch to hook like the GPU systems).
-            if (profile != null) profile.ApplyTo(this);
             strength = Mathf.Clamp01(strength);
             int count = Mathf.Clamp(Mathf.RoundToInt(strength * maxParticlesPerBurst),
                                     MinBurstCount, maxParticlesPerBurst);

@@ -120,10 +120,8 @@ static const float SPRAY_UP_FRACTION = 0.6;      // vertical speed as a share of
 static const float SPRAY_LIFE_CAP = 4.0;         // s; landing kills it far earlier
 static const float ROLLER_GRAVITY = 9.81;        // m/s^2 on spray droplets
 
-// One particle = 16 floats = 64 bytes. MUST match RollerParticle in
-// WaterSurfRollerParticles.cs and SurfRollerParticles.shader. (The one-time debug
-// fields dAcross/birthOverCap were dead weight - written, never read - and were
-// removed together with two of the three pad floats: 80 -> 64 bytes x pool size.)
+// One particle = 20 floats = 80 bytes. MUST match RollerParticle in
+// WaterSurfRollerParticles.cs and SurfRollerParticles.shader.
 struct RollerParticle
 {
     float3 worldPos;    // world position; y is ABSOLUTE world height (unlike the ambient system)
@@ -132,12 +130,14 @@ struct RollerParticle
     float  life;        // seconds; <= 0 marks a dead slot; rewritten when the broken tail starts
     float  frontIndex;  // the front this particle is locked to (floor of the field phase)
     float  crestDist;   // unwarped shore distance (m) of that front's crest - the Newton state
+    float  dAcross;     // across-crest offset at birth (m, + offshore); reserved for tuning/debug
+    float  birthOverCap;// break-criterion ratio at birth (lifecycle reference)
     float  size;        // world half-size of the quad
     float  seed;        // 0..1 fixed hash: sprite variant, yaw spin, tumble phase, tail jitter
     float  kind;        // KIND_ROLLER or KIND_SPRAY
     float  strength;    // whitewash-matched opacity, rewritten by Update every frame
     float  brokenTimer; // seconds since 'broken' completed at the particle (tail clock)
-    float  pad;         // stride padding to 64 bytes (multiple of 16)
+    float3 pad;         // stride padding to 80 bytes (multiple of 16)
 };
 
 RWStructuredBuffer<RollerParticle> Particles;
@@ -375,6 +375,8 @@ void Emit(uint3 id : SV_DispatchThreadID)
             p.life = spray ? SPRAY_LIFE_CAP : (T * ROLLER_LIFE_PERIODS + 2.0 * _LifeTail);
             p.frontIndex = frontIndex;
             p.crestDist = max(sdfB, 0.0); // the crest is AT the birth point right now
+            p.dAcross = dAcross0;
+            p.birthOverCap = terms.overCap;
             // Hero-size distribution (KWS): pow biases the roll small, so a few rare sprites
             // land near _SizeMax. _SizeHeroPower 1 = the original uniform sizes.
             p.size = lerp(_SizeMin, _SizeMax, pow(r2, _SizeHeroPower));
@@ -382,7 +384,7 @@ void Emit(uint3 id : SV_DispatchThreadID)
             p.kind = spray ? KIND_SPRAY : KIND_ROLLER;
             p.strength = RollerStrength(terms, mask);
             p.brokenTimer = 0.0;
-            p.pad = 0.0;
+            p.pad = float3(0.0, 0.0, 0.0);
             Particles[(cursor + b) & (_Capacity - 1u)] = p; // capacity is a power of two
         }
     }

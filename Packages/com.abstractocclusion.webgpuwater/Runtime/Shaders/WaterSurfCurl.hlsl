@@ -30,6 +30,12 @@
 
 // Per-strip uniforms (property block, set by WaterSurfCurl; all-zero = inert).
 float  _IsSurfCurl;      // 1 = this renderer is the surf lip-sheet strip
+float  _SurfCurlBackStrip; // 1 = the Cull-Front interior strip (WaterSurfCurl's second renderer):
+                         // its faces show the overturned lip's inside to the camera, so shade them
+                         // as an air->water interface with the sheet normal flipped to face the
+                         // camera - NEVER the underwater path (that samples the water-less opaque
+                         // texture and reads as dark glass). 0 = the outer/front strip (and inert
+                         // for the hero sheet, which never sets it).
 float4 _SurfCurlFrame;   // xy = ribbon centre (world xz), zw = along-crest unit direction (world xz)
 float4 _SurfCurlShape;   // x = max roll angle (rad), y = curl start fraction (0..1)
                          // z = pivot ahead fraction (of face length), w = pivot height fraction (of H)

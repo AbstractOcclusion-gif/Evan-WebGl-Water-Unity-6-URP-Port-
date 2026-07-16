@@ -41,15 +41,9 @@
 static const float KIND_SURFACE = 0.0;
 static const float KIND_SPRAY   = 1.0;
 
-// Counters buffer layout. MUST match WaterFoamParticles.CounterCount (C#).
+// Counters buffer layout.
 static const uint COUNTER_RING_CURSOR = 0; // ever-increasing spawn cursor (ring index)
-static const uint COUNTER_FRAME_SPAWNS = 1; // turbulence spawns this frame (budget check)
-static const uint COUNTER_BURST_SPAWNS = 2; // burst droplets this frame (own budget below)
-
-// Burst droplets get their OWN per-frame budget = capacity / this (they are event-driven
-// and must not starve behind the turbulence budget, but 16 requests x 64 droplets could
-// previously recycle a quarter of a small pool in one frame, killing living foam).
-static const uint BURST_FRAME_CAP_DIVISOR = 4;
+static const uint COUNTER_FRAME_SPAWNS = 1; // spawns so far this frame (budget check)
 
 // Spray landing: below this height offset the droplet becomes surface foam.
 static const float SPRAY_LANDING_EPSILON = 0.005;
@@ -139,17 +133,24 @@ float    _DensityProj11;     // projection [1][1]: vertical focal term for proje
 float    _DensityWeightScale;// fixed-point units per 1.0 of foam weight
 
 // Spawn quality (KWS trio)
+float3 _DensityCamWorld;     // splat camera world position (render-time exact) - wave occlusion
 float2 _SpawnCameraXZ;       // camera ground position for the stochastic distance LOD
 float  _SpawnMaxDistance;    // metres; beyond this no particles spawn. 0 = LOD disabled
 float  _TileBudgetEnabled;   // 1 when a camera is available to project spray spawns
 uint   _SprayTileCap;        // max spray spawns per screen tile per frame
 
-// Wave occlusion for the density splat is NOT done here: the composite writes the
-// splatted min depth to SV_Depth and z-tests LEqual against the live depth buffer,
-// which already contains every wave crest (the water surface is ZWrite On and draws
-// before the veil). Exact, per pixel, and free per particle - an analytic camera-ray
-// march against the composed surface height was tried and rejected (4x SurfaceWorldY
-// per particle per frame, and crests between samples slipped through).
+// Wave occlusion for the density splat (KWS parity: their splat rejects particles behind
+// the water depth). We have no water depth texture, so each splat marches the camera ->
+// particle ray against the SAME composed surface height it glues foam to (FFT + shoal +
+// surf fronts + hero): where a crest rises above the ray, the foam sits behind that crest
+// and must not composite over it. Soft fade (not a binary reject) so foam slides behind
+// crests instead of popping. Samples start partway along the ray - the near-camera
+// stretch is far above the water and can never occlude.
+static const uint  OCCLUDE_RAY_SAMPLES = 4;
+static const float OCCLUDE_RAY_START = 0.35;
+static const float OCCLUDE_RAY_END = 0.95;
+// A crest this far (m) above the ray fully hides the foam behind it.
+static const float OCCLUDE_SOFT_METERS = 0.35;
 
 // Depth quantisation for the InterlockedMin buffer: millimetres in uint.
 static const float DEPTH_TO_MM = 1000.0;
@@ -223,6 +224,7 @@ static const float FOAM_NOISE_SCALE   = 0.7;   // noise features per world metre
 static const float FOAM_NOISE_DRIFT   = 0.05;  // field drift speed (keeps clumps alive)
 static const float FOAM_CURL_SPEED    = 0.06;  // world units/sec of swirl
 static const float FOAM_CLUMP_SPEED   = 0.04;  // world units/sec of attraction
+static const float FOAM_NOISE_EPSILON = 0.35;  // finite-difference step (world metres)
 
 #ifdef OCEAN_CREST_FOAM
 // FFT spatial cascade (.y = height) + amplitude, so the density splat can place foam on the
@@ -430,11 +432,7 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
 [numthreads(64, 1, 1)]
 void BeginFrame(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x == 0)
-    {
-        Counters[COUNTER_FRAME_SPAWNS] = 0;
-        Counters[COUNTER_BURST_SPAWNS] = 0;
-    }
+    if (id.x == 0) Counters[COUNTER_FRAME_SPAWNS] = 0;
     if (id.x < TILE_GRID * TILE_GRID) TileCounts[id.x] = 0;
 }
 
@@ -590,13 +588,6 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     float r2 = Rand01(key, salt ^ 0x85EBCA6Bu);
     float r3 = Rand01(key, salt ^ 0xC2B2AE35u);
 
-    // Per-frame burst budget (count first, back out if over - the same soft-cap idiom as
-    // Spawn): a storm of impact events can no longer flush a quarter-plus of the pool in
-    // one frame. Own counter, so bursts never starve behind the turbulence budget.
-    uint burstSpawns;
-    InterlockedAdd(Counters[COUNTER_BURST_SPAWNS], 1, burstSpawns);
-    if (burstSpawns >= _Capacity / BURST_FRAME_CAP_DIVISOR) return;
-
     uint cursor;
     InterlockedAdd(Counters[COUNTER_RING_CURSOR], 1, cursor);
     uint slot = cursor & (_Capacity - 1u);
@@ -732,6 +723,23 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
     if (any(uv < 0.0) || any(uv > 1.0)) return;
 
     float weight = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
+    if (weight <= 0.0) return;
+
+    // Wave occlusion: fade the splat by how far the water surface rises ABOVE the
+    // camera -> particle ray (see OCCLUDE_* constants). Foam behind a nearer crest no
+    // longer composites over it - previously it did, and being farther it parallaxed
+    // slower than the crest, reading as foam sliding across the wave faces.
+    float occluded = 0.0;
+    [unroll]
+    for (uint s = 0; s < OCCLUDE_RAY_SAMPLES; s++)
+    {
+        float t = lerp(OCCLUDE_RAY_START, OCCLUDE_RAY_END,
+                       ((float)s + 0.5) / (float)OCCLUDE_RAY_SAMPLES);
+        float3 rayPos = lerp(_DensityCamWorld, world, t);
+        float surfY = SurfaceWorldY(rayPos, WorldToSimNorm(rayPos));
+        occluded = max(occluded, surfY - rayPos.y);
+    }
+    weight *= 1.0 - smoothstep(0.0, OCCLUDE_SOFT_METERS, occluded);
     if (weight <= 0.0) return;
 
     uint fixedWeight = max(1u, (uint)(weight * _DensityWeightScale));

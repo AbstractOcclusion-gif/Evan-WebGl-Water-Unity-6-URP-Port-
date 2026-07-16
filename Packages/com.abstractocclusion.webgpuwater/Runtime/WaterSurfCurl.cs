@@ -154,6 +154,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         static readonly int ID_IsClipmap = Shader.PropertyToID("_IsClipmap");
         static readonly int ID_IsSurfCurl = Shader.PropertyToID("_IsSurfCurl");
+        static readonly int ID_Underwater = Shader.PropertyToID("_Underwater");
+        static readonly int ID_SurfCurlBackStrip = Shader.PropertyToID("_SurfCurlBackStrip");
         static readonly int ID_PatchDepthBias = Shader.PropertyToID("_PatchDepthBias");
         static readonly int ID_SurfCurlFrame = Shader.PropertyToID("_SurfCurlFrame");
         static readonly int ID_SurfCurlShape = Shader.PropertyToID("_SurfCurlShape");
@@ -254,8 +256,8 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             SetStripsVisible(true);
-            PositionStrip(_stripRenderer, ref _stripBlock, center, along, live);
-            PositionStrip(_stripUnderRenderer, ref _stripUnderBlock, center, along, live);
+            PositionStrip(_stripRenderer, ref _stripBlock, center, along, live, isUnderStrip: false);
+            PositionStrip(_stripUnderRenderer, ref _stripUnderBlock, center, along, live, isUnderStrip: true);
         }
 
         void SetStripsVisible(bool visible)
@@ -270,13 +272,19 @@ namespace AbstractOcclusion.WebGpuWater
         // own flags + curl state. The strip rides the clipmap vertex mapping (_IsClipmap: verts in
         // world metres via ObjectToWorld).
         void PositionStrip(Renderer strip, ref MaterialPropertyBlock block,
-                           Vector2 center, Vector2 along, bool live)
+                           Vector2 center, Vector2 along, bool live, bool isUnderStrip)
         {
             if (strip == null) return;
             if (block == null) block = new MaterialPropertyBlock();
             volume.WriteBodyProps(block);
             block.SetFloat(ID_IsClipmap, 1f);
             block.SetFloat(ID_IsSurfCurl, 1f);
+            // The interior (Cull-Front) strip renders the overturned barrel's inside face. That is
+            // still an air->water interface, never an underwater view: force air shading (its material
+            // serialises _Underwater = 1) and flag the fragment to flip the sheet normal camera-ward.
+            block.SetFloat(ID_SurfCurlBackStrip, isUnderStrip ? 1f : 0f);
+            if (isUnderStrip)
+                block.SetFloat(ID_Underwater, 0f);
             block.SetFloat(ID_PatchDepthBias, SheetDepthBiasMeters);
             block.SetVector(ID_SurfCurlFrame, new Vector4(center.x, center.y, along.x, along.y));
             block.SetVector(ID_SurfCurlShape, new Vector4(

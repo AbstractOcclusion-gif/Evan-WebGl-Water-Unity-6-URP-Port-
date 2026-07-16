@@ -50,12 +50,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #define WAVE_METERS_MIN 1e-3 // matches WindWaveSampleXZ's guard in WaterSurface.shader
         // Crossing search: march the surface band with a FIXED WORLD STEP (constant, wave-scale resolution
         // so a crest is never skipped or aliased) up to a step cap; beyond the cap - the far horizon, where
-        // waves are sub-pixel - fall back to the flat rest-plane waterline. Band = BAND_AMPS * swell
-        // amplitude + BAND_PAD metres (generous, to bracket crests + wind-wave chop).
+        // waves are sub-pixel - fall back to the flat rest-plane waterline. Band = max(swell reach, surf
+        // crest reach) + BAND_PAD metres (generous, to bracket crests + wind-wave chop). The step cap sets
+        // how far the march reaches along the ray (STEP_METRES x MAX_STEPS): raised so the wider shore-surf
+        // band is still bracketed on grazing up-looks, where the crossing sits many metres along the ray.
         #define UNDERWATER_CROSS_STEP_METRES 1.5
-        #define UNDERWATER_CROSS_MAX_STEPS   24
+        #define UNDERWATER_CROSS_MAX_STEPS   40
         #define UNDERWATER_SURFACE_BAND_AMPS 3.0
         #define UNDERWATER_SURFACE_BAND_PAD  2.0
+        #define UNDERWATER_SURF_SETAMP_MAX   1.1 // max SurfSetAmp jitter (see WaterSurfWaves.SurfSetAmp)
 
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -163,7 +166,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float3 dir = ray / rayLen;
             float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4); // guard near-horizontal rays
             float restY = _VolumeCenter.y;
-            float band = abs(_LargeWaveAmplitude) * UNDERWATER_SURFACE_BAND_AMPS + UNDERWATER_SURFACE_BAND_PAD;
+            // Surf fronts shoal + break to crests well above the swell (H <= _SurfAmplitude * setAmp_max *
+            // _SurfGreens; see WaterSurfWaves EvaluateSurfWaves), so a swell-only band would start the march
+            // ABOVE a tall shore crest and miss the crossing, flattening the fog waterline onto the rest
+            // plane. Include that reach so the search brackets the shore crest. Inert (0) when surf is off.
+            float surfReach = (_SurfActive > 0.5)
+                            ? _SurfAmplitude * UNDERWATER_SURF_SETAMP_MAX * max(_SurfGreens, 1.0)
+                            : 0.0;
+            float band = max(abs(_LargeWaveAmplitude) * UNDERWATER_SURFACE_BAND_AMPS, surfReach)
+                       + UNDERWATER_SURFACE_BAND_PAD;
             float tFlat = (restY - cam.y) / dySafe;              // flat rest-plane crossing (ray parameter)
             float tBand = band / max(abs(ray.y), 1e-4);          // half-band in ray-parameter units
             float startDist = saturate(tFlat - tBand) * rayLen;  // skip the deep water below the band

@@ -994,6 +994,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // inherits the detailed base normal.
                 if (_IsSurfCurl > 0.5)
                     normal = normalize(lerp(normal, i.heroSheet.xyz, saturate(i.heroSheet.w)));
+                // Overturned barrel interior (the Cull-Front strip): its faces point away from the
+                // camera, so flip the sheet normal to face it. Shading then runs the air->water path
+                // below - the strip overrides _Underwater to 0 - instead of the underwater path that
+                // negates the normal and refracts the water-less opaque texture (the dark-glass bug).
+                if (_IsSurfCurl > 0.5 && _SurfCurlBackStrip > 0.5)
+                    normal = -normal;
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
 
                 if (_Underwater > 0.5)

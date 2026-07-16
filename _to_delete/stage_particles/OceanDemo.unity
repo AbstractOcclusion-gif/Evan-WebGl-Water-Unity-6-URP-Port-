@@ -5628,7 +5628,7 @@ MonoBehaviour:
   drag: 2
   crestRollSpeed: 0.6
   flipbookGrid: {x: 2, y: 2}
-  flipbookFps: 4
+  flipbookFps: 0
 --- !u!114 &667339119
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6896,11 +6896,11 @@ MonoBehaviour:
   particleMaterial: {fileID: 2100000, guid: c34d3c0e82d04aa488bddacf13b88f15, type: 2}
   renderMode: 0
   densityMaterial: {fileID: 2100000, guid: cc801976c649049469e4d607163ec5fa, type: 2}
-  capacity: 16384
+  capacity: 65536
   spawnThreshold: 0.034
   spawnRate: 30
   maxSpawnPerFrame: 4096
-  sprayChance: 0.08
+  sprayChance: 0.15
   sprayLaunchSpeed: 0.6
   lifeRange: {x: 1.5, y: 4}
   sizeRange: {x: 0.02, y: 0.06}
@@ -6912,7 +6912,7 @@ MonoBehaviour:
   drag: 0
   crestRollSpeed: 0.6
   flipbookGrid: {x: 2, y: 2}
-  flipbookFps: 4
+  flipbookFps: 0
 --- !u!114 &1579798802
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -58,7 +58,7 @@ namespace AbstractOcclusion.WebGpuWater
         // WaterFoamParticles.FrameSeedHashPrime).
         const uint FrameSeedHashPrime = 2654435761u;
 
-        // One particle = 16 floats = 64 bytes (a multiple of 16 for structured-buffer layout
+        // One particle = 20 floats = 80 bytes (a multiple of 16 for structured-buffer layout
         // portability). MUST match RollerParticle in WaterSurfRoller.compute and
         // SurfRollerParticles.shader.
         //   worldPos     world position (y is ABSOLUTE world height, unlike WaterFoamParticles)
@@ -67,6 +67,8 @@ namespace AbstractOcclusion.WebGpuWater
         //   velocity     ballistic velocity (spray only; rollers keep it zero)
         //   frontIndex   the front this particle is phase-locked to (floor of the field phase)
         //   crestDist    unwarped shore distance (m) of that front's crest - the Newton state
+        //   dAcross      across-crest offset at birth (m, + offshore); kept for tuning/debug
+        //   birthOverCap break-criterion ratio at birth (lifecycle reference)
         //   size         world half-size of the quad
         //   seed         0..1 fixed hash: sprite variant, yaw spin, tumble phase, tail jitter
         //   kind         0 = roller (crest-locked tumble), 1 = lip spray (ballistic)
@@ -79,9 +81,10 @@ namespace AbstractOcclusion.WebGpuWater
             public float age;
             public Vector3 velocity;
             public float life;
-            public float frontIndex, crestDist, size, seed;
-            public float kind, strength, brokenTimer;
-            public float _pad;
+            public float frontIndex, crestDist, dAcross, birthOverCap;
+            public float size, seed, kind, strength;
+            public float brokenTimer;
+            public Vector3 _pad;
         }
 
         // Compute/shader property ids.
@@ -115,10 +118,6 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal ComputeShader particleCompute;
         [Tooltip("Material using the AbstractOcclusion/WebGpuWater/SurfRollerParticles shader. Required.")]
         [SerializeField] internal Material particleMaterial;
-        [Tooltip("Optional master foam profile: when assigned, its Roller + Look sections " +
-                 "override the fields below every frame and push tint/opacity/atlas over the " +
-                 "material via the property block. None = this component's own values.")]
-        [SerializeField] internal WaterFoamProfile profile;
 
         [Header("Pool")]
         [Tooltip("Particle pool size; rounded up to a power of two and clamped by the body's " +
@@ -285,10 +284,6 @@ namespace AbstractOcclusion.WebGpuWater
             WaterSimulation.ShoreFoamState shoreFoam = volume.BuildShoreFoamState();
             if (!shoreFoam.Active) return;
 
-            // Master profile: re-applied every frame (a handful of field copies), so retuning
-            // the asset is live in play mode (same idiom as WaterFoamParticles).
-            if (profile != null) profile.ApplyTo(this);
-
             if (volume.IsSimulating && Time.deltaTime > 0f)
                 DispatchSimulation(Time.deltaTime, shoreFoam);
 
@@ -390,8 +385,6 @@ namespace AbstractOcclusion.WebGpuWater
             volume.WriteBodyProps(_mpb);
             _mpb.SetBuffer(ID_ParticlesShader, _particles);
             WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
-            // Shared look from the master profile rides over the material (assets stay clean).
-            if (profile != null) profile.WriteLook(_mpb);
 
             var rp = new RenderParams(_materialInstance != null ? _materialInstance : particleMaterial)
             {
