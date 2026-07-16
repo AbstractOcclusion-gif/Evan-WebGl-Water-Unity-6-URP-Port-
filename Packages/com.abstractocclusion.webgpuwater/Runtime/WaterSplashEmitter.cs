@@ -26,6 +26,9 @@ namespace AbstractOcclusion.WebGpuWater
         const float CrownRadiusContribution = 0.5f;
 
         // ---- burst shaping (EmitSplash) ----
+        // The jitter/ring/height constants MUST match the BURST_* consts in
+        // WaterFoamParticles.compute (the GPU spray path both look-alike) - guarded by
+        // WaterWaveConstantsValidator, so a retune on either side is reported on editor load.
         const int MinBurstCount = 3;                  // even the softest splash reads as a few droplets
         const float OutwardJitterMin = 0.4f;          // per-droplet randomisation of the outward throw
         const float OutwardJitterMax = 1f;
@@ -115,6 +118,10 @@ namespace AbstractOcclusion.WebGpuWater
         void LateUpdate()
         {
             if (particles == null) return;
+            // Idle diet: with the GPU spray path active this system usually holds ZERO droplets
+            // (only the crown lives here), yet the round-trip below still copied the whole
+            // Shuriken buffer both ways every frame. particleCount is a cheap property.
+            if (particles.particleCount == 0) return;
 
             int capacity = particles.main.maxParticles;
             if (_buffer == null || _buffer.Length < capacity)

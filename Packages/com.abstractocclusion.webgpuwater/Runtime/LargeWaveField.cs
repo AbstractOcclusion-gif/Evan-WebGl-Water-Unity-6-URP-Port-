@@ -82,6 +82,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float SurfFaceFraction = 0.10f;
         const float SurfBackFraction = 0.24f;
         const float SurfSetWaves = 5.0f;
+        const float SurfEdgeBlendStart = 0.35f; // SURF_EDGE_BLEND_START (cell-edge amp cross-fade)
         const float SurfNearFade = 0.55f;
         const float SurfSechArgMax = 20.0f;
         const float SurfSlopeEpsilon = 0.5f;
@@ -265,7 +266,15 @@ namespace AbstractOcclusion.WebGpuWater
             float frontIndex = Mathf.Floor(phase);
             float f = phase - frontIndex;
 
-            float setAmp = SurfSetAmp(ctx, frontIndex) * SurfCrestFactor(ctx, x, z, frontIndex);
+            // Cell-edge amplitude cross-fade - keep lockstep with SurfComputeFrontTerms (C0
+            // continuity at f = 0/1 so the per-front hash never steps the height mid-cell).
+            float ampThis = SurfSetAmp(ctx, frontIndex) * SurfCrestFactor(ctx, x, z, frontIndex);
+            float halfCell = f - 0.5f;
+            float neighborIndex = frontIndex + (halfCell > 0f ? 1f : -1f);
+            float ampNeighbor = SurfSetAmp(ctx, neighborIndex)
+                              * SurfCrestFactor(ctx, x, z, neighborIndex);
+            float edgeBlend = 0.5f * SmoothStep(SurfEdgeBlendStart, 0.5f, Mathf.Abs(halfCell));
+            float setAmp = Mathf.Lerp(ampThis, ampNeighbor, edgeBlend);
             float d = Mathf.Max(depth, SurfMinDepth);
 
             float deepHeight = ctx.SurfAmplitude * setAmp;

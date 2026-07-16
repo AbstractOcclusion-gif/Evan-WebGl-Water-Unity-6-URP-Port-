@@ -20,6 +20,12 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
         _ParticleOpacity ("Opacity", Range(0, 1)) = 1.0
         _DensityLowGain ("Density Low Gain (thin film response)", Range(0, 4)) = 0.6
         _DensityHighGain ("Density High Gain (dense core response)", Range(0, 1)) = 0.15
+        // World-anchored lace detail: the density veil erodes through a tileable pattern
+        // (sampled in world XZ, so it does NOT swim with the camera) while dense cores stay
+        // solid white. Strength 0 = the exact legacy featureless look.
+        _BreakupTex ("Breakup Pattern (tileable, R = pattern)", 2D) = "white" {}
+        _BreakupTiling ("Breakup Tile Size (m)", Range(0.5, 20)) = 4.0
+        _BreakupStrength ("Breakup Strength", Range(0, 1)) = 0.0
     }
     SubShader
     {
@@ -48,6 +54,9 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             #define DENSITY_HIGH_WEIGHT  0.5
             // Soft occlusion band (metres) against the opaque scene depth.
             #define OCCLUSION_SOFTNESS   0.15
+            // Inverse of DEPTH_TO_MM in WaterFoamParticles.compute - KEEP IN SYNC (the splat
+            // quantizes eye depth to millimetres; this turns it back into metres).
+            #define DEPTH_MM_TO_METERS   0.001
 
             StructuredBuffer<uint> _FoamDensity;      // fixed-point accumulated weight per texel
             StructuredBuffer<uint> _FoamDensityDepth; // min eye depth per texel (millimetres)
@@ -57,6 +66,15 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             float  _ParticleOpacity;
             float  _DensityLowGain;
             float  _DensityHighGain;
+            sampler2D _BreakupTex;
+            float  _BreakupTiling;
+            float  _BreakupStrength;
+            // World-position reconstruction for the breakup pattern: the SAME view-projection
+            // family the splat compute projected with (set per frame by WaterFoamParticles.cs),
+            // so pattern lookups land exactly under the splatted foam.
+            float4x4 _DensityInvViewProj;
+            float3 _DensityCamPos;
+            float3 _DensityCamForward;
             float3 _LightDir; // globals published by the primary WaterVolume
             float3 _SunColor;
             sampler2D _CameraDepthTexture;
@@ -76,6 +94,16 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 v2f o;
                 o.pos = float4(ndc, 0.0, 1.0);
                 o.uv01 = ndc * 0.5 + 0.5;
+                // The splat compute lays the density buffer out in UNFLIPPED projection space
+                // (GL.GetGPUProjectionMatrix(..., false)). When this pass rasterizes into a
+                // y-flipped target (_ProjectionParams.x < 0: D3D-style render-into-texture),
+                // the fragment at emitted ndc y lands on the MIRRORED row - without this
+                // unflip the veil renders vertically mirrored around screen centre: foam
+                // "clouds" appear in the sky above the horizon, and the whole layer moves
+                // contrary to the camera (reads as "foam drags with the camera") in every
+                // view direction, including straight down. Standard fullscreen-triangle
+                // idiom; a no-op (x > 0) on backends that don't flip.
+                if (_ProjectionParams.x < 0.0) o.uv01.y = 1.0 - o.uv01.y;
                 o.screenPos = ComputeScreenPos(o.pos);
                 return o;
             }
@@ -119,12 +147,31 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 float foamLow  = saturate(density * _DensityLowGain) * DENSITY_LOW_WEIGHT;
                 float foamHigh = saturate(density * density * _DensityHighGain) * DENSITY_HIGH_WEIGHT;
                 float alpha = saturate(foamLow + foamHigh) * _ParticleOpacity;
+                float foamEye = depthMm * DEPTH_MM_TO_METERS;
+
+                // World-anchored breakup lace: reconstruct the foam layer's world position
+                // from the splatted min depth along this pixel's camera ray, then erode the
+                // thin veil through a tileable pattern. Dense cores stay solid white (the
+                // quadratic band overrides the pattern), and the world-XZ lookup means the
+                // lace belongs to the water, never to the screen. Uniform branch + explicit
+                // LOD: safe after the non-uniform early-out above (WGSL gradient rule).
+                if (_BreakupStrength > 0.001)
+                {
+                    float4 rayClip = float4(i.uv01 * 2.0 - 1.0, 0.5, 1.0);
+                    float4 rayPoint4 = mul(_DensityInvViewProj, rayClip);
+                    float3 rayDir = rayPoint4.xyz / max(abs(rayPoint4.w), 1e-5) - _DensityCamPos;
+                    float viewZ = max(dot(rayDir, _DensityCamForward), 1e-4);
+                    float3 foamWorld = _DensityCamPos + rayDir * (foamEye / viewZ);
+                    float2 patternUv = foamWorld.xz / max(_BreakupTiling, 0.01);
+                    float pattern = tex2Dlod(_BreakupTex, float4(patternUv, 0.0, 0.0)).r;
+                    float core = saturate(foamHigh / DENSITY_HIGH_WEIGHT);
+                    alpha *= lerp(1.0, lerp(pattern, 1.0, core), _BreakupStrength);
+                }
 
                 // Soft occlusion against the opaque scene: foam behind geometry fades out
                 // over OCCLUSION_SOFTNESS instead of clipping.
                 float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
                 float sceneEye = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(suv), 0, 0)));
-                float foamEye = depthMm * 0.001;
                 alpha *= saturate(1.0 + (sceneEye - foamEye) / OCCLUSION_SOFTNESS);
                 if (alpha <= 0.0) return fixed4(0, 0, 0, 0);
 

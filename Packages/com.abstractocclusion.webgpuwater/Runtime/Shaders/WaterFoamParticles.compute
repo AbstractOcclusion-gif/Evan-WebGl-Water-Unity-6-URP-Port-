@@ -29,6 +29,10 @@
 #include "WaterHeroWave.hlsl"   // hero wave: lip spray source + base height for surface glue
 #include "WaterSurfWaves.hlsl"  // surf breaker fronts: plunging-lip spray source (uniforms set by
                                 // WaterSimulation.ShoreFoamState.BindTo - compute sees no globals)
+// Shared particle plumbing: PCG hash + the Layer A shore-field fetch (uniforms, textures
+// and the ONE fail-fast sampler both particle computes use).
+#define WATER_PARTICLE_SHORE_FIELD 1
+#include "WaterParticleCommon.hlsl"
 
 // MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
 #define SPAWN_THREAD_GROUP_SIZE  8
@@ -48,6 +52,31 @@ static const float SPRAY_LANDING_KEEP = 0.4;
 // Kill particles this far outside the active sim frame (pool or window), in
 // normalised units; a little slack so foam can hug the walls before dying.
 static const float FRAME_KILL_MARGIN = 0.02;
+// Window-edge fade band (normalised frame units, measured inward from the edge): inside
+// it a particle AGES faster (up to FRAME_FADE_AGE_BOOST x at the very edge), so its life
+// envelope fades it out before the hard kill above ever fires. Without this, the kill
+// line of the camera-following window sweeps through world-anchored foam and reads as
+// "the foam cloud is glued to the camera" (same defect class the roller's world snap
+// fixed). The hard kill stays as the backstop where the frame has no sim data.
+static const float FRAME_FADE_BAND = 0.15;
+static const float FRAME_FADE_AGE_BOOST = 3.0;
+
+// World-anchored spawn identity: spawn decisions are keyed on a fixed WORLD lattice
+// instead of window texel ids, so what emits belongs to the water surface, not to
+// wherever the camera-following sim window happens to sit this frame. Cell edge = one
+// sim texel, floored so ultra-fine sims don't alias into sub-lattice noise.
+static const float SPAWN_CELL_MIN_METERS = 0.25;
+// KWS keep-alive floor (FOAM_MIN_LOD_COUNT idiom): a sparse dusting of cells emits even
+// beyond the distance-LOD range, so foam already exists when the camera turns or
+// approaches instead of visibly popping in around it.
+static const float SPAWN_LOD_KEEP_ALIVE = 0.02;
+// Distance-LOD falloff shape (KWS pow5-shoulder idiom): FULL density out to this fraction
+// of the range, then a smooth shoulder down to the keep-alive floor. The old linear
+// ticket-vs-distance curve started thinning right at the camera (~half the cells rejected
+// only 25% into the range), so the foam field read as a soft blob whose density gradient
+// travelled with the camera - especially as the connected screen-space density veil,
+// where the gradient is one visible shape instead of scattered sprites.
+static const float SPAWN_LOD_PLATEAU = 0.6;
 
 // One particle = 48 bytes. MUST match FoamParticle in FoamParticles.shader and
 // the stride in WaterFoamParticles.cs.
@@ -83,6 +112,7 @@ float _SprayChance;       // 0..1 fraction of spawns thrown as ballistic spray
 float _SprayLaunchSpeed;  // world units/sec initial upward speed of spray
 float _LifeMin, _LifeMax; // seconds
 float _SizeMin, _SizeMax; // world units
+float _SizeHeroPower;     // >= 1; KWS pow-distribution: most particles small, rare heroes
 float _TexelWorldArea;    // world-space area covered by one sim texel
 
 // Update tuning
@@ -135,10 +165,9 @@ static const float HERO_SPRAY_THROW_SPEED = 7.0;
 // writes into the foam buffer covers spawn PROBABILITY; these only shape what spawns there.
 static const float SURF_SPRAY_MIN_LIP = 0.3;
 static const float SURF_SPRAY_THROW_SPEED = 6.0;
-// Matches SHORE_BORDER_FEATHER (WaterShore.hlsl) / SHORE_FOAM_BORDER_FEATHER (WaterSim.compute).
-static const float SURF_SPRAY_BORDER_FEATHER = 0.08;
-// Matches SHORE_DEEP_SENTINEL (WaterShore.hlsl, not includable here - sampler2D).
-static const float SHORE_DEEP_SENTINEL_SIM = 1e9;
+// (Shore border feather + deep sentinel now come from WaterParticleCommon.hlsl:
+// PARTICLE_SHORE_BORDER_FEATHER / PARTICLE_SHORE_DEEP_SENTINEL - one copy for both
+// particle computes.)
 // Matches OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION (WaterLargeWaves.hlsl): a cascade's shore
 // attenuation uses one representative wavelength = this fraction of its domain size.
 static const float CASCADE_WAVELENGTH_FRACTION_SIM = 0.25;
@@ -163,7 +192,9 @@ StructuredBuffer<BurstRequest> BurstRequests;
 uint _BurstRequestCount;
 
 static const uint  MAX_BURST_DROPLETS = 64;   // one thread group per request
-// Per-droplet jitters, matching the retired Shuriken burst's feel (WaterSplashEmitter).
+// Per-droplet jitters, matching the legacy Shuriken burst's feel. MUST match the
+// counterpart consts in WaterSplashEmitter.cs (the fallback path) - guarded by
+// WaterWaveConstantsValidator, so a retune on either side is reported on editor load.
 static const float BURST_OUT_JITTER_MIN = 0.4;
 static const float BURST_OUT_JITTER_MAX = 1.0;
 static const float BURST_UP_JITTER_MIN = 0.5;
@@ -217,17 +248,15 @@ float OceanCrestFoamAt(float2 worldXZ)
 // ---------------------------------------------------------------- helpers
 int2 ClampTexel(int2 p) { return clamp(p, int2(0, 0), int2((int)_Size - 1, (int)_Size - 1)); }
 
-// PCG hash -> float in [0,1). Deterministic per (texel, salt).
-uint Pcg(uint v)
-{
-    uint state = v * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
+// Pcg/Rand01 come from WaterParticleCommon.hlsl (shared with WaterSurfRoller.compute).
 
-float Rand01(uint2 p, uint salt)
+// World-lattice key of a spawn candidate. Two window texels that cover the same world
+// cell make the SAME rolls, and a texel keeps its rolls while the window glides under
+// it - the emission pattern is anchored to the water, not the camera.
+uint2 WorldSpawnKey(float2 worldXZ)
 {
-    return Pcg(p.x ^ Pcg(p.y ^ Pcg(salt))) / 4294967296.0;
+    float cellMeters = max(sqrt(_TexelWorldArea), SPAWN_CELL_MIN_METERS);
+    return (uint2)(int2)floor(worldXZ / cellMeters); // negative cells wrap deterministically
 }
 
 // Normalised sim-frame coords (.xz in [-1,1]) of a world point: window frame when
@@ -297,17 +326,10 @@ bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
     return true;
 }
 
-// ---- Layer A shore field for the surf-lip spray. Same uniform names + binder as the ripple
-// sim's foam injection (WaterSimulation.ShoreFoamState.BindTo), so the particles' front
-// evaluation can never drift from the injected whitewash the spawns ride on. Textures are
-// always bound (black fallback); every read gates on _ShoreFoamActive.
-float _ShoreFoamActive;
-float _ShoreFoamTime; // THE MASTER SURF BEAT (matches the surface _SurfBeatTime)
+// ---- Layer A shore field for the surf-lip spray. The uniforms, textures and the raw
+// fail-fast fetch live in WaterParticleCommon.hlsl (shared with WaterSurfRoller.compute);
+// only the shoal-band depth is particular to this compute's height glue.
 float _ShoreShoalDepth;      // shoal band depth (m) - drives the ShoalWeightSim replica below
-float4 _ShoreFieldCenterSim; // xy = world XZ centre of the Layer A field
-float4 _ShoreFieldSizeSim;   // xy = world XZ half-extent of the Layer A field
-Texture2D<float>  _ShoreDepthTexSim;  SamplerState sampler_ShoreDepthTexSim;
-Texture2D<float4> _ShoreSDFTexSim;    SamplerState sampler_ShoreSDFTexSim;
 
 // Replica of ShoalWeight() in WaterShore.hlsl - KEEP IN SYNC (that header declares sampler2D
 // objects, which a compute kernel cannot include; the function itself is pure math).
@@ -322,26 +344,15 @@ float ShoalWeightSim(float depth, float wavelength)
 
 // One shore-field fetch + the canonical front evaluation at a world xz. Inert (deep water, zero
 // influence, zero surf) off-field or while the shore layer is off - callers can use the outputs
-// unconditionally.
+// unconditionally. Built on the shared fail-fast fetch: a degenerate SDF direction is now inert
+// here too, matching the roller (the old local copy pressed on with toShore = 0).
 SurfWaveSample SurfSampleAt(float2 worldXZ, out float shoreDepth, out float shoreInfluence,
                             out float2 toShore)
 {
-    shoreDepth = SHORE_DEEP_SENTINEL_SIM;
-    shoreInfluence = 0.0;
-    toShore = float2(0.0, 0.0);
-    if (_ShoreFoamActive < 0.5) return SurfWaveSampleInert();
-    float2 fieldUv = (worldXZ - _ShoreFieldCenterSim.xy)
-                   / (2.0 * _ShoreFieldSizeSim.xy) + 0.5;
-    float2 edge = saturate(min(fieldUv, 1.0 - fieldUv) / SURF_SPRAY_BORDER_FEATHER);
-    float influence = edge.x * edge.y;
-    if (influence <= 0.001) return SurfWaveSampleInert();
-    shoreInfluence = influence;
-    shoreDepth = _ShoreDepthTexSim.SampleLevel(sampler_ShoreDepthTexSim, saturate(fieldUv), 0);
-    float4 shoreSdf = _ShoreSDFTexSim.SampleLevel(sampler_ShoreSDFTexSim, saturate(fieldUv), 0);
-    float2 dir = shoreSdf.rg * 2.0 - 1.0;
-    float len = length(dir);
-    toShore = len > 1e-4 ? dir / len : float2(0.0, 0.0);
-    return EvaluateSurfWaves(worldXZ, shoreDepth, shoreSdf.b, toShore, shoreSdf.a, influence,
+    float sdfDist, tanBeta;
+    if (!ParticleSampleShoreField(worldXZ, shoreDepth, sdfDist, toShore, tanBeta, shoreInfluence))
+        return SurfWaveSampleInert();
+    return EvaluateSurfWaves(worldXZ, shoreDepth, sdfDist, toShore, tanBeta, shoreInfluence,
                              _ShoreFoamTime);
 }
 
@@ -428,13 +439,19 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;
 
-    // Stochastic distance LOD (KWS): spawn probability falls with camera distance, dithered
-    // by an independent random so density thins smoothly instead of cutting at a ring.
+    // Stochastic distance LOD (KWS): spawn probability falls with camera distance. The
+    // LOD ticket is FIXED per world cell (no frame seed): as the camera moves, each cell
+    // switches on/off at its own stable distance instead of the whole density blob being
+    // re-rolled around the camera every frame. The plateau keeps density FULL out to
+    // SPAWN_LOD_PLATEAU of the range - inside it, camera motion changes nothing at all -
+    // and the shoulder then thins smoothly to the keep-alive dusting beyond the range.
+    uint2 spawnKey = WorldSpawnKey(texelWorld.xz);
     if (_SpawnMaxDistance > 0.0)
     {
         float distNorm = saturate(distance(texelWorld.xz, _SpawnCameraXZ) / _SpawnMaxDistance);
-        float rLod = Rand01(id.xy, _FrameSeed ^ 0x27D4EB2Du);
-        if (distNorm > rLod * rLod) return;
+        float thinning = smoothstep(SPAWN_LOD_PLATEAU, 1.0, distNorm);
+        float lodTicket = Rand01(spawnKey, 0x27D4EB2Du);
+        if (lodTicket + SPAWN_LOD_KEEP_ALIVE < thinning) return;
     }
 
     // Shear boost: wake edges / interactor rims (where moving water borders still water)
@@ -447,7 +464,9 @@ void Spawn(uint3 id : SV_DispatchThreadID)
 
     float probability = excess * (1.0 + shear * SPAWN_SHEAR_BOOST)
                       * _SpawnRate * _TexelWorldArea * _DeltaTime;
-    if (Rand01(id.xy, _FrameSeed) >= probability) return;
+    // World-keyed roll (frame seed keeps the temporal churn): the accept/reject decision
+    // for a given patch of water no longer flickers as the window slides across it.
+    if (Rand01(spawnKey, _FrameSeed) >= probability) return;
 
     // Per-frame budget: count first, back out if over. A few threads may race past
     // the limit; the budget is a soft cap, so that is acceptable.
@@ -527,7 +546,9 @@ void Spawn(uint3 id : SV_DispatchThreadID)
                            * (SURF_SPRAY_THROW_SPEED * surfLip);
     particle.age = 0.0;
     particle.life = lerp(_LifeMin, _LifeMax, r1);
-    particle.size = lerp(_SizeMin, _SizeMax, r2);
+    // Hero-size distribution (KWS): pow biases the roll small, so a few rare sprites land
+    // near _SizeMax and read as hero clumps. _SizeHeroPower 1 = the original uniform sizes.
+    particle.size = lerp(_SizeMin, _SizeMax, pow(r2, _SizeHeroPower));
     particle.seed = r2;
     particle.kind = spray ? KIND_SPRAY : KIND_SURFACE;
     particle.strength = saturate(foam);
@@ -570,7 +591,8 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     particle.velocity = float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
     particle.age = 0.0;
     particle.life = lerp(_LifeMin, _LifeMax, r1);
-    particle.size = lerp(_SizeMin, _SizeMax, r2);
+    // Same hero-size distribution as the turbulence spawns (one look for all droplets).
+    particle.size = lerp(_SizeMin, _SizeMax, pow(r2, _SizeHeroPower));
     particle.seed = r0;
     particle.kind = KIND_SPRAY;
     particle.strength = saturate(burst.strength);
@@ -589,15 +611,26 @@ void Update(uint3 id : SV_DispatchThreadID)
     if (particle.life <= 0.0) return;
 
     particle.age += _DeltaTime;
-    if (particle.age >= particle.life) { particle.life = 0.0; Particles[slot] = particle; return; }
 
     float2 simNorm = WorldToSimNorm(particle.worldPos);
-    if (any(abs(simNorm) > 1.0 + FRAME_KILL_MARGIN))
+    float frameEdge = max(abs(simNorm.x), abs(simNorm.y));
+    if (frameEdge > 1.0 + FRAME_KILL_MARGIN)
     {
         particle.life = 0.0;
         Particles[slot] = particle;
         return;
     }
+    // Edge fade band: accelerate aging toward the frame edge so the life envelope fades
+    // the particle out smoothly before the moving window's hard kill can cull it - the
+    // sweep of that kill line was one of the "foam follows the camera" causes.
+    float fadeStart = 1.0 - FRAME_FADE_BAND;
+    if (frameEdge > fadeStart)
+    {
+        float edgeDepth = saturate((frameEdge - fadeStart) / (FRAME_FADE_BAND + FRAME_KILL_MARGIN));
+        particle.age += _DeltaTime * edgeDepth * FRAME_FADE_AGE_BOOST;
+    }
+
+    if (particle.age >= particle.life) { particle.life = 0.0; Particles[slot] = particle; return; }
 
     if (particle.kind == KIND_SPRAY)
     {
@@ -618,9 +651,12 @@ void Update(uint3 id : SV_DispatchThreadID)
         float3 driven = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift
                       + float3(_WindDrift.x, 0.0, _WindDrift.y);
 #ifdef OCEAN_CREST_FOAM
-        // Roll the whitecap foam forward along the wave-travel direction so it moves WITH the breaking
-        // crest instead of sitting still (the near-field 2D flow is ~0 on open ocean).
-        driven += float3(_CrestRoll.x, 0.0, _CrestRoll.y);
+        // Roll the whitecap foam forward along the wave-travel direction so it moves WITH the
+        // breaking crest - but ONLY while the particle is riding an active whitecap. Applied
+        // as a constant field (v1) this conveyor-belted the ENTIRE floating population along
+        // the swell heading ("all the foam drifts off", worst near shore); gated by the local
+        // whitecap amount, foam rolls with the crest that made it, then parks and decays.
+        driven += float3(_CrestRoll.x, 0.0, _CrestRoll.y) * OceanCrestFoamAt(particle.worldPos.xz);
 #endif
         // Curl + clumping (KWS): a divergence-free swirl (gradient rotated 90 degrees) keeps
         // floating foam alive, and a gentle pull UP the noise gradient gathers it into

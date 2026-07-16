@@ -73,6 +73,12 @@ float4 _SurfFoamColor;    // rgb tint, a = master opacity
 #define SURF_FACE_FRACTION     0.10  // steep shoreward face length, as a fraction of front spacing
 #define SURF_BACK_FRACTION     0.24  // long offshore back length, as a fraction of front spacing
 #define SURF_SET_WAVES         5.0   // pseudo-period (in fronts) of the set envelope
+// Per-front amplitude cross-fade: |f - 0.5| (half-cells from the crest) where the blend toward
+// the NEIGHBOURING front's amplitude begins, reaching 50/50 exactly at the cell edge. Without it
+// the per-front hash steps at f = 0/1 while the bore shape is still ~0.43 there - a shore-parallel
+// height + foam seam marching mid-way between bores, and an FD-slope spike (the "sparkle line").
+// Mirrored in LargeWaveField.cs (height-affecting).
+#define SURF_EDGE_BLEND_START  0.35
 #define SURF_NEAR_FADE         0.55  // fraction of _SurfBandDepth where fronts are fully developed
 #define SURF_SECH_ARG_MAX      20.0  // cosh overflow clamp (WGSL float overflow is impl-defined)
 #define SURF_SLOPE_EPSILON     0.5   // metres, finite-difference step for the front slope
@@ -276,7 +282,16 @@ SurfFrontTerms SurfComputeFrontTerms(float2 worldXZ, float sWarp, float depth, f
 
     // Set envelope (in time) x crest segmentation (alongshore): both fold into the amplitude, so
     // the breaking criterion, the bore, the whitewash and the crest glow all follow them for free.
-    t.setAmp = SurfSetAmp(frontIndex) * SurfCrestFactor(worldXZ, frontIndex);
+    // C0 continuity across cell edges: near f = 0/1 the amplitude cross-fades toward the
+    // NEIGHBOURING front's, reaching 50/50 exactly at the edge - both cells agree there, so the
+    // per-front hash can never print a step into the height/foam mid-way between bores (see
+    // SURF_EDGE_BLEND_START). At the crest (f = 0.5) the blend is 0: each wave keeps its own size.
+    float ampThis = SurfSetAmp(frontIndex) * SurfCrestFactor(worldXZ, frontIndex);
+    float halfCell = f - 0.5;                        // -0.5..0.5, 0 at the crest
+    float neighborIndex = frontIndex + ((halfCell > 0.0) ? 1.0 : -1.0);
+    float ampNeighbor = SurfSetAmp(neighborIndex) * SurfCrestFactor(worldXZ, neighborIndex);
+    float edgeBlend = 0.5 * smoothstep(SURF_EDGE_BLEND_START, 0.5, abs(halfCell));
+    t.setAmp = lerp(ampThis, ampNeighbor, edgeBlend);
     float d = max(depth, SURF_MIN_DEPTH);
 
     // Breaker-type classification for THIS front on THIS beach (SURF-PHYS): the deep-water set
@@ -427,7 +442,9 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
     float3 front = SurfFrontHeight(worldXZ, SurfWarpDistance(s), depth, tanBeta, time); // (height, whitewash, breaker)
 
     // Slope by finite difference ALONG the shore-distance axis (the front varies along it by
-    // construction; the crest noise is held fixed across the step so it never spikes the normal).
+    // construction). The FD step may straddle a cell edge and re-derive the front index - safe,
+    // because the edge cross-fade (SURF_EDGE_BLEND_START) makes the field C0 there, so the
+    // difference stays bounded instead of spiking the normal.
     // grad(sdfDist) = -toShore, since distance grows offshore.
     float h1 = SurfFrontHeight(worldXZ, SurfWarpDistance(s + SURF_SLOPE_EPSILON), depth, tanBeta, time).x;
     float dhds = (h1 - front.x) / SURF_SLOPE_EPSILON;

@@ -48,16 +48,10 @@ namespace AbstractOcclusion.WebGpuWater
         // View-space metres the sheet is pulled toward the camera where its foot meets the base
         // surface (same mechanism as the hero sheet; independent value).
         const float SheetDepthBiasMeters = 0.02f;
-        // Break-line search: march this many steps of this length from the camera along the
-        // toward-shore direction (then bisect), so the solve covers ~200 m of approach.
-        const int BreakSearchSteps = 128;
-        const float BreakSearchStepMeters = 1.5f;
-        const int BreakRefineBisections = 8;
-        // Placement smoothing time constant (s): the SDF direction field is smooth but the camera
-        // isn't - the ribbon glides to its new spot instead of snapping with every camera cut.
-        // (Moving the ribbon never moves the waves: the field is world-anchored; placement only
-        // decides where sheet GEOMETRY exists.)
-        const float FollowSmoothingSeconds = 0.75f;
+        // Break-line search parameters + smoothing constant live in WaterSurfBreakLine
+        // (the ONE march + bisect shared with WaterSurfRollerParticles). Moving the ribbon
+        // never moves the waves: the field is world-anchored; placement only decides where
+        // sheet GEOMETRY exists.
         // Roll-speed mapping (KEEP IN SYNC with SURF_CURL_ROLL_START and the cresting->broken
         // overCap window in WaterSurfWaves.hlsl). The roll must ALWAYS complete inside the wave's
         // visibility window or the knob changes the achieved ANGLE instead of the timing (the
@@ -229,11 +223,15 @@ namespace AbstractOcclusion.WebGpuWater
             Vector2 along;
             if (live)
             {
-                if (TrySolveBreakLine(out Vector2 targetCenter, out Vector2 targetAlong))
+                if (WaterSurfBreakLine.TrySolve(volume, out Vector2 targetCenter, out Vector2 targetAlong))
                 {
+                    // Continuity flip against our own smoothed frame (the shared solve returns
+                    // the raw crest-parallel direction) so the ribbon never spins 180 degrees.
+                    if (_followValid && Vector2.Dot(targetAlong, _followAlong) < 0f)
+                        targetAlong = -targetAlong;
                     // Glide (never snap) to the new placement; the first solve lands directly.
                     float blend = _followValid
-                        ? 1f - Mathf.Exp(-Time.deltaTime / FollowSmoothingSeconds)
+                        ? 1f - Mathf.Exp(-Time.deltaTime / WaterSurfBreakLine.FollowSmoothingSeconds)
                         : 1f;
                     _followCenter = Vector2.Lerp(_followCenter, targetCenter, blend);
                     _followAlong = Vector2.Lerp(_followAlong, targetAlong, blend).normalized;
@@ -258,79 +256,6 @@ namespace AbstractOcclusion.WebGpuWater
             SetStripsVisible(true);
             PositionStrip(_stripRenderer, ref _stripBlock, center, along, live);
             PositionStrip(_stripUnderRenderer, ref _stripUnderBlock, center, along, live);
-        }
-
-        // Walk from the camera along the toward-shore direction to the depth where the mean set
-        // wave first satisfies the break criterion (overCap = 1), then bisect the crossing. All
-        // reads go through the shore field's CPU arrays - the same field the shader breaks on, so
-        // the ribbon sits exactly where the fronts visibly curl. Fails (false) off-field, with the
-        // surf layer inactive, or when no crossing exists along the march.
-        bool TrySolveBreakLine(out Vector2 center, out Vector2 along)
-        {
-            center = default;
-            along = default;
-            ShoreWaveContext ctx = volume.ShoreWaveCtx;
-            if (!ctx.SurfActive || ctx.Field == null) return false;
-            Camera cam = volume.targetCamera != null ? volume.targetCamera : Camera.main;
-            if (cam == null) return false;
-
-            Vector2 probe = new Vector2(cam.transform.position.x, cam.transform.position.z);
-            if (!ctx.Field.TrySampleShore(probe.x, probe.y, out float depth, out _,
-                                          out float dirX, out float dirZ, out float slopeTan,
-                                          out float influence)
-                || influence <= 0f || dirX * dirX + dirZ * dirZ < 1e-6f)
-                return false;
-
-            Vector2 toShore = new Vector2(dirX, dirZ).normalized;
-            float prevOver = LargeWaveField.SurfBreakOverCap(ctx, depth, slopeTan);
-            bool startOutside = prevOver < 1f;
-            // March shoreward while outside the break line, offshore while already inside it.
-            float marchSign = startOutside ? 1f : -1f;
-            Vector2 prev = probe;
-            bool found = false;
-            Vector2 low = default, high = default;
-            for (int i = 1; i <= BreakSearchSteps; i++)
-            {
-                Vector2 q = probe + toShore * (marchSign * BreakSearchStepMeters * i);
-                if (!ctx.Field.TrySampleShore(q.x, q.y, out depth, out _, out dirX, out dirZ,
-                                              out slopeTan, out influence)
-                    || influence <= 0f || depth <= 0f)
-                    break; // left the field or hit land without crossing
-                float over = LargeWaveField.SurfBreakOverCap(ctx, depth, slopeTan);
-                if ((over >= 1f) != (prevOver >= 1f))
-                {
-                    low = prev;
-                    high = q;
-                    found = true;
-                    break;
-                }
-                prev = q;
-                prevOver = over;
-            }
-            if (!found) return false;
-
-            bool lowOutside = startOutside; // 'low' is always on the starting side of the crossing
-            for (int k = 0; k < BreakRefineBisections; k++)
-            {
-                Vector2 mid = (low + high) * 0.5f;
-                ctx.Field.TrySampleShore(mid.x, mid.y, out depth, out _, out dirX, out dirZ,
-                                         out slopeTan, out _);
-                bool midOutside = LargeWaveField.SurfBreakOverCap(ctx, depth, slopeTan) < 1f;
-                if (midOutside == lowOutside) low = mid; else high = mid;
-            }
-            Vector2 hit = (low + high) * 0.5f;
-
-            // Crest-parallel frame at the crossing: travel = toward shore (smoothed SDF direction),
-            // along = its perpendicular such that travel = (-along.y, along.x) - the shader's frame
-            // convention. Continuity flip so the ribbon never spins 180 degrees between solves.
-            if (!ctx.Field.TrySampleShore(hit.x, hit.y, out _, out _, out dirX, out dirZ, out _, out _)
-                || dirX * dirX + dirZ * dirZ < 1e-6f)
-                return false;
-            Vector2 travel = new Vector2(dirX, dirZ).normalized;
-            along = new Vector2(travel.y, -travel.x);
-            if (_followValid && Vector2.Dot(along, _followAlong) < 0f) along = -along;
-            center = hit;
-            return true;
         }
 
         void SetStripsVisible(bool visible)

@@ -660,7 +660,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var existing = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
             if (existing != null) return existing;
 
-            const int s = 64;
+            // 128: the 64px original went soft on big hero droplets (velocity-stretched
+            // sprites magnify it further). All maths below are sprite-space, so the bump is
+            // resolution-independent. Delete Generated/DropletPacked.png to regenerate.
+            const int s = 128;
             const float ShineFalloffPower = 6f;   // hot core confined near the centre
             const float NoiseFrequency = 9f;      // dissolve-noise feature size across the sprite
             const float NoiseFloor = 0.15f;       // keeps every texel erodable (never sticks at 0)

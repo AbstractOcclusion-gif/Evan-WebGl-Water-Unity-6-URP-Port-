@@ -33,6 +33,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showBedDepth = false;
         bool _showFoam = false;
         bool _showCrestGlow = true;
+        bool _showSurfAdvanced = false;
         bool _showCamera = false;
         bool _showSplash = false;
 

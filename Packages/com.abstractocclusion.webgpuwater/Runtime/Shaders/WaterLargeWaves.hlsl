@@ -376,6 +376,29 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
            * _LargeWaveChoppiness;
 }
 
+// Height + horizontal chop from ONE field evaluation - the vertex's hot path. The separate
+// LargeBodyWaveHeight/Displacement wrappers each re-sample the shore, re-evaluate the surf fronts
+// AND re-run the cascade fetch / band loop, so a vertex calling both paid the whole field ~2.5x
+// (the swash's third ShoreSample included). The surface vertex now hoists ONE ShoreSample + ONE
+// EvaluateSurfWaves and calls this: FFT bodies read the cascades once for both height and chop,
+// analytic bodies run the Gerstner band loop once. Values are byte-identical to the wrappers.
+void LargeBodyWaveHeightDispShore(float2 worldXZ, ShoreData shore, SurfWaveSample surf,
+                                  out float height, out float2 disp)
+{
+    if (_OceanFftActive > 0.5)
+    {
+        float3 fft = OceanFftDisplacementShore(worldXZ, shore);
+        float ambient = SurfAmbientWeight(surf.mask);
+        height = fft.y * _LargeWaveAmplitude * ambient + surf.height;
+        disp = fft.xz * (_LargeWaveChoppiness * _LargeWaveAmplitude * ambient);
+        return;
+    }
+    LargeBodyWaveField f = EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ),
+                                                      shore, surf);
+    height = f.height;
+    disp = f.disp * _LargeWaveChoppiness;
+}
+
 // Tilt a WORLD-space surface normal by the open-water wave shape at its SOURCE xz (the undisplaced
 // position the vertex carried through). 'strength' scales the effect (reuse the body's
 // _WaveNormalStrength so it stays art-directable). The tilt is the Jacobian normal of the displaced

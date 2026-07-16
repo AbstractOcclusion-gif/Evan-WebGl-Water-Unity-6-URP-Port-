@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: FoamDensityComposite
-  m_Shader: {fileID: 4800000, guid: 43c2c9eac1fd8d2418977c27cec57916, type: 3}
+  m_Name: GodRays
+  m_Shader: {fileID: 4800000, guid: 75dfc0c0ccedd1f44ab55cbf2640dff6, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -22,19 +22,12 @@ Material:
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
-    m_TexEnvs:
-    - _BreakupTex:
-        m_Texture: {fileID: 2800000, guid: 4c464eb5767892e4ba061b40d0bd260a, type: 3}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
+    m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _BreakupStrength: 0.932
-    - _BreakupTiling: 20
-    - _DensityHighGain: 0.629
-    - _DensityLowGain: 0.88
-    - _ParticleOpacity: 0.337
+    - _GodRayDensity: 1.5
+    - _GodRaySteps: 24
     m_Colors:
-    - _Tint: {r: 1, g: 1, b: 1, a: 1}
+    - _GodRayColor: {r: 0.7, g: 0.85, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

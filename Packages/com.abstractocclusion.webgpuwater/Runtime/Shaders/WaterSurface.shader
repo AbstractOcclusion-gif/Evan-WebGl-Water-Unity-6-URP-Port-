@@ -349,11 +349,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // boundary, which snaps the GPU to a coarse mip there - a visible stitch line on the seam - and
             // lets bilinear filtering bleed into the neighbouring frame. Fix both: choose the mip from the
             // CONTINUOUS pre-frac gradients via tex2Dgrad, and inset the tile by half a texel so a filtered
-            // tap can't leave the cell. Explicit grads are also valid in divergent control flow, unlike tex2D.
-            float4 SampleFlipbookCell(sampler2D tex, float2 uv, float2 cell, float2 grid, float2 invSize)
+            // tap can't leave the cell. WGSL derivative uniformity: the pre-frac uv gradients (uvDdx/uvDdy)
+            // are HOISTED by the caller from uniform control flow - computing ddx/ddy here would be undefined,
+            // since this helper runs inside the non-uniform foam-mask branches.
+            float4 SampleFlipbookCell(sampler2D tex, float2 uv, float2 uvDdx, float2 uvDdy, float2 cell, float2 grid, float2 invSize)
             {
-                float2 gradX = ddx(uv) / grid;
-                float2 gradY = ddy(uv) / grid;
+                float2 gradX = uvDdx / grid;
+                float2 gradY = uvDdy / grid;
                 // Half a texel in tile space, capped so the 1x1 white-fallback texture (no foam assigned,
                 // invSize = 1) can't invert the clamp below; a white tap stays white either way.
                 float2 inset = min(invSize * 0.5 * grid, 0.49);
@@ -365,15 +367,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // even where the mask is static. Grid (1,1) = a single seamless TILING texture:
             // plain hardware-wrap sample (like the ocean whitecap) - the flipbook cell inset
             // would break a seamless tile's edges, and there are no frames to crossfade.
-            // Explicit gradients keep both paths valid in divergent control flow.
-            float3 SampleFoamPattern(float2 uv)
+            // WGSL derivative uniformity: gradients are passed in (hoisted by the caller in
+            // uniform control flow), never derived here - this runs inside non-uniform
+            // foam-mask branches where ddx/ddy would be undefined.
+            float3 SampleFoamPattern(float2 uv, float2 uvDdx, float2 uvDdy)
             {
                 float2 cellA, cellB, grid; float blend;
                 FoamFlipbookFrames(cellA, cellB, grid, blend);
                 if (grid.x * grid.y <= 1.0)
-                    return tex2Dgrad(_FoamTex, uv, ddx(uv), ddy(uv)).rgb;
-                float3 a = SampleFlipbookCell(_FoamTex, uv, cellA, grid, _FoamTex_TexelSize.xy).rgb;
-                float3 b = SampleFlipbookCell(_FoamTex, uv, cellB, grid, _FoamTex_TexelSize.xy).rgb;
+                    return tex2Dgrad(_FoamTex, uv, uvDdx, uvDdy).rgb;
+                float3 a = SampleFlipbookCell(_FoamTex, uv, uvDdx, uvDdy, cellA, grid, _FoamTex_TexelSize.xy).rgb;
+                float3 b = SampleFlipbookCell(_FoamTex, uv, uvDdx, uvDdy, cellB, grid, _FoamTex_TexelSize.xy).rgb;
                 return lerp(a, b, blend);
             }
 
@@ -387,7 +391,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Tilt: PROCEDURAL relief from finite differences of the pattern (Crest-style,
             // matching the ocean whitecap - no normal map), scaled by the mask so sparse
             // foam doesn't dent the shading.
-            void EvaluateFoam(float2 fuv, float2 flowXZ, float mask, float camDist,
+            // WGSL derivative uniformity: fuvDdx/fuvDdy are the SCREEN derivatives of fuv, hoisted
+            // by the caller BEFORE its non-uniform mask branch - every sample below runs in
+            // non-uniform control flow, where implicit-derivative tex2D/ddx/ddy are undefined.
+            // The flow/phase/relief offsets are ADDITIVE, so the base gradients stay exact; the
+            // rotated octave is a linear transform, so its gradients get the same rotation/scale.
+            void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
+                              float2 flowXZ, float mask, float camDist,
                               out float3 pattern, out float core, out float lace,
                               out float alpha, out float2 tilt)
             {
@@ -396,8 +406,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 float phaseB = frac(phaseA + 0.5);
                 float seesaw = abs(phaseA * 2.0 - 1.0);
                 float2 uvA = fuv - flowDir * phaseA;
-                float3 baseA = SampleFoamPattern(uvA);
-                pattern = lerp(baseA, SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+                float3 baseA = SampleFoamPattern(uvA, fuvDdx, fuvDdy);
+                pattern = lerp(baseA, SampleFoamPattern(fuv - flowDir * phaseB, fuvDdx, fuvDdy), seesaw);
 
                 // Distance anti-tiling, same recipe as SampleOceanWhitecapPattern: min() of a
                 // rotated second octave keeps foam only where BOTH octaves agree, breaking the
@@ -409,7 +419,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         fuv.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - fuv.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
                         fuv.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + fuv.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS)
                         / OCEAN_WHITECAP_OCTAVE2_SCALE;
-                    float3 octave1 = SampleFoamPattern(rotated - flowDir * phaseA);
+                    // Same linear transform applied to the hoisted gradients (exact, no new ddx).
+                    float2 rotDdx = float2(
+                        fuvDdx.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - fuvDdx.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
+                        fuvDdx.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + fuvDdx.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS)
+                        / OCEAN_WHITECAP_OCTAVE2_SCALE;
+                    float2 rotDdy = float2(
+                        fuvDdy.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - fuvDdy.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
+                        fuvDdy.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + fuvDdy.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS)
+                        / OCEAN_WHITECAP_OCTAVE2_SCALE;
+                    float3 octave1 = SampleFoamPattern(rotated - flowDir * phaseA, rotDdx, rotDdy);
                     pattern = lerp(pattern, min(pattern, octave1), octaveBlend);
                 }
 
@@ -444,8 +463,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // height, so the negated finite-difference gradient tilts the shading normal
                 // away from raised foam. Taken at phase A of the base octave (relief slightly
                 // lagging the crossfade is imperceptible; the offsets stay consistent).
-                float rx = SampleFoamPattern(uvA + float2(FOAM_PROC_NORMAL_DELTA, 0.0)).r;
-                float rz = SampleFoamPattern(uvA + float2(0.0, FOAM_PROC_NORMAL_DELTA)).r;
+                float rx = SampleFoamPattern(uvA + float2(FOAM_PROC_NORMAL_DELTA, 0.0), fuvDdx, fuvDdy).r;
+                float rz = SampleFoamPattern(uvA + float2(0.0, FOAM_PROC_NORMAL_DELTA), fuvDdx, fuvDdy).r;
                 tilt = -FOAM_PROC_NORMAL_GAIN * float2(rx - baseA.r, rz - baseA.r)
                      * (_FoamNormalStrength * mask);
             }
@@ -458,26 +477,41 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // tileSize is a PARAMETER so the surf whitewash can reuse this exact pipeline with its
             // own dedicated tiling (decoupled from the ocean whitecap knob); the no-arg wrappers
             // below keep the ocean call sites unchanged.
-            float3 SampleOceanWhitecapPatternTiled(float2 worldXZ, float camDist, float tileSize)
+            // WGSL derivative uniformity: worldDdx/worldDdy are the screen derivatives of the BASE
+            // (pre-parallax) world XZ, hoisted by the caller in uniform control flow - these taps run
+            // inside non-uniform coverage branches where implicit-derivative tex2D is undefined. The
+            // parallax lift is ADDITIVE so the base gradients are exact; the tile divide and the
+            // rotated octave are linear, so the gradients get the same scale/rotation.
+            float3 SampleOceanWhitecapPatternTiled(float2 worldXZ, float camDist, float tileSize,
+                                                   float2 worldDdx, float2 worldDdy)
             {
                 // Dedicated whitecap: a single seamless tiling texture sampled with hardware Repeat wrap -
                 // no frac/flipbook cell, so no atlas mip-bleed and no tile-edge seam. The rotated second
                 // octave still hides the texture's own repeat toward the horizon.
-                float2 uv0 = worldXZ / max(tileSize, 1e-3);
-                float3 octave0 = tex2D(_OceanWhitecapTex, uv0).rgb;
+                float tile0 = max(tileSize, 1e-3);
+                float2 uv0 = worldXZ / tile0;
+                float3 octave0 = tex2Dgrad(_OceanWhitecapTex, uv0, worldDdx / tile0, worldDdy / tile0).rgb;
 
                 float2 rotated = float2(
                     worldXZ.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - worldXZ.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
                     worldXZ.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + worldXZ.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS);
-                float3 octave1 = tex2D(_OceanWhitecapTex, rotated / max(tileSize * OCEAN_WHITECAP_OCTAVE2_SCALE, 1e-3)).rgb;
+                float tile1 = max(tileSize * OCEAN_WHITECAP_OCTAVE2_SCALE, 1e-3);
+                float2 rotDdx = float2(
+                    worldDdx.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - worldDdx.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
+                    worldDdx.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + worldDdx.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS) / tile1;
+                float2 rotDdy = float2(
+                    worldDdy.x * OCEAN_WHITECAP_OCTAVE2_ROT_COS - worldDdy.y * OCEAN_WHITECAP_OCTAVE2_ROT_SIN,
+                    worldDdy.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + worldDdy.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS) / tile1;
+                float3 octave1 = tex2Dgrad(_OceanWhitecapTex, rotated / tile1, rotDdx, rotDdy).rgb;
 
                 float blend = saturate(camDist / OCEAN_WHITECAP_OCTAVE_BLEND_DIST);
                 return lerp(octave0, min(octave0, octave1), blend);
             }
 
-            float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist)
+            float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist,
+                                              float2 worldDdx, float2 worldDdy)
             {
-                return SampleOceanWhitecapPatternTiled(worldXZ, camDist, _OceanFoamTileSize);
+                return SampleOceanWhitecapPatternTiled(worldXZ, camDist, _OceanFoamTileSize, worldDdx, worldDdy);
             }
 
             // Relief tilt (xy) of the whitecap, derived PROCEDURALLY from the albedo tile by finite
@@ -485,19 +519,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // negated gradient tilts the shading normal away from raised foam. Self-flattening - where
             // there is no foam the gradient is ~0 - and it retires the separate normal-map texture
             // (_OceanWhitecapNormalTex kept only as an unused asset on disk).
-            float2 SampleOceanWhitecapTiltTiled(float2 worldXZ, float tileSize)
+            // WGSL derivative uniformity: same hoisted-gradient contract as the pattern sampler above -
+            // called inside non-uniform foam branches, so the finite-difference taps use explicit
+            // gradients (the tap offsets are additive, so all three share the base uv gradients).
+            float2 SampleOceanWhitecapTiltTiled(float2 worldXZ, float tileSize,
+                                                float2 worldDdx, float2 worldDdy)
             {
                 float tile = max(tileSize, 1e-3);
                 float dd = tile * OCEAN_FOAM_NORMAL_DELTA;
-                float c  = tex2D(_OceanWhitecapTex, worldXZ / tile).r;
-                float cx = tex2D(_OceanWhitecapTex, (worldXZ + float2(dd, 0.0)) / tile).r;
-                float cz = tex2D(_OceanWhitecapTex, (worldXZ + float2(0.0, dd)) / tile).r;
+                float2 uvDdx = worldDdx / tile;
+                float2 uvDdy = worldDdy / tile;
+                float c  = tex2Dgrad(_OceanWhitecapTex, worldXZ / tile, uvDdx, uvDdy).r;
+                float cx = tex2Dgrad(_OceanWhitecapTex, (worldXZ + float2(dd, 0.0)) / tile, uvDdx, uvDdy).r;
+                float cz = tex2Dgrad(_OceanWhitecapTex, (worldXZ + float2(0.0, dd)) / tile, uvDdx, uvDdy).r;
                 return -OCEAN_FOAM_NORMAL_GAIN * float2(cx - c, cz - c);
             }
 
-            float2 SampleOceanWhitecapTilt(float2 worldXZ)
+            float2 SampleOceanWhitecapTilt(float2 worldXZ, float2 worldDdx, float2 worldDdy)
             {
-                return SampleOceanWhitecapTiltTiled(worldXZ, _OceanFoamTileSize);
+                return SampleOceanWhitecapTiltTiled(worldXZ, _OceanFoamTileSize, worldDdx, worldDdy);
             }
 
             struct appdata { float4 vertex : POSITION; };
@@ -578,15 +618,28 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // SOURCE xz (before the xz displacement) is carried to the fragment so its normal reads
                 // the wave at the same point the vertex did. No-op for pool/small bodies (_LargeBody = 0).
                 o.largeWaveSourceXZ = worldPos.xz;
+                // ONE shore + surf sample per vertex, shared by the wave height, the chop and the
+                // swash film block below (the old path re-sampled the shore and re-evaluated the
+                // surf fronts inside Height, again inside Displacement, and a third time for the
+                // swash - ~2.5x the whole field per vertex). Inert defaults keep pools byte-identical.
+                ShoreData shoreVert = ShoreDataInert();
+                SurfWaveSample surfVert = SurfWaveSampleInert();
                 if (_LargeBody > 0.5)
                 {
                     float2 sourceXZ = worldPos.xz;
                     o.largeWaveSourceXZ = sourceXZ;
-                    // Height + chop. The far-field band-limit (dropping short waves the coarse mesh can't
-                    // resolve, keeping the long swell) lives INSIDE these functions now, driven by
-                    // camera distance - no-op for bounded bodies (_LargeWaveDetailSlope = 0).
-                    worldPos.y  += LargeBodyWaveHeight(sourceXZ);
-                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
+                    shoreVert = ShoreSample(sourceXZ);
+                    surfVert = EvaluateSurfWaves(sourceXZ, shoreVert.depth, shoreVert.sdfDist,
+                                                 shoreVert.toShore, shoreVert.slopeTan,
+                                                 shoreVert.influence, _SurfBeatTime);
+                    // Height + chop from one field evaluation. The far-field band-limit (dropping
+                    // short waves the coarse mesh can't resolve, keeping the long swell) lives
+                    // INSIDE, driven by camera distance - no-op for bounded bodies.
+                    float lbwHeight;
+                    float2 lbwDisp;
+                    LargeBodyWaveHeightDispShore(sourceXZ, shoreVert, surfVert, lbwHeight, lbwDisp);
+                    worldPos.y  += lbwHeight;
+                    worldPos.xz += lbwDisp; // 0 when choppiness = 0
                 }
                 // Hero wave (surfable breaking wave). BASE offset on every open-water vertex, so the
                 // ocean itself rises/leans/collapses with the wave (one surface, no flat plane under
@@ -622,13 +675,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // glaze would never render. Fragments past the drying wet line stay under the sand
                 // (depth-occluded) and are clipped in the fragment anyway; the still-water region
                 // is untouched (the lift only ever RAISES onto dry ground).
-                if (_SurfActive > 0.5 && _ShoreDepthValid > 0.5 && _UseBedDepth > 0.5)
+                // Gates match the fragment's clip/glaze block exactly (_BedValid included): if the
+                // pool-frame bed bake failed, the fragment never clips the beach, so lifting film
+                // geometry here would print a floating water sheet on dry sand. The shore sample +
+                // swash are evaluated at the SOURCE xz - the same point the fragment uses - so the
+                // lifted film and the wet-sand glaze breathe on the same swash phase even under
+                // horizontal chop displacement (they used to sample different points).
+                if (_SurfActive > 0.5 && _ShoreDepthValid > 0.5 && _UseBedDepth > 0.5
+                    && _BedValid > 0.5 && _LargeBody > 0.5)
                 {
-                    ShoreData shoreVert = ShoreSample(worldPos.xz);
                     float beachRise = -shoreVert.depth; // metres the sand sits above the still level
                     if (shoreVert.influence > 0.0 && beachRise > 0.0)
                     {
-                        float2 swashVert = EvaluateSurfSwash(worldPos.xz, shoreVert.toShore,
+                        float2 swashVert = EvaluateSurfSwash(o.largeWaveSourceXZ, shoreVert.toShore,
                                                              shoreVert.slopeTan,
                                                              shoreVert.influence, _SurfBeatTime);
                         if (swashVert.y > 1e-3)
@@ -661,20 +720,30 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             // Sample the environment (reflection probe / procedural sky) for a WORLD-space ray,
             // plus the sun glint. This is what the water REFLECTS - never the analytic pool tiles.
-            float3 SampleEnvironment(float3 worldRay)
+            // WGSL derivative uniformity: the grad variant exists for call sites inside NON-UNIFORM
+            // control flow (getSurfaceRayColor's per-fragment up/down ray split), where texCUBE's
+            // implicit derivatives are undefined - the caller hoists ddx/ddy of the ray beforehand.
+            float3 SampleEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
             {
                 // Reflection base is ALWAYS a plain cubemap in _Sky: the assigned Sky slot for procedural
                 // sky, or the scene's skybox cubemap when Reflect URP Probe is on (WaterUniformPublisher
                 // picks which). Sampling a cubemap works in EVERY render path - unlike unity_SpecCube0,
                 // which URP Forward+ (used on WebGPU) does not bind per-object, so the old probe path read
                 // the default/skybox and the plane showed no reflection.
-                float3 color = texCUBE(_Sky, worldRay).rgb;
+                float3 color = texCUBEgrad(_Sky, worldRay, rayDdx, rayDdy).rgb;
                 // Art-directed brightness of the reflected environment (sky OR probe). Applied before the
                 // sun glint so the glint stays a fixed specular regardless of the mirror intensity.
                 color *= _EnvReflectionIntensity;
                 // sun glint - direction from _LightDir, tint/brightness from the Unity sun
                 color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
                 return color;
+            }
+
+            // Implicit-derivative convenience for UNIFORM control flow (the reflection paths and the
+            // horizon haze, all gated on uniforms) - identical result, no hoisting needed there.
+            float3 SampleEnvironment(float3 worldRay)
+            {
+                return SampleEnvironmentGrad(worldRay, ddx(worldRay), ddy(worldRay));
             }
 
             // ---- Manual URP main-light shadow tap (this pass is CGPROGRAM and cannot include URP's
@@ -740,8 +809,77 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0) * waterColor;
             }
 
+            // ---- WGSL derivative uniformity: gradient-fed clones of WaterCommon.hlsl's
+            // GetWallShadeSplit / GetWallColorShadowed. getSurfaceRayColor reaches the wall colour
+            // inside a PER-FRAGMENT (non-uniform) ray branch, where the include's implicit-derivative
+            // tex2D taps of _CausticTex / _Tiles are undefined in WGSL - and the include can't take
+            // gradients without changing every other caller. The maths below is byte-identical to
+            // the include; only the two taps become tex2Dgrad fed by the caller's hoisted
+            // floor-point derivatives. ----
+            float GetWallShadeSplitGrad(float3 p, float3 normal, float3 pDdx, float3 pDdy,
+                                        out float causticTerm)
+            {
+                causticTerm = 0.0;
+                float scale = 0.5;
+                scale /= max(length(p), POOL_AO_MIN_DIST);                                 // pool ambient occlusion
+
+                float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
+                float diffuse = max(0.0, dot(refractedLight, normal));
+                // Manual bilinear (not tex2D): WebGPU point-samples float32 textures, which turned
+                // the above/below-waterline cut into a blocky stair-step in builds.
+                float4 info = SampleWaterBilinear(p.xz * 0.5 + 0.5);
+                if (p.y < info.r)
+                {
+                    // ProjectCausticUV is linear in p (refractedLight is uniform), so differencing it
+                    // along the hoisted position derivatives yields the exact caustic-UV gradients.
+                    float2 cuv = ProjectCausticUV(p, refractedLight);
+                    float2 cuvDdx = ProjectCausticUV(p + pDdx, refractedLight) - cuv;
+                    float2 cuvDdy = ProjectCausticUV(p + pDdy, refractedLight) - cuv;
+                    float4 caustic = tex2Dgrad(_CausticTex, cuv, cuvDdx, cuvDdy);
+                    causticTerm = diffuse * caustic.r * caustic.g;
+                }
+                else
+                {
+                    // shadow for the rim of the pool
+                    float2 t = IntersectCube(p, refractedLight, POOL_BOX_MIN, POOL_BOX_MAX);
+                    diffuse *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (p.y + refractedLight.y * t.y - POOL_RIM_HEIGHT)));
+                    scale += diffuse * 0.5;
+                }
+                return scale;
+            }
+
+            float3 GetWallColorShadowedGrad(float3 p, float causticShadow, float3 pDdx, float3 pDdy)
+            {
+                float2 uv; float3 normal, tangent, bitangent;
+                WallSurface(p, uv, normal, tangent, bitangent);
+                // The wall UV is a per-face linear pick of two position components (WallSurface):
+                // mirror the same face selection on the hoisted position derivatives.
+                float2 uvDdx, uvDdy;
+                if (abs(p.x) > 0.999)      { uvDdx = pDdx.yz * 0.5; uvDdy = pDdy.yz * 0.5; }
+                else if (abs(p.z) > 0.999) { uvDdx = pDdx.yx * 0.5; uvDdy = pDdy.yx * 0.5; }
+                else                       { uvDdx = pDdx.xz * 0.5; uvDdy = pDdy.xz * 0.5; }
+                float causticTerm;
+                float scale = GetWallShadeSplitGrad(p, normal, pDdx, pDdy, causticTerm);
+                float shade = scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH * causticShadow;
+                return tex2Dgrad(_Tiles, uv, uvDdx, uvDdy).rgb * shade;
+            }
+
             float3 getSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor)
             {
+                // WGSL derivative uniformity: the down/up ray split below is per-fragment
+                // (non-uniform) and BOTH sides sample textures (pool tiles/caustic, sky cube).
+                // Hoist the screen derivatives of every sampling coordinate here, in uniform
+                // control flow (both call sites branch only on uniforms), so the in-branch
+                // samples can use explicit gradients. The floor point is computed for every
+                // fragment purely so its derivative is well-defined; up rays never read it.
+                float3 rayDdx = ddx(worldRay);
+                float3 rayDdy = ddy(worldRay);
+                float3 po = WorldToPool(worldOrigin);
+                float3 pd = WorldDirToPool(worldRay);
+                float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
+                float3 floorPool = po + pd * t.y;
+                float3 floorDdx = ddx(floorPool);
+                float3 floorDdy = ddy(floorPool);
                 if (worldRay.y < 0.0)
                 {
                     // Open water has no pool floor to sample: return the deep-water inscattering
@@ -757,16 +895,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     if (_ProceduralPool < 0.5 || _RealRefraction > 0.5)
                         return DeepWaterColor(worldOrigin, waterColor);
 
-                    float3 po = WorldToPool(worldOrigin);
-                    float3 pd = WorldDirToPool(worldRay);
-                    float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
                     // Gate the floor caustic by the main-light shadow at the FLOOR's world position, so
                     // a caster's shadow on the pool bottom kills the caustic there (like the geometry paths).
-                    float3 floorPool = po + pd * t.y;
                     float causticShadow = WaterMainLightShadow(PoolToWorld(floorPool));
-                    return GetWallColorShadowed(floorPool, causticShadow) * waterColor;
+                    return GetWallColorShadowedGrad(floorPool, causticShadow, floorDdx, floorDdy) * waterColor;
                 }
-                return SampleEnvironment(worldRay);
+                return SampleEnvironmentGrad(worldRay, rayDdx, rayDdy);
             }
 
             fixed4 frag(v2f i) : SV_Target
@@ -910,14 +1044,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
                         float mask = saturate((advected + border) * _FoamStrength);
 
+                        // Same world-space pattern UV as the above-water side. Computed (with its
+                        // screen derivatives) BEFORE the mask branch: WGSL requires derivatives in
+                        // uniform control flow, and the branch below is per-fragment.
+                        float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+                                   + normal.xz * FOAM_NORMAL_NUDGE;
+                        float2 fuvDdx = ddx(fuv);
+                        float2 fuvDdy = ddy(fuv);
+
                         if (mask > FOAM_MASK_EPSILON)
                         {
-                            // Same world-space pattern UV as the above-water side.
-                            float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
-                                       + normal.xz * FOAM_NORMAL_NUDGE;
                             float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
                             float3 pattern; float core, lace, foamAlpha; float2 tilt;
-                            EvaluateFoam(fuv, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+                            EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
 
                             // Applied BEFORE the downwelling dim below, so the silhouette
                             // and its glow fade with eye depth like the rest of the scene.
@@ -1037,6 +1176,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
                     float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
                     float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
+                    // WGSL derivative uniformity: whitecap/whitewash pattern gradients, hoisted HERE
+                    // (uniform control flow) for every non-uniform coverage branch below - the ocean
+                    // whitecap, its tilt, and the surf whitewash all sample from this base world XZ
+                    // (their parallax lift is additive, so these gradients stay exact).
+                    float2 foamWorldDdx = ddx(i.largeWaveSourceXZ);
+                    float2 foamWorldDdy = ddy(i.largeWaveSourceXZ);
                     if (_OceanFftActive > 0.5)
                     {
                         // The surf band is the surf system's territory: the FFT foam ACCUMULATOR
@@ -1058,7 +1203,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                             // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
                             // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
                             float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
-                            oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist);
+                            oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
+                                                                          foamWorldDdx, foamWorldDdy);
                             // KWS contrast law: dense coverage RELAXES the contrast (heavy foam stops
                             // being eroded into lace and goes solid) and the dissolve threshold falls
                             // with sqrt(coverage) so mid coverage reaches further into the pattern.
@@ -1090,7 +1236,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         // breakup matches the texture. Built as a LOCAL normal - the base wave normal that the
                         // pond foam / haze below rely on is left untouched. Default "bump" map = zero tilt.
                         // Tilt is sampled at the SAME parallax-lifted point as the pattern so they stay glued. ----
-                        float2 oceanFoamTilt = SampleOceanWhitecapTilt(oceanFoamSampleXZ)
+                        float2 oceanFoamTilt = SampleOceanWhitecapTilt(oceanFoamSampleXZ,
+                                                                       foamWorldDdx, foamWorldDdy)
                                              * (_FoamNormalStrength * oceanFoam);
                         float3 oceanFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
                         float3 oceanFoamBitangent = cross(normal, oceanFoamTangent);
@@ -1141,16 +1288,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                         float mask = saturate((advected + border + contact) * _FoamStrength);
 
+                        // WORLD-space pattern UV (like the ocean whitecap): scale set by the
+                        // body's Foam Pattern Size, independent of extent, anchored under a
+                        // scrolling window; nudged by the surface tilt so foam rides ripples.
+                        // Computed (with its screen derivatives) BEFORE the mask branch: WGSL
+                        // requires derivatives in uniform control flow, and the branch below
+                        // is per-fragment.
+                        float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+                                   + normal.xz * FOAM_NORMAL_NUDGE;
+                        float2 fuvDdx = ddx(fuv);
+                        float2 fuvDdy = ddy(fuv);
+
                         if (mask > FOAM_MASK_EPSILON)
                         {
-                            // WORLD-space pattern UV (like the ocean whitecap): scale set by the
-                            // body's Foam Pattern Size, independent of extent, anchored under a
-                            // scrolling window; nudged by the surface tilt so foam rides ripples.
-                            float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
-                                       + normal.xz * FOAM_NORMAL_NUDGE;
                             float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
                             float3 pattern; float core, lace, foamAlpha; float2 tilt;
-                            EvaluateFoam(fuv, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+                            EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
 
                             // ---- Foam relief: tilt the lighting normal by the foam's own
                             // normal map so the lace shades three-dimensionally. ----
@@ -1186,7 +1339,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                             * (OCEAN_FOAM_PARALLAX_HEIGHT / max(surfViewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
                         float surfDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
                         float surfTile = max(_SurfFoamTileSize, 1e-3);
-                        float3 surfPattern = SampleOceanWhitecapPatternTiled(surfSampleXZ, surfDist, surfTile);
+                        // Gradients hoisted with the whitecap's (foamWorldDdx/Ddy above): same base
+                        // world XZ, additive parallax - exact for this tap too (WGSL uniformity).
+                        float3 surfPattern = SampleOceanWhitecapPatternTiled(surfSampleXZ, surfDist, surfTile,
+                                                                             foamWorldDdx, foamWorldDdy);
                         // KWS contrast law: dense coverage relaxes the contrast (heavy whitewash
                         // goes solid) and the dissolve threshold falls with sqrt(coverage).
                         float surfContrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, surfCoverage);
@@ -1197,7 +1353,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                                     surfSharpened);
                         if (surfFoam > FOAM_MASK_EPSILON)
                         {
-                            float2 surfTiltXY = SampleOceanWhitecapTiltTiled(surfSampleXZ, surfTile)
+                            float2 surfTiltXY = SampleOceanWhitecapTiltTiled(surfSampleXZ, surfTile,
+                                                                             foamWorldDdx, foamWorldDdy)
                                               * (_FoamNormalStrength * surfFoam);
                             float3 surfFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
                             float3 surfFoamBitangent = cross(normal, surfFoamTangent);

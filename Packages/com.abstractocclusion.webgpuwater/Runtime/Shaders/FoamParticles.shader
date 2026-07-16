@@ -41,6 +41,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #include "WaterLargeWaves.hlsl" // FFT ocean surface: LargeBodyWaveHeight, OceanFftNormalTilt, _OceanFftActive
             #include "WaterHeroWave.hlsl"   // hero-wave base height: foam must ride the breaking wave
             #include "WaterFoamCommon.hlsl" // shared foam lighting + erosion (FOAM_LIGHT_WRAP, EROSION_SOFTNESS...)
+            #include "WaterParticleCommon.hlsl" // billboard corner expansion + flipbook atlas cell
 
             // Atlas layout is a uniform now (_ParticleFlipbookGrid): (1,1) = a plain non-atlas texture,
             // (2,2) etc. = a flipbook. Optional, like the surface foam's _FoamTexFrames.
@@ -58,9 +59,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #define SURFACE_LIFT         0.004
 
             static const float KIND_SPRAY = 1.0;
-            static const float2 QUAD_CORNERS[4] =
-                { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
-            static const uint QUAD_INDICES[6] = { 0, 1, 2, 2, 1, 3 };
+            // Corner expansion + flipbook cell come from WaterParticleCommon.hlsl (shared
+            // with SurfRollerParticles.shader).
 
             // MUST match FoamParticle in WaterFoamParticles.compute (48 bytes).
             struct FoamParticle
@@ -118,7 +118,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // this draw keeps only the ballistic spray as textured billboards.
                 if (particle.kind != KIND_SPRAY && _SurfaceQuadsEnabled < 0.5) return Dead();
 
-                float2 corner = QUAD_CORNERS[QUAD_INDICES[vid % 6]];
+                float2 corner = ParticleQuadCorner(vid);
 
                 // ---- glue the particle to the animated surface ----
                 float3 surfaceWorld;
@@ -185,7 +185,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 else
                 {
                     // in the surface plane: seed yaw, stretched along the drift direction
-                    float yaw = particle.seed * 6.2831853;
+                    float yaw = particle.seed * PARTICLE_TWO_PI;
                     float3 flat0 = normalize(cross(surfaceNormal, float3(0, 0, 1)));
                     float3 flat1 = cross(surfaceNormal, flat0);
                     axisX = flat0 * cos(yaw) + flat1 * sin(yaw);
@@ -204,16 +204,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // ---- life envelope ----
                 float envelope = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
 
-                // ---- sprite cell from the atlas: a fixed per-seed variant, or an animated flipbook (foam
-                // churn) when _ParticleFlipbookFps > 0. The seed offsets each particle's phase so they never
-                // flip in lockstep. Grid (1,1) = a plain texture (no cells, no animation); fps = 0 = the
-                // original static variant. ----
-                float2 grid = max(float2(1.0, 1.0), _ParticleFlipbookGrid.xy);
-                float cellCount = grid.x * grid.y;
-                float framePos = particle.seed * cellCount + particle.age * _ParticleFlipbookFps;
-                float variant = fmod(floor(framePos), cellCount);
-                float2 cell = float2(fmod(variant, grid.x), floor(variant / grid.x));
-                float2 uv = (corner * 0.5 + 0.5 + cell) / grid;
+                // ---- sprite cell from the atlas: a fixed per-seed variant, or an animated flipbook
+                // (foam churn) when _ParticleFlipbookFps > 0 (shared math, WaterParticleCommon.hlsl) ----
+                float2 uv = ParticleFlipbookUv(corner, _ParticleFlipbookGrid.xy,
+                                               particle.seed, particle.age, _ParticleFlipbookFps);
 
                 // ---- lighting, matched to the surface foam ----
                 float wrapped = FoamWrappedDiffuse(surfaceNormal, _LightDir);

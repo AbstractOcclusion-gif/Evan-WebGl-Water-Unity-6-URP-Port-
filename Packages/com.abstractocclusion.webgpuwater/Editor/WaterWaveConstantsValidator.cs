@@ -27,6 +27,9 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         const string HlslExtension = ".hlsl";
         const string CSharpAssetName = "LargeWaveField";
         const string CSharpExtension = ".cs";
+        const string FoamComputeAssetName = "WaterFoamParticles";
+        const string ComputeExtension = ".compute";
+        const string SplashEmitterAssetName = "WaterSplashEmitter";
 
         // Relative tolerance for a matching value. The constants are authored to a few
         // decimal places; anything closer than this is the same number written two ways.
@@ -76,6 +79,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             ("SURF_FACE_FRACTION",          "SurfFaceFraction"),
             ("SURF_BACK_FRACTION",          "SurfBackFraction"),
             ("SURF_SET_WAVES",              "SurfSetWaves"),
+            ("SURF_EDGE_BLEND_START",       "SurfEdgeBlendStart"),
             ("SURF_NEAR_FADE",              "SurfNearFade"),
             ("SURF_SECH_ARG_MAX",           "SurfSechArgMax"),
             ("SURF_SLOPE_EPSILON",          "SurfSlopeEpsilon"),
@@ -92,6 +96,20 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             ("SURF_PLUNGE_FACE_SHARPEN",    "SurfPlungeFaceSharpen"),
         };
 
+        // Splash-burst shaping: authored twice as BURST_* static consts in
+        // WaterFoamParticles.compute (the GPU spray path) and as consts in
+        // WaterSplashEmitter.cs (the legacy Shuriken fallback). The two paths must keep the
+        // same feel or the look silently forks depending on whether a body has a GPU pool.
+        static readonly (string Hlsl, string CSharp)[] SplashBurstConstantPairs =
+        {
+            ("BURST_OUT_JITTER_MIN",    "OutwardJitterMin"),
+            ("BURST_OUT_JITTER_MAX",    "OutwardJitterMax"),
+            ("BURST_UP_JITTER_MIN",     "UpwardJitterMin"),
+            ("BURST_UP_JITTER_MAX",     "UpwardJitterMax"),
+            ("BURST_RING_RADIUS_SCALE", "SpawnRingRadiusScale"),
+            ("BURST_SPAWN_HEIGHT",      "SpawnHeightAboveSurface"),
+        };
+
         // Captures the numeric literal, tolerating scientific notation and a trailing C# 'f'.
         const string NumberPattern = @"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)";
 
@@ -106,33 +124,40 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         {
             if (!TryReadPackageAsset(LargeWavesHlslAssetName, HlslExtension, out string largeWavesSource, out string readError) ||
                 !TryReadPackageAsset(SurfWavesHlslAssetName, HlslExtension, out string surfWavesSource, out readError) ||
-                !TryReadPackageAsset(CSharpAssetName, CSharpExtension, out string cSharpSource, out readError))
+                !TryReadPackageAsset(CSharpAssetName, CSharpExtension, out string cSharpSource, out readError) ||
+                !TryReadPackageAsset(FoamComputeAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
+                !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError))
             {
                 Debug.LogWarning(LogPrefix + "validation skipped - " + readError);
                 return;
             }
 
             var problems = new List<string>();
-            CollectProblems(problems, LargeWavesHlslAssetName, largeWavesSource, cSharpSource, LargeWavesConstantPairs);
-            CollectProblems(problems, SurfWavesHlslAssetName, surfWavesSource, cSharpSource, SurfWavesConstantPairs);
+            CollectProblems(problems, LargeWavesHlslAssetName, HlslExtension, largeWavesSource,
+                            CSharpAssetName, cSharpSource, LargeWavesConstantPairs);
+            CollectProblems(problems, SurfWavesHlslAssetName, HlslExtension, surfWavesSource,
+                            CSharpAssetName, cSharpSource, SurfWavesConstantPairs);
+            CollectProblems(problems, FoamComputeAssetName, ComputeExtension, foamComputeSource,
+                            SplashEmitterAssetName, splashEmitterSource, SplashBurstConstantPairs);
             if (problems.Count == 0) return;
 
             Debug.LogError(BuildReport(problems));
         }
 
-        static void CollectProblems(List<string> problems, string hlslAssetName, string hlslSource,
-                                    string cSharpSource, (string Hlsl, string CSharp)[] constantPairs)
+        static void CollectProblems(List<string> problems, string hlslAssetName, string hlslExtension,
+                                    string hlslSource, string cSharpAssetName, string cSharpSource,
+                                    (string Hlsl, string CSharp)[] constantPairs)
         {
             foreach ((string hlslName, string cSharpName) in constantPairs)
             {
-                if (!TryParseHlslDefine(hlslSource, hlslName, out double hlslValue))
+                if (!TryParseHlslConstant(hlslSource, hlslName, out double hlslValue))
                 {
-                    problems.Add($"{hlslName}: not found in {hlslAssetName}{HlslExtension} (renamed or removed?)");
+                    problems.Add($"{hlslName}: not found in {hlslAssetName}{hlslExtension} (renamed or removed?)");
                     continue;
                 }
                 if (!TryParseCSharpConst(cSharpSource, cSharpName, out double cSharpValue))
                 {
-                    problems.Add($"{cSharpName}: not found in {CSharpAssetName}{CSharpExtension} (renamed or removed?)");
+                    problems.Add($"{cSharpName}: not found in {cSharpAssetName}{CSharpExtension} (renamed or removed?)");
                     continue;
                 }
                 if (!ValuesMatch(hlslValue, cSharpValue))
@@ -148,10 +173,14 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             return System.Math.Abs(a - b) <= MatchTolerance * scale;
         }
 
-        static bool TryParseHlslDefine(string source, string name, out double value)
+        // HLSL constants are authored either as #defines (the wave headers) or as
+        // `static const <type> NAME = value;` (the particle computes) - accept both.
+        static bool TryParseHlslConstant(string source, string name, out double value)
         {
-            string pattern = $@"#define\s+{Regex.Escape(name)}\s+{NumberPattern}";
-            return TryMatchNumber(source, pattern, out value);
+            string definePattern = $@"#define\s+{Regex.Escape(name)}\s+{NumberPattern}";
+            if (TryMatchNumber(source, definePattern, out value)) return true;
+            string staticConstPattern = $@"static\s+const\s+\w+\s+{Regex.Escape(name)}\s*=\s*{NumberPattern}";
+            return TryMatchNumber(source, staticConstPattern, out value);
         }
 
         static bool TryParseCSharpConst(string source, string name, out double value)

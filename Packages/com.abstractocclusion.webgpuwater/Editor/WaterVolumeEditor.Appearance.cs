@@ -89,16 +89,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.bedFadeDepth",
                     "bedDepthSettings.bedTintStrength",
                     "bedDepthSettings.shoreShoalDepth");
-                WaterEditorUI.SubHeading("Shoal transform");
-                DrawFields(
-                    "bedDepthSettings.shoreRefraction",
-                    "bedDepthSettings.shoreCompression",
-                    "bedDepthSettings.shoreGreens");
                 WaterEditorUI.SubHeading("Surf breaker fronts");
                 DrawFields(
                     "bedDepthSettings.surfEnabled",
-                    "bedDepthSettings.surfAmplitude",
-                    "bedDepthSettings.surfWavelengthAuto");
+                    "bedDepthSettings.surfAmplitude");
+                // Runtime silently floors the surf amplitude at the swell height; surface the
+                // effective value here whenever that floor is actually raising it.
+                if (target is WaterVolume floorVolume &&
+                    floorVolume.SwellHeight > Prop("bedDepthSettings.surfAmplitude").floatValue)
+                    EditorGUILayout.LabelField(" ",
+                        $"Effective: {floorVolume.SurfAmplitudeEffective:0.##} m (floored at the swell height)",
+                        EditorStyles.miniLabel);
+                DrawFields("bedDepthSettings.surfWavelengthAuto");
                 // Manual spacing only applies with Auto off; greyed (not hidden) so the stored
                 // hand-tuned value stays visible. With Auto on, show the derived spacing readout.
                 bool wavelengthAuto = Prop("bedDepthSettings.surfWavelengthAuto").boolValue;
@@ -107,25 +109,37 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     EditorGUILayout.LabelField(" ",
                         $"Derived spacing: {surfVolume.SurfWavelengthEffective:0.#} m",
                         EditorStyles.miniLabel);
-                DrawFields(
-                    "bedDepthSettings.surfPeriod",
-                    "bedDepthSettings.surfBandDepth",
-                    "bedDepthSettings.surfSetStrength",
-                    "bedDepthSettings.surfCrestLength",
-                    "bedDepthSettings.surfCrestVariation",
-                    "bedDepthSettings.surfCrestPersistence",
-                    "bedDepthSettings.surfDirectionality",
-                    "bedDepthSettings.surfLean",
-                    "bedDepthSettings.surfAmbientFade",
-                    "bedDepthSettings.surfSwashAmplitude",
-                    "bedDepthSettings.surfFoamGain",
-                    "bedDepthSettings.surfWaterlineFoam");
-                WaterEditorUI.SubHeading("Surf foam look");
-                DrawFields(
-                    "bedDepthSettings.surfFoamStrength",
-                    "bedDepthSettings.surfFoamFeather",
-                    "bedDepthSettings.surfFoamTileSize",
-                    "bedDepthSettings.surfFoamColor");
+                DrawFields("bedDepthSettings.surfPeriod");
+                _showSurfAdvanced = WaterEditorUI.SubSection("Advanced", _showSurfAdvanced, () =>
+                {
+                    WaterEditorUI.SubHeading("Shoal transform");
+                    DrawFields(
+                        "bedDepthSettings.shoreRefraction",
+                        "bedDepthSettings.shoreCompression",
+                        "bedDepthSettings.shoreGreens");
+                    WaterEditorUI.SubHeading("Front shaping");
+                    DrawFields(
+                        "bedDepthSettings.surfBandDepth",
+                        "bedDepthSettings.surfSetStrength",
+                        "bedDepthSettings.surfLean",
+                        "bedDepthSettings.surfAmbientFade",
+                        "bedDepthSettings.surfDirectionality");
+                    WaterEditorUI.SubHeading("Crest segmentation");
+                    DrawFields(
+                        "bedDepthSettings.surfCrestLength",
+                        "bedDepthSettings.surfCrestVariation",
+                        "bedDepthSettings.surfCrestPersistence");
+                    WaterEditorUI.SubHeading("Swash");
+                    DrawFields("bedDepthSettings.surfSwashAmplitude");
+                    WaterEditorUI.SubHeading("Foam");
+                    DrawFields(
+                        "bedDepthSettings.surfFoamGain",
+                        "bedDepthSettings.surfWaterlineFoam",
+                        "bedDepthSettings.surfFoamStrength",
+                        "bedDepthSettings.surfFoamFeather",
+                        "bedDepthSettings.surfFoamTileSize",
+                        "bedDepthSettings.surfFoamColor");
+                });
             });
         }
 
