@@ -63,6 +63,7 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             float3 _LightDir;       // global, normalized direction toward the light
             float3 _SunColor;       // global, sun colour * intensity
+            float _CausticOccluderActive; // 1 when submerged objects wrote the refracted occluder shadow into caustic.g
 
             // Interleaved gradient noise (Jimenez, "Next Generation Post Processing in
             // Call of Duty" 2014): a stable per-pixel value in [0,1) from the pixel coords.
@@ -181,12 +182,16 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
 
                     // project the sample down the refracted light onto the caustic map
                     float2 cuv = ProjectCausticUV(pPool, refractedLight);
-                    float caustic = SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv, 0).r;
+                    float4 causticSample = SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv, 0);
+                    float caustic = causticSample.r;
 
-                    // hybrid: occlude this sample by the main light's shadow so solid
-                    // objects punch dark shafts while the caustic flicker is preserved.
+                    // hybrid: occlude this sample so solid objects punch dark shafts while the caustic
+                    // flicker is preserved. When the occluder pass is active the object shadow lives in
+                    // the caustic GREEN channel, sampled at the SAME refracted-projected uv - so the shafts
+                    // BEND with the caustics instead of following the un-refracted shadow map. The shadow
+                    // map is the legacy fallback (also carries non-object casters when no occluder ran).
                     float4 shadowCoord = TransformWorldToShadowCoord(pWorld);
-                    float shadow = MainLightRealtimeShadow(shadowCoord);
+                    float shadow = (_CausticOccluderActive > 0.5) ? causticSample.g : MainLightRealtimeShadow(shadowCoord);
 
                     accum += caustic * shadow * (depthFade * viewFog);
                     depthFade *= depthFadeStep;

@@ -216,6 +216,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // Optional (oceans only): near-field caustics in the sim-window frame. Non-fatal if absent,
             // so bounded/pool builds don't require it - Shader.Find just leaves the field null.
             volume.largeBodyCausticsShader = Shader.Find("AbstractOcclusion/WebGpuWater/LargeBodyCaustics");
+            // Optional: refracted-light object shadow into the caustic RT. Non-fatal if absent (the
+            // occluder pass no-ops and object shadows stay on the un-refracted shadow map).
+            volume.occluderShader = Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
             // Optional (oceans only): the FFT-cascade wave compute. The runtime module only arms on an
             // ocean clipmap body AND with this assigned, so wiring it on every build is inert for
             // pools/lakes - but a wizard-built ocean now gets its FFT waves without hand-wiring the

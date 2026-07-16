@@ -59,6 +59,7 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Shader causticsShader;
         [SerializeField] internal Shader largeBodyCausticsShader; // AbstractOcclusion/WebGpuWater/LargeBodyCaustics - near-field ocean caustics in the sim-window frame (optional; oceans only)
         [SerializeField] internal Shader obstacleShader; // AbstractOcclusion/WebGpuWater/ObstacleDepth - footprint of interactable objects
+        [SerializeField] internal Shader occluderShader; // AbstractOcclusion/WebGpuWater/CausticOccluder - refracted-light object shadow into the caustic RT (optional; Shader.Find fallback)
         [SerializeField] internal Mesh waterMesh;        // XY grid plane, [-1,1], shared with the water surface renderers
         [SerializeField] internal Camera targetCamera;
         [SerializeField] internal Light sun;             // directional light: drives water, caustics AND real shadows
@@ -3049,7 +3050,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Render this body's own sim into its own caustic RT. The RT reaches the renderers
         // via the MPB; the primary also mirrors it to the _CausticTex global for objects.
-        void RenderCaustics() => _caustics.Render(EffectiveWaterMesh, _water?.Texture);
+        void RenderCaustics() => _caustics.Render(EffectiveWaterMesh, _water?.Texture, VolumeCenter.y,
+                                                  VolumeCenter, VolumeExtentSafe, VolumeRotation, lightDir.normalized);
 
         // Project the ocean's near-field window sim into the caustic RT via the large-body (world-frame)
         // caustic, so the underwater god rays can sample real surface-focused shimmer near the camera.

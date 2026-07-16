@@ -63,7 +63,15 @@ namespace AbstractOcclusion.WebGpuWater
 
         public void Initialize(WaterContext context)
             => Caustics = new WaterCausticsPass(_owner.causticsShader, _owner.largeBodyCausticsShader,
-                                                _owner.causticResolution);
+                                                ResolveOccluderShader(_owner), _owner.causticResolution);
+
+        // Optional refracted-light object-shadow shader. Prefer the serialized field (a build assigns it);
+        // fall back to Shader.Find so an existing scene that predates the field still gets the fix in the
+        // editor without re-wiring. Null -> the occluder pass no-ops (caustics unchanged).
+        static UnityEngine.Shader ResolveOccluderShader(WaterVolume owner)
+            => owner.occluderShader != null
+                ? owner.occluderShader
+                : UnityEngine.Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
 
         public void Dispose()
         {

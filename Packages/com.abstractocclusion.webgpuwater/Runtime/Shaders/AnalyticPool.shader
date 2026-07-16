@@ -114,24 +114,35 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
                 float wallShade = GetWallShadeSplit(i.position, wallN, wallCaustic);
                 float3 color = albedo * wallShade;
 
+                // Footprint + sim surface height fetched up front: the underwater object shadow below
+                // needs both. i.position is already pool space. Manual bilinear because WebGPU
+                // point-samples float32 textures (blocky waterline cut otherwise).
+                float inside = FootprintMaskPool(i.position);
+                float4 info = SampleWaterBilinear(i.position.xz * 0.5 + 0.5);
+                bool underwater = (inside > 0.5 && i.position.y < info.r);
+
                 // Main light + shadow fetched up front so caustics can be gated by it below.
                 float4 shadowCoord = TransformWorldToShadowCoord(i.worldPos);
                 Light mainLight = GetMainLight(shadowCoord);
+                float urpShadow = mainLight.shadowAttenuation;
+
+                // Below the surface a caster's shadow must follow the REFRACTED light like the caustics
+                // do - the un-refracted shadow map lands offset underwater (the reported caustic-border
+                // vs shadow mismatch). The occluder pass writes the object silhouette into the caustic
+                // green channel along that same projection; use it below the waterline, keep the real
+                // shadow map for the sunlit rim above. Legacy path when the occluder pass is inactive.
+                float occluderShadow = tex2D(_CausticTex, ProjectCausticUV(i.position, -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER))).g;
+                float objectShadow = (_CausticOccluderActive > 0.5 && underwater) ? occluderShadow : urpShadow;
+                // wallCaustic already carries the green occlusion, so when the pass is active the
+                // refracted shadow is baked into it - don't also multiply the un-refracted shadow map on top.
+                float causticShadowGate = (_CausticOccluderActive > 0.5) ? 1.0 : urpShadow;
+
                 // Soft, art-directed object shadow on the base pool colour (unchanged in full sun).
-                color *= lerp(1.0, mainLight.shadowAttenuation, _ObjectShadowStrength);
-                // Caustics are refracted SUNLIGHT: gate them by the FULL shadow attenuation so they
-                // vanish under a caster (matching WaterReceiver) instead of leaking through the soft
-                // base term at ~40%.
-                color += albedo * _CausticTint.rgb * (wallCaustic * _CausticStrength * mainLight.shadowAttenuation);
+                color *= lerp(1.0, objectShadow, _ObjectShadowStrength);
+                // Caustics are refracted SUNLIGHT: gate them so they vanish under a caster.
+                color += albedo * _CausticTint.rgb * (wallCaustic * _CausticStrength * causticShadowGate);
 
-                // Water shading gates on the footprint so geometry beyond the pool box (a wall
-                // that overhangs, or an oversized user mesh) doesn't pick up the underwater
-                // look. i.position is already pool space, so test it directly.
-                float inside = FootprintMaskPool(i.position);
-
-                // Manual bilinear: WebGPU point-samples float32 textures (blocky waterline cut).
-                float4 info = SampleWaterBilinear(i.position.xz * 0.5 + 0.5);
-                if (inside > 0.5 && i.position.y < info.r) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
+                if (underwater) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
 
                 // One surface height: the sampled sim surface converted to world Y, the same
                 // height the waterline cut above uses. Downwelling and fog measure depth

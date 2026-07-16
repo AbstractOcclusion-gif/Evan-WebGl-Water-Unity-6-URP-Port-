@@ -343,6 +343,7 @@ MonoBehaviour:
   particleMaterial: {fileID: 2100000, guid: 28fcccd712d481e4888246c158e55772, type: 2}
   renderMode: 0
   densityMaterial: {fileID: 0}
+  profile: {fileID: 0}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 50
@@ -351,6 +352,8 @@ MonoBehaviour:
   sprayLaunchSpeed: 0.6
   lifeRange: {x: 0.5, y: 0.8}
   sizeRange: {x: 0.01, y: 0.05}
+  sizeHeroPower: 1
+  spawnMaxDistance: 120
   gravity: 4
   flowDrift: 0.25
   windDriftSpeed: 0.02
@@ -372,7 +375,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
-  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
@@ -527,11 +529,36 @@ MonoBehaviour:
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
     bedFadeDepth: 6
     bedTintStrength: 0.8
+    clarityFromDepth: 0
+    clarityShallowDepth: 0.5
+    clarityDeepDepth: 8
+    clarityShallow: 1
+    clarityDeep: 0
+    clarityStrength: 1
     shoreShoalDepth: 4
-    sweZoneMeters: 96
-    sweResolution: 256
-    swePumpGain: 0.05
-    swePushGain: 0.3
+    shoreRefraction: 0.7
+    shoreCompression: 0.6
+    shoreGreens: 1.35
+    surfEnabled: 1
+    surfAmplitude: 0.8
+    surfWavelengthAuto: 1
+    surfWavelength: 26
+    surfPeriod: 9
+    surfBandDepth: 6
+    surfSetStrength: 0.55
+    surfCrestLength: 60
+    surfCrestVariation: 0.6
+    surfCrestPersistence: 0
+    surfDirectionality: 0.7
+    surfLean: 0.35
+    surfAmbientFade: 0.8
+    surfSwashAmplitude: 1
+    surfFoamGain: 1.2
+    surfWaterlineFoam: 0.5
+    surfFoamStrength: 1
+    surfFoamFeather: 0.2
+    surfFoamTileSize: 8
+    surfFoamColor: {r: 1, g: 1, b: 1, a: 1}
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -1284,18 +1311,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
-  title: Splashes and foam demo
-  description: 'Splash and foam showcase '
-  showCameraControls: 0
-  corner: 0
-  margin: 16
-  panelWidth: 380
-  titleFontSize: 24
-  bodyFontSize: 18
-  backgroundColor: {r: 0, g: 0, b: 0, a: 0.55}
-  textColor: {r: 1, g: 1, b: 1, a: 1}
-  toggleKey: 282
-  visibleOnStart: 1
 --- !u!4 &543042079
 Transform:
   m_ObjectHideFlags: 0
@@ -1433,6 +1448,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
   particles: {fileID: 721693985}
+  profile: {fileID: 11400000, guid: 69520b33cdc5fe745a469f4d9846b6f7, type: 2}
   maxParticlesPerBurst: 48
   upwardBias: 1
   outwardSpread: 1.28

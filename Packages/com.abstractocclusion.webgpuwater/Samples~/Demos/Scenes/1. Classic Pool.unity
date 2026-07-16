@@ -328,23 +328,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
-  title: WebGPU Water Demo
-  description: 'Standard analytical pool . Based on Evan wallace demo it creates
-    a procedural pool and can use the render to handle fake refractions and reflections 
-    . If you untick use real refraction you will fallback to original Evan trick
-    where tiles ( and original sphere ) were baked inside water render . Original
-    demo is enhanced with implementation of real time shadow , real transparency
-    , foam , splashes and god rays . '
-  showCameraControls: 0
-  corner: 0
-  margin: 16
-  panelWidth: 600
-  titleFontSize: 24
-  bodyFontSize: 18
-  backgroundColor: {r: 0, g: 0, b: 0, a: 0.55}
-  textColor: {r: 1, g: 1, b: 1, a: 1}
-  toggleKey: 282
-  visibleOnStart: 1
 --- !u!4 &474038760
 Transform:
   m_ObjectHideFlags: 0
@@ -774,7 +757,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
-  reflectsWaves: 0
+  reflectsWaves: 1
 --- !u!54 &1272759485
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -912,6 +895,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterSplashEmitter
   particles: {fileID: 1342015188}
+  profile: {fileID: 0}
   maxParticlesPerBurst: 48
   upwardBias: 1
   outwardSpread: 1.3
@@ -5790,10 +5774,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
-  sweCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
+  occluderShader: {fileID: 0}
   waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 1829743645}
@@ -5945,11 +5929,36 @@ MonoBehaviour:
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
     bedFadeDepth: 6
     bedTintStrength: 0.8
+    clarityFromDepth: 0
+    clarityShallowDepth: 0.5
+    clarityDeepDepth: 8
+    clarityShallow: 1
+    clarityDeep: 0
+    clarityStrength: 1
     shoreShoalDepth: 4
-    sweZoneMeters: 96
-    sweResolution: 256
-    swePumpGain: 0.05
-    swePushGain: 0.3
+    shoreRefraction: 0.7
+    shoreCompression: 0.6
+    shoreGreens: 1.35
+    surfEnabled: 1
+    surfAmplitude: 0.8
+    surfWavelengthAuto: 1
+    surfWavelength: 26
+    surfPeriod: 9
+    surfBandDepth: 6
+    surfSetStrength: 0.55
+    surfCrestLength: 60
+    surfCrestVariation: 0.6
+    surfCrestPersistence: 0
+    surfDirectionality: 0.7
+    surfLean: 0.35
+    surfAmbientFade: 0.8
+    surfSwashAmplitude: 1
+    surfFoamGain: 1.2
+    surfWaterlineFoam: 0.5
+    surfFoamStrength: 1
+    surfFoamFeather: 0.2
+    surfFoamTileSize: 8
+    surfFoamColor: {r: 1, g: 1, b: 1, a: 1}
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -6043,6 +6052,7 @@ MonoBehaviour:
   particleMaterial: {fileID: 0}
   renderMode: 0
   densityMaterial: {fileID: 0}
+  profile: {fileID: 0}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 30
@@ -6051,6 +6061,8 @@ MonoBehaviour:
   sprayLaunchSpeed: 0.6
   lifeRange: {x: 1.5, y: 4}
   sizeRange: {x: 0.02, y: 0.06}
+  sizeHeroPower: 1
+  spawnMaxDistance: 120
   gravity: 4
   flowDrift: 0.25
   windDriftSpeed: 0.02

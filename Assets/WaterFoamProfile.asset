@@ -38,22 +38,12 @@ MonoBehaviour:
     breakupTexture: {fileID: 0}
     breakupTiling: 4
     breakupStrength: 0.3
-  roller:
-    drive: 1
-    particlesPerMeter: 3
-    burstPerArrival: 3
-    spraySharePct: 0.25
-    sizeMin: 0.12
-    sizeMax: 0.35
-    tumbleSpeed: 2
-    lifeTailSeconds: 3.5
-    masterGain: 1
   splash:
     drive: 1
     maxParticlesPerBurst: 48
     upwardBias: 1
     outwardSpread: 1.3
-    dropletSize: 0.02
+    dropletSize: 0.1
     lifetime: {x: 0.6, y: 1.3}
     crownMinStrength: 0.25
     crownBaseSize: 0.4

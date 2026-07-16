@@ -858,7 +858,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                     // Gate the floor caustic by the main-light shadow at the FLOOR's world position, so
                     // a caster's shadow on the pool bottom kills the caustic there (like the geometry paths).
-                    float causticShadow = WaterMainLightShadow(PoolToWorld(floorPool));
+                    // When the occluder pass is active the refracted object shadow is already baked into the
+                    // caustic green channel (caustic.r * caustic.g in GetWallShadeSplitGrad), so don't also
+                    // apply the un-refracted shadow map on top - that would double-shadow the reflected floor.
+                    float causticShadow = (_CausticOccluderActive > 0.5) ? 1.0 : WaterMainLightShadow(PoolToWorld(floorPool));
                     return GetWallColorShadowedGrad(floorPool, causticShadow, floorDdx, floorDdy) * waterColor;
                 }
                 return SampleEnvironmentGrad(worldRay, rayDdx, rayDdy);

@@ -20,6 +20,9 @@ samplerCUBE _Sky;          // sky cubemap
 
 float3 _LightDir;          // normalized direction toward the light
 float4 _WaterTexel;        // (1/width, 1/height, width, height) of _WaterTex, pushed from C#
+// 1 when the caustic occluder pass drew submerged objects into the green channel this frame, so the
+// pool/receiver source the underwater object shadow from that refracted term; 0 = legacy shadow-map path.
+float _CausticOccluderActive;
 
 // Manual bilinear sample of the float sim texture. WebGPU does NOT hardware-filter
 // RGBA32Float, so a Bilinear sampler silently point-samples there and the normal field

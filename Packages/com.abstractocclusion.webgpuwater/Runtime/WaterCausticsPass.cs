@@ -14,15 +14,27 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
         static readonly int ID_SimCenter = Shader.PropertyToID("_SimCenter");
         static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
+        static readonly int ID_LightDir = Shader.PropertyToID("_LightDir");
+        static readonly int ID_VolumeCenter = Shader.PropertyToID("_VolumeCenter");
+        static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
+        static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
+        static readonly int ID_OccluderActive = Shader.PropertyToID("_CausticOccluderActive");
+
+        // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
+        // outside the drawn caustic footprint read "lit", not black, now that green drives the
+        // underwater object shadow. The occluder pass writes 0 under a submerged object.
+        static readonly Color CausticClear = new Color(0f, 1f, 0f, 0f);
 
         readonly Material _material;
         readonly Material _largeBodyMaterial; // null when the large-body caustics shader isn't assigned (oceans only)
+        readonly Material _occluderMaterial;  // null when the occluder shader isn't assigned -> object shadows stay on the shadow map
         readonly RenderTexture _target;
         readonly CommandBuffer _cb;
 
         internal RenderTexture Texture => _target;
 
-        internal WaterCausticsPass(Shader causticsShader, Shader largeBodyCausticsShader, int resolution)
+        internal WaterCausticsPass(Shader causticsShader, Shader largeBodyCausticsShader,
+                                   Shader occluderShader, int resolution)
         {
             if (causticsShader == null) throw new System.ArgumentNullException(nameof(causticsShader));
             if (resolution <= 0)
@@ -35,6 +47,10 @@ namespace AbstractOcclusion.WebGpuWater
             // gets no large-body caustics (the shafts still read as plain shadow shafts).
             if (largeBodyCausticsShader != null)
                 _largeBodyMaterial = new Material(largeBodyCausticsShader) { hideFlags = HideFlags.HideAndDontSave };
+            // Optional: submerged objects project their silhouette along the refracted light into the
+            // caustic RT green channel, so their underwater shadow lines up with the caustics.
+            if (occluderShader != null)
+                _occluderMaterial = new Material(occluderShader) { hideFlags = HideFlags.HideAndDontSave };
             _target = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.ARGB32)
             {
                 filterMode = FilterMode.Bilinear,
@@ -48,15 +64,48 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Project the body's own sim state into its caustic RT (vertex shader outputs
         // clip space directly, so the mesh draws with an identity matrix).
-        internal void Render(Mesh waterMesh, RenderTexture simTexture)
+        internal void Render(Mesh waterMesh, RenderTexture simTexture, float waterRestY,
+                             Vector3 volumeCenter, Vector3 volumeExtent, Quaternion volumeRotation,
+                             Vector3 lightDir)
         {
             if (simTexture != null) _material.SetTexture(ID_Water, simTexture);
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);
-            _cb.ClearRenderTarget(true, true, Color.clear);
+            _cb.ClearRenderTarget(true, true, CausticClear);
             _cb.DrawMesh(waterMesh, Matrix4x4.identity, _material, 0, 0);
+            DrawOccluders(waterRestY, volumeCenter, volumeExtent, volumeRotation, lightDir);
             Graphics.ExecuteCommandBuffer(_cb);
+        }
+
+        // Project every submerged interactable along the refracted light into the caustic RT green
+        // channel (0 = occluded), using the same ProjectCausticUV mapping the floor samples with - so
+        // the object shadow is registered with the caustics, not the un-refracted shadow map. The volume
+        // frame is set on the material explicitly because the body publishes those globals only after
+        // this pass runs. _CausticOccluderActive tells the pool/receiver shaders to source the underwater
+        // object shadow from green (0 -> unchanged legacy shadow-map look).
+        void DrawOccluders(float waterRestY, Vector3 volumeCenter, Vector3 volumeExtent,
+                           Quaternion volumeRotation, Vector3 lightDir)
+        {
+            if (_occluderMaterial == null) { Shader.SetGlobalFloat(ID_OccluderActive, 0f); return; }
+
+            _occluderMaterial.SetVector(ID_LightDir, lightDir);
+            _occluderMaterial.SetVector(ID_VolumeCenter, volumeCenter);
+            _occluderMaterial.SetVector(ID_VolumeExtent, volumeExtent);
+            _occluderMaterial.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(volumeRotation));
+
+            var list = WaterInteractable.Active;
+            bool drewAny = false;
+            for (int i = 0; i < list.Count; i++)
+            {
+                WaterInteractable it = list[i];
+                if (it == null || it.Renderer == null) continue;
+                if (!it.IsSubmerged(it.WaterlineY(waterRestY))) continue;
+                _cb.DrawRenderer(it.Renderer, _occluderMaterial, 0, 0);
+                drewAny = true;
+            }
+
+            Shader.SetGlobalFloat(ID_OccluderActive, drewAny ? 1f : 0f);
         }
 
         // Ocean version: project the near-field WINDOW sim into the caustic RT via the large-body
@@ -90,6 +139,7 @@ namespace AbstractOcclusion.WebGpuWater
             }
             DestroyRuntimeObject(_material);
             DestroyRuntimeObject(_largeBodyMaterial);
+            DestroyRuntimeObject(_occluderMaterial);
         }
 
         static void DestroyRuntimeObject(Object obj)

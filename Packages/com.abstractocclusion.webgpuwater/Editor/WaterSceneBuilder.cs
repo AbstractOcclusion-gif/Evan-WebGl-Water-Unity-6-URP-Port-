@@ -38,6 +38,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.simCompute = shaders.Compute;
             volume.causticsShader = shaders.Caustics;
             volume.obstacleShader = shaders.Obstacle;
+            volume.occluderShader = Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
             volume.waterMesh = grid;
             volume.tiles = tiles;
             volume.sky = sky;
@@ -159,6 +160,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             body.simCompute = primary.simCompute;
             body.causticsShader = primary.causticsShader;
             body.obstacleShader = primary.obstacleShader;
+            body.occluderShader = primary.occluderShader;
             body.waterMesh = primary.waterMesh;
             body.targetCamera = primary.targetCamera;
             body.sun = primary.sun;

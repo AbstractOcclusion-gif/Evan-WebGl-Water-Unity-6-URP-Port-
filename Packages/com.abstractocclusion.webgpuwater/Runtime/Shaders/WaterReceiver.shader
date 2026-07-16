@@ -51,6 +51,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
             float3 _LightDir;   // global "toward the light", driven from the Unity sun
             float4 _WaterTexel; // (1/w, 1/h, w, h) of _WaterTex, pushed from C#
+            float _CausticOccluderActive; // 1 when submerged objects wrote the refracted occluder shadow into caustic.g
 
             // Manual bilinear height sample: WebGPU cannot hardware-filter the float32 sim
             // texture, so a filtered SAMPLE_TEXTURE2D silently point-samples there and the
@@ -184,11 +185,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 {
                     float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
                     float2 cuv = ProjectCausticUV(poolPos, refractedLight);
-                    float caustic = SAMPLE_TEXTURE2D(_CausticTex, sampler_CausticTex, cuv).r;
+                    float4 causticSample = SAMPLE_TEXTURE2D(_CausticTex, sampler_CausticTex, cuv);
+                    float caustic = causticSample.r;
                     // Caustics soften with depth at their own independent rate (world depth,
                     // consistent with the downwelling term above).
                     float causticFade = DepthFadeScalar(IN.positionWS.y, surfaceY, _CausticDepthFade);
-                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * mainLight.shadowAttenuation);
+                    // Underwater the object shadow follows the refracted light (caustic green channel),
+                    // matching the pool floor; fall back to the shadow map when the occluder pass is off.
+                    float causticShadow = (_CausticOccluderActive > 0.5) ? causticSample.g : mainLight.shadowAttenuation;
+                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * causticShadow);
                     color *= _UnderwaterTint.rgb;
                 }
 

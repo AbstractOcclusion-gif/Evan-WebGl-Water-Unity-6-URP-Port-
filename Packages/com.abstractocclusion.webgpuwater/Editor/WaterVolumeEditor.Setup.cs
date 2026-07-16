@@ -47,7 +47,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 // moment the section unfolds ("sweCompute" lingered here after the SWE removal).
                 DrawFields(
                     "simCompute", "oceanFftCompute", "causticsShader",
-                    "largeBodyCausticsShader", "obstacleShader", "waterMesh",
+                    "largeBodyCausticsShader", "obstacleShader", "occluderShader", "waterMesh",
                     "targetCamera", "sun");
             });
         }

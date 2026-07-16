@@ -11,8 +11,10 @@ Material:
   m_Shader: {fileID: 4800000, guid: 4bf26aec2f1180a4aa701bb7ec523aa5, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
-  m_InvalidKeywords: []
+  m_ValidKeywords:
+  - _AUTOTILEOBJSIZE
+  m_InvalidKeywords:
+  - _SHADEINNERFACESONLY_ON
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
@@ -25,11 +27,11 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _BaseMap:
-        m_Texture: {fileID: 2800000, guid: 0e32f4dccadfd7d42b0b3dd4f2516558, type: 3}
+        m_Texture: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
         m_Scale: {x: 5, y: 5}
         m_Offset: {x: 0, y: 0}
     - _BumpMap:
-        m_Texture: {fileID: 2800000, guid: c5fe82f4bcac80b48a0d5b16ada72ecc, type: 3}
+        m_Texture: {fileID: 2800000, guid: 7f384f88b7b58b84c88f1e58420955d2, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _DetailAlbedoMap:
@@ -85,6 +87,7 @@ Material:
     - _AddPrecomputedVelocity: 0
     - _AlphaClip: 0
     - _AlphaToMask: 0
+    - _AutoTileByObjectSize: 1
     - _Blend: 0
     - _BlendModePreserveSpecular: 1
     - _BumpScale: 1
@@ -106,7 +109,7 @@ Material:
     - _Parallax: 0.005
     - _QueueOffset: 0
     - _ReceiveShadows: 1
-    - _ShadeInnerFacesOnly: 0
+    - _ShadeInnerFacesOnly: 1
     - _Smoothness: 0.585
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
@@ -122,6 +125,7 @@ Material:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
+    - _TilesTiling: {r: 1, g: 1, b: 0, a: 0}
     - _UnderwaterTint: {r: 0.39999998, g: 0.9, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
