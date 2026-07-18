@@ -23,6 +23,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "reflectionSettings.reflectionStrength",
                     "reflectionSettings.envReflectionIntensity",
                     "reflectionSettings.reflectionDistortion",
+                    "reflectionSettings.fresnelFloor",
+                    "reflectionSettings.fresnelPower");
+                WaterEditorUI.SubHeading("Roughness (sun lobe + sky blur)");
+                DrawFields(
+                    "reflectionSettings.sunRoughness",
+                    "reflectionSettings.roughnessFar",
+                    "reflectionSettings.roughnessFarDistance",
+                    "reflectionSettings.roughnessFalloff",
+                    "reflectionSettings.reflectionAnisoStretch",
+                    "reflectionSettings.sunSheen",
+                    "reflectionSettings.sunSheenRoughness",
+                    "reflectionSettings.sunGrazeBoost");
+                WaterEditorUI.SubHeading("Screen-space");
+                DrawFields(
                     "reflectionSettings.ssrStrength",
                     "reflectionSettings.ssrStepSize",
                     "reflectionSettings.ssrMaxSteps",

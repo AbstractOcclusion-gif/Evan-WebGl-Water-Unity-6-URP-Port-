@@ -148,7 +148,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 1.2
+  m_Intensity: 0.5
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -239,13 +239,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 177695279}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.303531, y: -0.49112344, z: 0.18759248, w: 0.7946545}
+  m_LocalRotation: {x: -0.026422786, y: -0.5254778, z: -0.016330194, w: 0.8502402}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 773898433}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: -3.56, y: -63.435, z: 0}
 --- !u!1 &230721764
 GameObject:
   m_ObjectHideFlags: 0
@@ -615,8 +615,8 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 0
-  m_Antialiasing: 0
+  m_RenderPostProcessing: 1
+  m_Antialiasing: 2
   m_AntialiasingQuality: 2
   m_StopNaN: 0
   m_Dithering: 0
@@ -729,7 +729,7 @@ MonoBehaviour:
     m_Bits: 39
   resolutionScale: 0.5
   clipPlaneOffset: 0.02
-  enableReflection: 0
+  enableReflection: 1
 --- !u!114 &961739757
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -745,6 +745,75 @@ MonoBehaviour:
   moveSpeed: 6
   boostMultiplier: 3
   lookSensitivity: 0.1
+  touchLookSensitivity: 0.12
+  touchTapTravelPixels: 16
+  touchMoveRangePixels: 140
+  pinchVerticalSpeed: 0.01
+--- !u!1 &1318482034
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1318482036}
+  - component: {fileID: 1318482035}
+  m_Layer: 0
+  m_Name: Reflection Probe
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!215 &1318482035
+ReflectionProbe:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1318482034}
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Type: 0
+  m_Mode: 1
+  m_RefreshMode: 0
+  m_TimeSlicingMode: 0
+  m_Resolution: 128
+  m_UpdateFrequency: 0
+  m_BoxSize: {x: 500, y: 500, z: 500}
+  m_BoxOffset: {x: 0, y: 0, z: 0}
+  m_NearClip: 0.3
+  m_FarClip: 1000
+  m_ShadowDistance: 100
+  m_ClearFlags: 1
+  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_CullingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_IntensityMultiplier: 1
+  m_BlendDistance: 1
+  m_HDR: 1
+  m_BoxProjection: 0
+  m_RenderDynamicObjects: 0
+  m_UseOcclusionCulling: 1
+  m_Importance: 1
+  m_CustomBakedTexture: {fileID: 0}
+--- !u!4 &1318482036
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1318482034}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 100, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1579798797
 GameObject:
   m_ObjectHideFlags: 0
@@ -794,7 +863,7 @@ MonoBehaviour:
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
   largeBodyCausticsShader: {fileID: 4800000, guid: 20ef2245624802e47920d7462ca2609d, type: 3}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
-  occluderShader: {fileID: 0}
+  occluderShader: {fileID: 4800000, guid: 271a530771d546944a5b7d2242fbdc6c, type: 3}
   waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 177695280}
@@ -802,7 +871,7 @@ MonoBehaviour:
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   rippleQuality: 2
   bodyType: 2
-  volumeExtent: {x: 100, y: 100, z: 100}
+  volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
   simWindowMeters: 32
@@ -820,9 +889,9 @@ MonoBehaviour:
     clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
-    horizonFadeDistance: 0
-    horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
-    horizonHazeDensity: 0
+    horizonFadeDistance: 9000
+    horizonHazeColor: {r: 0.53333336, g: 0.4431373, b: 0.21176472, a: 1}
+    horizonHazeDensity: 0.001
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -869,9 +938,9 @@ MonoBehaviour:
   godRayRenderer: {fileID: 0}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 0}
+  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
   enableCulling: 1
-  activationDistance: 100
+  activationDistance: 1000
   reflectionSettings:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
@@ -879,16 +948,27 @@ MonoBehaviour:
     realRefraction: 1
     reflectionStrength: 1
     envReflectionIntensity: 1
+    fresnelFloor: 0
+    sunRoughness: 0.066
+    roughnessFar: 0.2
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+  detailNormalSettings:
+    texture: {fileID: 0}
+    strength: 0.6
+    tileMeters: 18
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
+  lightDir: {x: 0.89270175, y: -0.062093735, z: -0.44634977}
   causticResolution: 1024
   objectInteractionSettings:
     objectInteraction: 0
@@ -1177,3 +1257,4 @@ SceneRoots:
   - {fileID: 961739753}
   - {fileID: 773898433}
   - {fileID: 230721768}
+  - {fileID: 1318482036}

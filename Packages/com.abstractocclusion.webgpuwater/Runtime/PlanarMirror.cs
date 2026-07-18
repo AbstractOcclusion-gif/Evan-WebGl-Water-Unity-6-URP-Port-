@@ -104,7 +104,16 @@ namespace AbstractOcclusion.WebGpuWater
                 {
                     name = _rtName,
                     wrapMode = TextureWrapMode.Clamp,
-                    filterMode = FilterMode.Bilinear,
+                    // Trilinear + a mip chain: the water surface samples this mirror at a
+                    // roughness-driven mip (tex2Dlod in SamplePlanarReflection), so rough/far
+                    // water blurs its planar reflection exactly like the sky path - without
+                    // this the planar mirror stayed razor sharp and the roughness knobs had
+                    // no visible effect on planar bodies. Mips regenerate after each mirror
+                    // render; if a backend can't (some WebGPU cases), the lod clamps to the
+                    // sharp top mip, which is the old look.
+                    filterMode = FilterMode.Trilinear,
+                    useMipMap = true,
+                    autoGenerateMips = true,
                     hideFlags = HideFlags.HideAndDontSave
                 };
                 _rt.Create();

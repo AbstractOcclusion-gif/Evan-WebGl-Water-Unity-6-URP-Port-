@@ -23,6 +23,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 DrawFieldsIf(Bounded, "tiles"); // pool tile albedo - bounded bodies only
                 DrawFields("sky");
+                // Crest-style crossing scrolling detail normals: off (flat) until a tiling
+                // water-normal texture is assigned; the sliders shape the layer once it is.
+                WaterEditorUI.SubHeading("Detail normals (micro ripples)");
+                DrawFields("detailNormalSettings.texture");
+                DrawFieldsIf(Prop("detailNormalSettings.texture").objectReferenceValue != null,
+                    "detailNormalSettings.strength",
+                    "detailNormalSettings.tileMeters",
+                    "detailNormalSettings.scrollSpeed");
             });
         }
 

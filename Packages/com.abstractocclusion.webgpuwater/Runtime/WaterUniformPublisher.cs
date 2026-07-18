@@ -107,6 +107,20 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ProceduralPool = Shader.PropertyToID("_ProceduralPool");
         static readonly int ID_ReflectionStrength = Shader.PropertyToID("_ReflectionStrength");
         static readonly int ID_EnvReflectionIntensity = Shader.PropertyToID("_EnvReflectionIntensity");
+        static readonly int ID_FresnelFloor = Shader.PropertyToID("_FresnelFloor");
+        static readonly int ID_FresnelPower = Shader.PropertyToID("_FresnelPower");
+        static readonly int ID_SunRoughness = Shader.PropertyToID("_SunRoughness");
+        static readonly int ID_RoughnessFar = Shader.PropertyToID("_RoughnessFar");
+        static readonly int ID_RoughnessFarDistance = Shader.PropertyToID("_RoughnessFarDistance");
+        static readonly int ID_RoughnessFalloff = Shader.PropertyToID("_RoughnessFalloff");
+        static readonly int ID_ReflectionAnisoStretch = Shader.PropertyToID("_ReflectionAnisoStretch");
+        static readonly int ID_SunSheen = Shader.PropertyToID("_SunSheen");
+        static readonly int ID_SunSheenRoughness = Shader.PropertyToID("_SunSheenRoughness");
+        static readonly int ID_SunGrazeBoost = Shader.PropertyToID("_SunGrazeBoost");
+        static readonly int ID_DetailNormalTex = Shader.PropertyToID("_DetailNormalTex");
+        static readonly int ID_DetailNormalStrength = Shader.PropertyToID("_DetailNormalStrength");
+        static readonly int ID_DetailNormalScale = Shader.PropertyToID("_DetailNormalScale");
+        static readonly int ID_DetailNormalSpeed = Shader.PropertyToID("_DetailNormalSpeed");
         static readonly int ID_ReflectionDistortion = Shader.PropertyToID("_ReflectionDistortion");
         static readonly int ID_SSRStrength = Shader.PropertyToID("_SSRStrength");
         static readonly int ID_SSRStepSize = Shader.PropertyToID("_SSRStepSize");
@@ -291,6 +305,24 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_ProceduralPool, _body.HasProceduralPool ? 1f : 0f);
             sink.SetFloat(ID_ReflectionStrength, _body.ReflectionStrength);
             sink.SetFloat(ID_EnvReflectionIntensity, _body.EnvReflectionIntensity);
+            // Fresnel + shared-roughness ramp + reflection stretch (the WOW look pass), live per body.
+            sink.SetFloat(ID_FresnelFloor, _body.FresnelFloor);
+            sink.SetFloat(ID_FresnelPower, _body.FresnelPower);
+            sink.SetFloat(ID_SunRoughness, _body.SunRoughness);
+            sink.SetFloat(ID_RoughnessFar, _body.RoughnessFar);
+            sink.SetFloat(ID_RoughnessFarDistance, _body.RoughnessFarDistance);
+            sink.SetFloat(ID_RoughnessFalloff, _body.RoughnessFalloff);
+            sink.SetFloat(ID_ReflectionAnisoStretch, _body.ReflectionAnisoStretch);
+            sink.SetFloat(ID_SunSheen, _body.SunSheen);
+            sink.SetFloat(ID_SunSheenRoughness, _body.SunSheenRoughness);
+            sink.SetFloat(ID_SunGrazeBoost, _body.SunGrazeBoost);
+            // Detail normals: texture bound only when assigned (a null SetTexture is an error);
+            // DetailNormalStrength is already forced to 0 with no texture, which gates the shader.
+            Texture detailNormalTex = _body.DetailNormalTexture;
+            if (detailNormalTex != null) sink.SetTexture(ID_DetailNormalTex, detailNormalTex);
+            sink.SetFloat(ID_DetailNormalStrength, _body.DetailNormalStrength);
+            sink.SetFloat(ID_DetailNormalScale, _body.DetailNormalScale);
+            sink.SetFloat(ID_DetailNormalSpeed, _body.DetailNormalSpeed);
 
             // Reflection base cubemap, PER BODY (via the property block) so multiple bodies with
             // different Sky slots / reflection modes never stomp a shared global. Procedural sky = the

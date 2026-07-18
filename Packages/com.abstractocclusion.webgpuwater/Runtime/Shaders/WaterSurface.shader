@@ -31,9 +31,36 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // _FresnelFloor = artistic minimum reflectance (0 = pure physics; the legacy
         // curve behaved like a 0.25 floor, which mirrored the sky even straight down).
         [HideInInspector] _FresnelFloor ("Fresnel Floor (artistic min reflectance)", Range(0,1)) = 0.0
-        // Perceptual roughness of the sun lobe at the camera; distance widening is added
-        // on top in the shader (see SUN_SPEC_DISTANCE_* constants).
-        [HideInInspector] _SunRoughness ("Sun Specular Roughness", Range(0.01,1)) = 0.08
+        // Overall shininess: the Schlick grazing exponent (Crest's _Crest_Fresnel knob). 5 =
+        // physical; LOWER makes reflectivity rise faster on tilted wave faces, so the whole
+        // surface reads glossier with contrast (unlike the floor, which mirrors uniformly).
+        [HideInInspector] _FresnelPower ("Fresnel Power (5 = physical, lower = shinier)", Range(1,5)) = 5.0
+        // Shared surface roughness (sun lobe width + sky-reflection blur): near value, far value,
+        // and the distance ramp between them (Crest's smoothness-far pattern). All published per
+        // body by the WaterVolume Reflections foldout.
+        [HideInInspector] _SunRoughness ("Roughness (near)", Range(0.01,1)) = 0.08
+        [HideInInspector] _RoughnessFar ("Roughness (far)", Range(0.01,1)) = 0.2
+        [HideInInspector] _RoughnessFarDistance ("Far Roughness Distance (m)", Range(50,5000)) = 1000
+        [HideInInspector] _RoughnessFalloff ("Far Roughness Falloff", Range(0.25,4)) = 1
+        // Vertical stretch of the blurred sky reflection (KWS anisotropic look): 0 = off.
+        [HideInInspector] _ReflectionAnisoStretch ("Reflection Vertical Stretch", Range(0,1)) = 0.5
+        // Dual-lobe sun specular: a second, much broader lobe puts a soft sheen on wave faces
+        // far outside the mirror direction (a single lobe leaves them dead). 0 = off.
+        [HideInInspector] _SunSheen ("Sun Sheen (broad lobe weight)", Range(0,1)) = 0
+        [HideInInspector] _SunSheenRoughness ("Sun Sheen Roughness", Range(0.2,1)) = 0.6
+        // Wrapped NoL for the sun lobes: at a grazing (horizon) sun, plain NoL kills the
+        // specular exactly when a real sea glitters hardest. 0 = physical NoL (unchanged).
+        [HideInInspector] _SunGrazeBoost ("Sun Graze Boost (wrapped NoL)", Range(0,1)) = 0
+
+        [Header(Detail Normals)]
+        // Crest-style micro-detail: two CROSSING, SCROLLING samples of a tiling normal map at two
+        // world scales, crossfaded by camera distance. The default "bump" map unpacks to a flat
+        // normal, so the feature is INERT until a real tiling water-normal texture is assigned -
+        // every existing scene is unchanged.
+        _DetailNormalTex ("Detail Normal (tiling water normals)", 2D) = "bump" {}
+        _DetailNormalStrength ("Detail Normal Strength", Range(0, 2)) = 0.6
+        _DetailNormalScale ("Detail Normal Tile (world metres)", Range(1, 100)) = 18
+        _DetailNormalSpeed ("Detail Normal Scroll (metres per second)", Range(0, 2)) = 0.25
         // Water fog is global now (driven by WaterController), shared with the
         // object/pool shaders so it's consistent however you view the water.
 
@@ -126,14 +153,27 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #define FRESNEL_POWER           3.0    // legacy curve - underwater branch only
             #define FRESNEL_MIN_BELOW       0.5
             // GGX sun specular (above water): the lobe's roughness grows with view distance
-            // (KWS trick) - far pixels average many unresolved wave facets, so widening the
-            // lobe is both the physically-motivated filter and the specular anti-aliasing;
-            // the sun's glitter path broadens toward the horizon instead of aliasing into
-            // sparkle dust. The clamp stops a mirror-calm lobe from blowing out HDR.
-            #define SUN_SPEC_DISTANCE_METERS    1000.0 // widening saturates at this camera distance
-            #define SUN_SPEC_DISTANCE_ROUGHNESS 0.12   // extra perceptual roughness added when saturated
+            // (KWS trick, ramp knobs published per body) - far pixels average many unresolved
+            // wave facets, so widening the lobe is both the physically-motivated filter and the
+            // specular anti-aliasing; the sun's glitter path broadens toward the horizon instead
+            // of aliasing into sparkle dust. The clamp stops a mirror-calm lobe blowing out HDR.
             #define SUN_SPEC_CLAMP              50.0   // max lobe value (multiplies the sun colour)
             #define GGX_EPSILON                 1e-5
+            // Anisotropic (vertically stretched) sky reflection: wave slopes tilt mostly about
+            // horizontal axes, so a rough water mirror smears what it reflects VERTICALLY - the
+            // classic elongated ocean reflection (KWS's ReflectionPreFiltering does this as an
+            // RT blur; here it is extra roughness-mip taps spread along world up, explicit-LOD
+            // so it is WGSL-safe and costs no extra sampler). Tap offsets/weights ~ gaussian.
+            #define SKY_ANISO_TAP_COUNT  5
+            #define SKY_ANISO_SPREAD_MAX 1.0    // max up-offset (ray units) at stretch 1, roughness 1
+            #define SKY_ANISO_MIN_SPREAD 1e-3   // below this the smear is invisible: single tap
+            // Screen-space variant of the same stretch, for the PLANAR mirror and the SSR hit
+            // colour (their vertical axis is simply the screen v axis). UV units at stretch 1,
+            // roughness 1.
+            #define SCREEN_ANISO_SPREAD_MAX 0.08
+            // Shared 5-tap gaussian-ish smear kernel (sky + planar + SSR reflection stretch).
+            static const float ANISO_TAP_OFFSETS[SKY_ANISO_TAP_COUNT] = { -1.0, -0.5, 0.0, 0.5, 1.0 };
+            static const float ANISO_TAP_WEIGHTS[SKY_ANISO_TAP_COUNT] = { 0.1, 0.2, 0.4, 0.2, 0.1 };
             // Roughness -> sky-cube mip: Unity's perceptual remap (the UNITY_SPECCUBE_LOD_STEPS
             // convention, mip = r * (1.7 - 0.7r) * steps) so the blur ramp behaves like probe
             // reflections artists already know. Needs the bound cube to HAVE mips: the wizard's
@@ -142,6 +182,26 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #define SKY_MIP_CURVE_SCALE 1.7
             #define SKY_MIP_CURVE_BIAS  0.7
             #define SKY_MIP_STEPS       6.0
+            // Crest-style crossing detail normals: the two fixed crossing directions are Crest's
+            // own (non-orthogonal, non-axis-aligned, so the two scrolls never read as a grid).
+            // The far layer runs at a bigger tile and half the scroll so the layers never sync;
+            // it crossfades in over [BLEND_START, BLEND_START+BLEND_RANGE] metres and the whole
+            // effect fades out over [FADE_START, FADE_START+FADE_RANGE] metres (beyond that the
+            // distance-grown roughness carries the look and per-pixel detail would only shimmer).
+            #define DETAIL_NORMAL_DIR0            float2(0.94, 0.34)
+            #define DETAIL_NORMAL_DIR1            float2(-0.85, -0.53)
+            #define DETAIL_NORMAL_FAR_TILE_MULT   2.0
+            #define DETAIL_NORMAL_FAR_SPEED_MULT  0.5
+            #define DETAIL_NORMAL_FAR_BLEND_START 30.0
+            #define DETAIL_NORMAL_FAR_BLEND_RANGE 90.0
+            #define DETAIL_NORMAL_FADE_START      250.0
+            #define DETAIL_NORMAL_FADE_RANGE      350.0
+            // Horizon clamp for the SKY reflection ray (Crest's minimum-reflection-Y idea): a
+            // reflected ray that dips below the horizon - common on wave flanks at grazing
+            // angles, exactly where fresnel is strongest - would sample the cubemap's ground
+            // hemisphere and draw a dark fringe on the swell. Lift the ray's y to this minimum
+            // so it lands on the horizon ring instead (which is what grazing water reflects).
+            #define REFLECTION_MIN_UP_Y 0.02
             #define SSS_AMPLITUDE_EPSILON   1e-3   // guards the crest/amplitude ratio when the swell is flat
 
             // Peaked-look refine: short steps along the ripple normal sharpen wave crests.
@@ -246,7 +306,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float  _HorizonHazeDensity;
             float _ReflectionStrength;
             float _FresnelFloor;  // artistic minimum reflectance on the Schlick curve (0 = physical)
-            float _SunRoughness;  // perceptual roughness of the GGX sun lobe at the camera
+            float _FresnelPower;  // Schlick grazing exponent; 5 physical, lower = overall shinier
+            float _SunRoughness;          // perceptual roughness at the camera (near end of the ramp)
+            float _RoughnessFar;          // perceptual roughness at/beyond the far distance
+            float _RoughnessFarDistance;  // metres over which the near->far ramp runs
+            float _RoughnessFalloff;      // ramp curve: 1 linear, >1 stays sharp longer
+            float _ReflectionAnisoStretch; // vertical smear of the sky reflection (0 = off)
+            float _SunSheen;          // weight of the broad second sun lobe (0 = single lobe)
+            float _SunSheenRoughness; // breadth of that sheen lobe (its roughness floor)
+            float _SunGrazeBoost;     // NoL wrap for the sun lobes; 0 = physical, higher keeps
+                                      // the glitter alive when the sun sits at the horizon
+            sampler2D _DetailNormalTex; // tiling water normals; default "bump" = flat = feature inert
+            float _DetailNormalStrength, _DetailNormalScale, _DetailNormalSpeed;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
             float3 _SunColor; // Unity directional light color * intensity (global)
@@ -256,7 +327,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             // URP scene textures (enable Opaque Texture + Depth Texture in the URP asset)
             sampler2D _CameraOpaqueTexture;
-            sampler2D _CameraDepthTexture;
+            // Depth as a separate Texture2D + the shared point sampler, NOT a sampler2D: depth
+            // must be point-sampled anyway (filtering depth values is meaningless), and ps_4_0
+            // caps sampler registers at 16 - the detail-normal texture took the last combined
+            // slot, so depth shares the inline point sampler instead of owning a register.
+            // (Same Texture2D + explicit-sampler pattern as the WebGPU-safe shadow tap below.)
+            Texture2D _CameraDepthTexture;
+            SamplerState sampler_PointClamp; // Unity inline sampler: point filter, clamp wrap (non-comparison)
+            // Every read is explicit-LOD (loop-safe, WGSL-safe): LinearEyeDepth(RawSceneDepth(uv)).
+            float RawSceneDepth(float2 uv)
+            {
+                return _CameraDepthTexture.SampleLevel(sampler_PointClamp, uv, 0.0).r;
+            }
 
             float _SSRStrength, _SSRStepSize, _SSRMaxSteps, _SSRThickness;
             float _RefractionDistortion;
@@ -321,7 +403,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // returns the scene colour and sets hit=1; otherwise hit=0 (caller falls
             // back to planar / analytic). Kept deliberately simple + linear; tune the
             // step size / thickness in the material.
-            float3 MarchSSR(float3 p0, float3 dir, out float hit)
+            // Scene-colour fetch for the SSR hit, vertically smeared by the shared stretch.
+            // The opaque texture has no mip chain, so unlike the planar/sky paths roughness
+            // cannot pick a blur level here - the smear is the only softening (KWS blurs its
+            // SSR result the same way, vertically). Explicit-LOD: loop/WGSL-safe.
+            float3 SampleOpaqueSmeared(float2 uv, float roughness)
+            {
+                float spread = _ReflectionAnisoStretch * roughness * SCREEN_ANISO_SPREAD_MAX;
+                float3 color = float3(0.0, 0.0, 0.0);
+                [unroll]
+                for (int tap = 0; tap < SKY_ANISO_TAP_COUNT; tap++)
+                {
+                    float2 tapUV = saturate(uv + float2(0.0, spread * ANISO_TAP_OFFSETS[tap]));
+                    color += tex2Dlod(_CameraOpaqueTexture, float4(tapUV, 0.0, 0.0)).rgb
+                           * ANISO_TAP_WEIGHTS[tap];
+                }
+                return color;
+            }
+
+            float3 MarchSSR(float3 p0, float3 dir, float roughness, out float hit)
             {
                 hit = 0.0;
                 float3 p = p0;
@@ -341,12 +441,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
 
                     // explicit-LOD samples: safe inside a divergent loop (WebGPU)
-                    float sceneDepth = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(uv, 0, 0)));
+                    float sceneDepth = LinearEyeDepth(RawSceneDepth(uv));
                     float rayDepth   = -mul(UNITY_MATRIX_V, float4(p, 1.0)).z; // positive eye depth
                     if (rayDepth > sceneDepth && (rayDepth - sceneDepth) < _SSRThickness)
                     {
                         hit = 1.0;
-                        return tex2Dlod(_CameraOpaqueTexture, float4(uv, 0, 0)).rgb;
+                        return SampleOpaqueSmeared(uv, roughness);
                     }
                 }
                 return 0.0;
@@ -725,13 +825,28 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return o;
             }
 
-            // Sample the planar reflection RT at the fragment's screen UV, nudged
-            // by the surface normal so ripples wobble the mirror image.
-            float3 SamplePlanarReflection(float4 screenPos, float3 normal)
+            // Sample the planar reflection RT at the fragment's screen UV, nudged by the
+            // surface normal so ripples wobble the mirror image. Roughness picks the RT mip
+            // (PlanarMirror now renders with a mip chain) and the shared vertical smear
+            // stretches it, so the planar mirror obeys the SAME roughness knobs as the sky -
+            // without this a planar body ignored them entirely and stayed razor sharp.
+            // Explicit-LOD taps: WGSL-safe, no extra sampler.
+            float3 SamplePlanarReflection(float4 screenPos, float3 normal, float roughness)
             {
                 float2 uv = screenPos.xy / max(screenPos.w, 1e-5);
                 uv += normal.xz * _ReflectionDistortion;
-                return tex2D(_PlanarReflectionTex, saturate(uv)).rgb;
+                float mip = roughness * (SKY_MIP_CURVE_SCALE - SKY_MIP_CURVE_BIAS * roughness)
+                          * SKY_MIP_STEPS;
+                float spread = _ReflectionAnisoStretch * roughness * SCREEN_ANISO_SPREAD_MAX;
+                float3 color = float3(0.0, 0.0, 0.0);
+                [unroll]
+                for (int tap = 0; tap < SKY_ANISO_TAP_COUNT; tap++)
+                {
+                    float2 tapUV = saturate(uv + float2(0.0, spread * ANISO_TAP_OFFSETS[tap]));
+                    color += tex2Dlod(_PlanarReflectionTex, float4(tapUV, 0.0, mip)).rgb
+                           * ANISO_TAP_WEIGHTS[tap];
+                }
+                return color;
             }
 
             // Legacy hard sun glint (pow-5000 disc). Underwater paths only - the above-water
@@ -786,38 +901,120 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return texCUBElod(_Sky, float4(worldRay, mip)).rgb * _EnvReflectionIntensity;
             }
 
-            // Shared surface roughness for the whole specular family: the artist knob plus the
-            // view-distance widening (see SUN_SPEC_DISTANCE_*). Drives BOTH the GGX sun lobe
-            // and the sky-reflection mip, so the sun and the mirror around it roughen together.
-            float EffectiveWaterRoughness(float viewDist)
+            // ---- Crest-style detail normal: two CROSSING, SCROLLING samples of a tiling normal
+            // map at two world scales, crossfaded by camera distance (see DETAIL_NORMAL_*).
+            // Returns an xz slope tilt for the world normal. All four taps always run - the
+            // distance fade is a multiply, not a branch, because a per-pixel branch around
+            // tex2D's implicit derivatives is undefined on WGSL; the caller's gate (strength
+            // knob + above-water) is uniform, which IS branch-safe. ----
+            float2 DetailNormalTilt(float2 worldXZ, float viewDist)
             {
-                return saturate(_SunRoughness
-                    + SUN_SPEC_DISTANCE_ROUGHNESS * saturate(viewDist / SUN_SPEC_DISTANCE_METERS));
+                float scrollTime = _DetailNormalSpeed * _WaveTime;
+                float2 scroll0 = DETAIL_NORMAL_DIR0 * scrollTime;
+                float2 scroll1 = DETAIL_NORMAL_DIR1 * scrollTime;
+
+                float2 tiltNear =
+                      UnpackNormal(tex2D(_DetailNormalTex, (worldXZ + scroll0) / _DetailNormalScale)).xy
+                    + UnpackNormal(tex2D(_DetailNormalTex, (worldXZ + scroll1) / _DetailNormalScale)).xy;
+
+                float farTile = _DetailNormalScale * DETAIL_NORMAL_FAR_TILE_MULT;
+                float2 tiltFar =
+                      UnpackNormal(tex2D(_DetailNormalTex,
+                          (worldXZ + scroll0 * DETAIL_NORMAL_FAR_SPEED_MULT) / farTile)).xy
+                    + UnpackNormal(tex2D(_DetailNormalTex,
+                          (worldXZ + scroll1 * DETAIL_NORMAL_FAR_SPEED_MULT) / farTile)).xy;
+
+                float farBlend = saturate((viewDist - DETAIL_NORMAL_FAR_BLEND_START)
+                                          / DETAIL_NORMAL_FAR_BLEND_RANGE);
+                float fade = 1.0 - saturate((viewDist - DETAIL_NORMAL_FADE_START)
+                                            / DETAIL_NORMAL_FADE_RANGE);
+                return lerp(tiltNear, tiltFar, farBlend) * fade;
             }
 
-            // ---- GGX sun specular (above water). Replaces the fixed pow-5000 glint with a
-            // Trowbridge-Reitz lobe: NDF * Smith-joint visibility (Karis approximation) *
-            // Schlick Fresnel at the half-vector, times the sun colour. Roughness comes from
-            // EffectiveWaterRoughness, which is what widens the glitter path toward the
-            // horizon and suppresses far sparkle. ----
-            float3 SunSpecular(float3 normal, float3 viewDir, float roughness)
+            // Shared surface roughness for the whole specular family: Crest's smoothness-far
+            // ramp, near->far over a distance with a curve, all artist knobs. Drives the GGX
+            // sun lobe, the sky-reflection mip AND the vertical smear, so the sun and the
+            // mirror around it roughen together. Raise _RoughnessFar to calm shiny far waves.
+            float EffectiveWaterRoughness(float viewDist)
+            {
+                float ramp = pow(saturate(viewDist / max(_RoughnessFarDistance, 1.0)),
+                                 _RoughnessFalloff);
+                return lerp(_SunRoughness, _RoughnessFar, ramp);
+            }
+
+            // ---- Anisotropic sky reflection: the roughness-mip sample smeared VERTICALLY by
+            // extra taps offset along world up (see SKY_ANISO_*). Spread scales with roughness
+            // and the stretch knob, so near water stays a clean mirror and the far/rough surface
+            // gets the elongated streaks. Every tap re-applies the horizon lift so a downward
+            // offset can't dive into the cubemap's ground hemisphere. Explicit-LOD taps only, so
+            // the early-out branch is WGSL-safe even though the spread varies per pixel. ----
+            float3 SampleSkyEnvironmentAniso(float3 worldRay, float roughness)
+            {
+                float spread = _ReflectionAnisoStretch * roughness * SKY_ANISO_SPREAD_MAX;
+                if (spread < SKY_ANISO_MIN_SPREAD)
+                    return SampleSkyEnvironmentRough(worldRay, roughness);
+
+                float3 color = float3(0.0, 0.0, 0.0);
+                [unroll]
+                for (int tap = 0; tap < SKY_ANISO_TAP_COUNT; tap++)
+                {
+                    float3 tapRay = normalize(worldRay + float3(0.0, spread * ANISO_TAP_OFFSETS[tap], 0.0));
+                    tapRay.y = max(tapRay.y, REFLECTION_MIN_UP_Y);
+                    color += SampleSkyEnvironmentRough(normalize(tapRay), roughness) * ANISO_TAP_WEIGHTS[tap];
+                }
+                return color;
+            }
+
+            // GGX distribution term: Trowbridge-Reitz NDF * Smith-joint visibility (Karis
+            // approximation) * NoL - everything EXCEPT Fresnel. Scalar; callers apply Fresnel
+            // and colour as fits their lobe.
+            float GgxLobeDistribution(float noh, float nol, float nov, float roughness)
             {
                 float alpha  = roughness * roughness;
                 float alpha2 = alpha * alpha;
-
-                float3 halfDir = normalize(viewDir + _LightDir);
-                float noh = saturate(dot(normal, halfDir));
-                float nol = saturate(dot(normal, _LightDir));
-                float nov = saturate(dot(normal, viewDir));
-                float loh = saturate(dot(_LightDir, halfDir));
-
                 float ndfDenom = noh * noh * (alpha2 - 1.0) + 1.0;
                 float ndf = alpha2 / max(UNITY_PI * ndfDenom * ndfDenom, GGX_EPSILON);
                 float visibility = 0.5 / max(lerp(2.0 * nol * nov, nol + nov, alpha), GGX_EPSILON);
+                return ndf * visibility * nol;
+            }
+
+            // Full GGX lobe: the distribution above * Schlick Fresnel at the half-vector.
+            float GgxLobe(float noh, float nol, float nov, float loh, float roughness)
+            {
                 float fresnelSpec = FRESNEL_F0_WATER
                     + (1.0 - FRESNEL_F0_WATER) * pow(1.0 - loh, FRESNEL_SCHLICK_POWER);
+                return GgxLobeDistribution(noh, nol, nov, roughness) * fresnelSpec;
+            }
 
-                return min(ndf * visibility * fresnelSpec * nol, SUN_SPEC_CLAMP) * _SunColor;
+            // ---- Dual-lobe GGX sun specular (above water). The tight lobe (roughness from
+            // EffectiveWaterRoughness) is the glitter path; the optional SHEEN lobe re-runs the
+            // same GGX at a much broader roughness so wave faces far outside the mirror
+            // direction still catch a soft highlight - a single lobe leaves them dead, which
+            // reads as flat water away from the sun path. _SunSheen 0 = single-lobe (legacy). ----
+            float3 SunSpecular(float3 normal, float3 viewDir, float roughness)
+            {
+                float3 halfDir = normalize(viewDir + _LightDir);
+                float noh = saturate(dot(normal, halfDir));
+                float nov = saturate(dot(normal, viewDir));
+                float loh = saturate(dot(_LightDir, halfDir));
+                // Wrapped NoL (fed to BOTH lobes, distribution and visibility alike, so the
+                // response stays bounded): plain NoL goes to zero when the sun sits at the
+                // horizon, killing the rough/far lobes exactly when a real sea shows its most
+                // blinding glitter - low sun raking across tilted wave faces. 0 = physical.
+                float nol = saturate((dot(normal, _LightDir) + _SunGrazeBoost)
+                                     / (1.0 + _SunGrazeBoost));
+
+                float lobe = GgxLobe(noh, nol, nov, loh, roughness);
+                // Sheen = distribution WITHOUT the Fresnel factor: water's F0 (~0.02) crushed
+                // the broad lobe to invisibility at any usable knob value. Rough-sea sheen is
+                // multi-bounce light, not single-surface-Fresnel-bound, so the weight knob is
+                // the honest artistic dial (typical 0.1-0.3 now that the lobe has real energy).
+                // max(): the sheen lobe may only ever be BROADER than the main lobe, so the
+                // distance-roughened far surface never gets a sheen SHARPER than its mirror.
+                lobe += _SunSheen * GgxLobeDistribution(noh, nol, nov,
+                                                        max(roughness, _SunSheenRoughness));
+
+                return min(lobe, SUN_SPEC_CLAMP) * _SunColor;
             }
 
             // ---- Manual URP main-light shadow tap (this pass is CGPROGRAM and cannot include URP's
@@ -829,9 +1026,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // own hard depth compare (below), so it needs the raw depth, not hardware comparison. Declaring
             // it as a plain sampler2D made WebGPU bind URP's comparison sampler to a non-comparison slot
             // (validation error -> the whole WaterSurface bind group is invalid -> black screen in builds).
-            // Read it as a Texture2D with an explicit NON-comparison point sampler instead.
+            // Read it as a Texture2D with an explicit NON-comparison point sampler instead
+            // (sampler_PointClamp, declared unconditionally with the scene depth texture above -
+            // the depth reads need it in every variant, not just the shadow ones).
             Texture2D _MainLightShadowmapTexture;
-            SamplerState sampler_PointClamp; // Unity inline sampler: point filter, clamp wrap (non-comparison)
             float4x4  _MainLightWorldToShadow[5];
             float4    _CascadeShadowSplitSpheres0;
             float4    _CascadeShadowSplitSpheres1;
@@ -1037,7 +1235,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     normal = normalFoam.xyz;
                     surfGeomFoam = normalFoam.w;
                 }
-                float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
+                // View ray + distance from one subtraction (the distance also drives the detail
+                // normal fade and the shared specular roughness below).
+                float3 toSurface = i.worldPos - _WorldSpaceCameraPos;
+                float viewDistWorld = length(toSurface);
+                float3 incomingRay = toSurface / max(viewDistWorld, 1e-5);
+
+                // ---- Crest-style crossing scrolling detail normals: micro-ripple detail finer
+                // than the FFT cascades resolve, sampled in WORLD metres at the undisplaced source
+                // xz (like the foam) so it rides the waves and is body-size independent. Added as
+                // an xz tilt exactly like the FFT cascade tilt. Inert with the default "bump"
+                // texture or strength 0; above-water only, so the underwater ceiling and every
+                // legacy path keep their look. Both gates are uniforms (WGSL-safe branch). ----
+                if (_DetailNormalStrength > 0.0 && _Underwater < 0.5)
+                {
+                    float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+                    normal = normalize(normal + float3(detailTilt.x, 0.0, detailTilt.y)
+                                                * _DetailNormalStrength);
+                }
 
                 // Depth clarity (auto transparency): ONE curve from the baked bed depth drives the
                 // turbidity + underwater-fog reach below (and the deep-water tint in the shoreline
@@ -1139,10 +1354,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 {
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
-                    // Physical Schlick Fresnel from the air/water IOR: ~2% mirror straight down
-                    // (deep clear water at your feet), full mirror at grazing (the horizon).
+                    // Schlick Fresnel from the air/water IOR: ~2% mirror straight down (deep
+                    // clear water at your feet), full mirror at grazing (the horizon). The
+                    // exponent is the OVERALL SHININESS dial (Crest exposes the same): 5 is
+                    // physical; lower lifts reflectivity on tilted wave faces so the whole
+                    // surface reads glossier while keeping the down/grazing contrast.
                     // saturate: float error can push the dot above 1 -> negative pow base -> NaN.
-                    float fresnelGrazing = pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_SCHLICK_POWER);
+                    float fresnelGrazing = pow(saturate(1.0 - dot(normal, -incomingRay)), _FresnelPower);
                     float fresnel = max(FRESNEL_F0_WATER + (1.0 - FRESNEL_F0_WATER) * fresnelGrazing,
                                         _FresnelFloor);
 
@@ -1155,9 +1373,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // glint must not ride along inside the mirror term (it would double the sun).
                     // Sampled at the SHARED roughness mip: the mirror blurs with the same roughness
                     // that widens the sun lobe - near-sharp at your feet, hazier toward the horizon.
-                    float surfaceViewDist = length(i.worldPos - _WorldSpaceCameraPos);
-                    float surfaceRoughness = EffectiveWaterRoughness(surfaceViewDist);
-                    float3 reflectedColor = SampleSkyEnvironmentRough(reflectedRay, surfaceRoughness);
+                    // The horizon clamp applies to a COPY of the ray: SSR below must march the true
+                    // reflection (below-horizon rays legitimately hit scene geometry there), only
+                    // the sky lookup needs the lift.
+                    float surfaceRoughness = EffectiveWaterRoughness(viewDistWorld);
+                    float3 skyRay = reflectedRay;
+                    skyRay.y = max(skyRay.y, REFLECTION_MIN_UP_Y);
+                    skyRay = normalize(skyRay);
+                    float3 reflectedColor = SampleSkyEnvironmentAniso(skyRay, surfaceRoughness);
 
                     // ---- Wave-crest subsurface glow: steep crests scatter sunlight toward the viewer,
                     // brightest looking INTO the sun. Crest steepness is the TRUE displacement-Jacobian fold
@@ -1199,11 +1422,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles
                     // are uniform-driven (published per body via the property block), so they are live. ----
                     if (_UsePlanar > 0.5)
-                        reflectedColor = SamplePlanarReflection(i.screenPos, normal);
+                        reflectedColor = SamplePlanarReflection(i.screenPos, normal, surfaceRoughness);
                     if (_UseSSR > 0.5)
                     {
                         float ssrHit;
-                        float3 ssr = MarchSSR(i.worldPos, reflectedRay, ssrHit); // SSR marches in world space
+                        float3 ssr = MarchSSR(i.worldPos, reflectedRay, surfaceRoughness, ssrHit); // SSR marches in world space
                         reflectedColor = lerp(reflectedColor, ssr, ssrHit * _SSRStrength);
                     }
 
@@ -1218,7 +1441,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                         // Fog the transmitted view by the water thickness behind the surface
                         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
-                        float sceneEyeR = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(ruv), 0, 0)));
+                        float sceneEyeR = LinearEyeDepth(RawSceneDepth(saturate(ruv)));
                         float surfEyeR  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
                         refractedColor = ApplyWaterVolumeClarity(refractedColor, max(0.0, sceneEyeR - surfEyeR), bodyInscatter, waterClarity);
                     }
@@ -1349,7 +1572,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         if (_SimWindowed < 0.5)
                         {
                             float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
-                            float sceneEye = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(suv, 0, 0)));
+                            float sceneEye = LinearEyeDepth(RawSceneDepth(suv));
                             float surfEye  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
                             float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
                             contact = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;

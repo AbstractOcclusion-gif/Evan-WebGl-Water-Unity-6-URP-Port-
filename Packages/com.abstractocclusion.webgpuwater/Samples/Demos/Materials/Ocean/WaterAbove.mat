@@ -24,6 +24,10 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
+    - _DetailNormalTex:
+        m_Texture: {fileID: 2800000, guid: f338347ed4c95374e9975a433289a9a6, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _FoamNormalTex:
         m_Texture: {fileID: 2800000, guid: 704d645b388fb464686854f6645dc921, type: 3}
         m_Scale: {x: 1, y: 1}
@@ -43,17 +47,30 @@ Material:
     m_Ints: []
     m_Floats:
     - _Cull: 2
+    - _DetailNormalScale: 30
+    - _DetailNormalSpeed: 0.25
+    - _DetailNormalStrength: 0.95
     - _EnvReflectionIntensity: 1
     - _FoamNormalStrength: 2
-    - _FoamTexFPS: 5
+    - _FoamTexFPS: 1
+    - _FresnelFloor: 0
+    - _FresnelPower: 5
     - _RealRefraction: 1
+    - _ReflectionAnisoStretch: 0.5
     - _ReflectionDistortion: 0.05
     - _ReflectionStrength: 1
     - _RefractionDistortion: 0.05
+    - _RoughnessFalloff: 1
+    - _RoughnessFar: 0.2
+    - _RoughnessFarDistance: 1000
     - _SSRMaxSteps: 24
     - _SSRStepSize: 0.03
     - _SSRStrength: 1
     - _SSRThickness: 0.2
+    - _SunGrazeBoost: 0
+    - _SunRoughness: 0.08
+    - _SunSheen: 0
+    - _SunSheenRoughness: 0.6
     - _Underwater: 0
     - _UsePlanar: 0
     - _UseSSR: 0

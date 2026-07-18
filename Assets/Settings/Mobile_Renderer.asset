@@ -1,5 +1,19 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-3584678959840305458
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7155a8d66d68e7348af229f0a29aae85, type: 3}
+  m_Name: LargeBodyAtmosphereFeature
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.LargeBodyAtmosphereFeature
+  m_Active: 0
+  godRayShader: {fileID: 4800000, guid: 75dfc0c0ccedd1f44ab55cbf2640dff6, type: 3}
 --- !u!114 &-2787702019129424008
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -23,6 +37,20 @@ MonoBehaviour:
     renderInReflectionProbes: 0
     renderInPreviewCameras: 0
     debugMode: 0
+--- !u!114 &-2581284951219464213
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eb4ec8ce66175f94a9d438582dee7921, type: 3}
+  m_Name: WaterUnderwaterFogFeature
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterUnderwaterFogFeature
+  m_Active: 1
+  underwaterFogShader: {fileID: 4800000, guid: b4b285a8c132e8a47adf2ef988eb03db, type: 3}
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -34,7 +62,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: de640fe3d0db1804a85f9fc8f5cadab6, type: 3}
   m_Name: Mobile_Renderer
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalRendererData
   debugShaders:
     debugReplacementPS: {fileID: 4800000, guid: cf852408f2e174538bcd9b7fda1c5ae7, type: 3}
     hdrDebugViewPS: {fileID: 4800000, guid: 573620ae32aec764abd4d728906d2587, type: 3}
@@ -48,10 +76,10 @@ MonoBehaviour:
     probeSamplingDebugTexture: {fileID: 0}
     probeVolumeBlendStatesCS: {fileID: 0}
   m_RendererFeatures:
-  - {fileID: 2710708040718219573}
-  - {fileID: 8844371543007160279}
-  m_RendererFeatureMap: 35f9cde0995e9e25d7e783120f85bd7a
-  m_UseNativeRenderPass: 1
+  - {fileID: -3584678959840305458}
+  - {fileID: -2581284951219464213}
+  m_RendererFeatureMap: cedee67c7aa940ceeb97805a036f2ddc
+  m_UseNativeRenderPass: 0
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
@@ -74,11 +102,11 @@ MonoBehaviour:
   m_ShadowTransparentReceive: 1
   m_RenderingMode: 0
   m_DepthPrimingMode: 0
-  m_CopyDepthMode: 0
+  m_CopyDepthMode: 1
   m_DepthAttachmentFormat: 0
   m_DepthTextureFormat: 0
   m_AccurateGbufferNormals: 0
-  m_IntermediateTextureMode: 0
+  m_IntermediateTextureMode: 1
 --- !u!114 &2710708040718219573
 MonoBehaviour:
   m_ObjectHideFlags: 0
