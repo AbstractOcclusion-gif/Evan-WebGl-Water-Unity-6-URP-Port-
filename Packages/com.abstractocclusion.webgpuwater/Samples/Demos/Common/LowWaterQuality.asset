@@ -26,6 +26,7 @@ MonoBehaviour:
   highCausticInterval: 1
   highReadbackInterval: 1
   highMaxFoamParticles: 65536
+  highUnderwaterFog: 2
   mediumSimResolution: 128
   mediumCausticResolution: 512
   mediumGodRaySteps: 16
@@ -39,6 +40,7 @@ MonoBehaviour:
   mediumCausticInterval: 1
   mediumReadbackInterval: 1
   mediumMaxFoamParticles: 65536
+  mediumUnderwaterFog: 2
   lowSimResolution: 128
   lowCausticResolution: 256
   lowGodRaySteps: 6
@@ -47,8 +49,9 @@ MonoBehaviour:
   lowMaxWaveCount: 8
   lowRefineSteps: 2
   lowRenderScale: 0.5
-  lowRealRefraction: 0
+  lowRealRefraction: 1
   lowMeshDetail: 50
   lowCausticInterval: 2
   lowReadbackInterval: 3
   lowMaxFoamParticles: 1024
+  lowUnderwaterFog: 1

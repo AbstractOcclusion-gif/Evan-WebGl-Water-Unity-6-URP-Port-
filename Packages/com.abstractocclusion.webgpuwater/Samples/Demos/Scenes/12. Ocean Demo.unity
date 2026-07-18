@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}
+  m_SkyboxMaterial: {fileID: 2100000, guid: 5426809186b27a945b1ce441d0d9f2f4, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -147,7 +147,7 @@ Light:
   m_Enabled: 1
   serializedVersion: 12
   m_Type: 1
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 0.99607843, g: 0.8924697, b: 0.53333336, a: 1}
   m_Intensity: 0.5
   m_Range: 10
   m_SpotAngle: 30
@@ -239,13 +239,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 177695279}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.026422786, y: -0.5254778, z: -0.016330194, w: 0.8502402}
+  m_LocalRotation: {x: 0.06318852, y: -0.52427906, z: 0.03905269, w: 0.84830046}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 773898433}
-  m_LocalEulerAnglesHint: {x: -3.56, y: -63.435, z: 0}
+  m_LocalEulerAnglesHint: {x: 8.52, y: -63.435, z: 0}
 --- !u!1 &230721764
 GameObject:
   m_ObjectHideFlags: 0
@@ -703,13 +703,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: 0, y: 0.8166919, z: 0, w: 0.577074}
   m_LocalPosition: {x: 0, y: 4.61, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 109.51, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -765,7 +765,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!215 &1318482035
 ReflectionProbe:
   m_ObjectHideFlags: 0
@@ -869,7 +869,7 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
-  rippleQuality: 2
+  rippleQuality: 0
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
@@ -938,7 +938,7 @@ MonoBehaviour:
   godRayRenderer: {fileID: 0}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
+  quality: {fileID: 11400000, guid: d8574713c868143418d4679d0fc51663, type: 2}
   enableCulling: 1
   activationDistance: 1000
   reflectionSettings:
@@ -949,11 +949,15 @@ MonoBehaviour:
     reflectionStrength: 1
     envReflectionIntensity: 1
     fresnelFloor: 0
-    sunRoughness: 0.066
-    roughnessFar: 0.2
-    roughnessFarDistance: 1000
-    roughnessFalloff: 1
-    reflectionAnisoStretch: 0.5
+    fresnelPower: 5
+    sunRoughness: 0.184
+    roughnessFar: 0.494
+    roughnessFarDistance: 3141
+    roughnessFalloff: 3.02
+    reflectionAnisoStretch: 0.093
+    sunSheen: 0
+    sunSheenRoughness: 0.307
+    sunGrazeBoost: 0.537
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -961,14 +965,14 @@ MonoBehaviour:
     ssrThickness: 0.2
     refractionDistortion: 0.05
   detailNormalSettings:
-    texture: {fileID: 0}
-    strength: 0.6
-    tileMeters: 18
-    scrollSpeed: 0.25
+    texture: {fileID: 2800000, guid: 07ff697babc958a4cb1ddcf8382f2101, type: 3}
+    strength: 2
+    tileMeters: 31.8
+    scrollSpeed: 1
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.89270175, y: -0.062093735, z: -0.44634977}
+  lightDir: {x: 0.88455695, y: 0.14815472, z: -0.44227737}
   causticResolution: 1024
   objectInteractionSettings:
     objectInteraction: 0
