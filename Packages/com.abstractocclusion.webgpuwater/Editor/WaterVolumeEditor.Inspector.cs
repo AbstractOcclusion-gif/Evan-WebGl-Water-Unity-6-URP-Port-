@@ -37,6 +37,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showCamera = false;
         bool _showSplash = false;
 
+        // The sun-driven lightDir is shown read-only; repaint live only while the Simulation section
+        // is open AND a sun drives it, so the greyed value tracks the sun instead of showing a stale
+        // vector - and idle inspectors (section collapsed, or no sun) pay no continuous-repaint cost.
+        public override bool RequiresConstantRepaint() => _showSimulation && HasSun;
+
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
@@ -47,6 +52,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.BodyTypeSelector(Prop("bodyType"));
             if (GUILayout.Button("Apply " + CurrentType + " defaults"))
                 ApplyBodyTypeDefaults(CurrentType);
+
+            // Physically-based Jerlov water colour: writes Fog Extinction + body/scatter colour.
+            DrawJerlovWaterTypeSelector();
 
             // Placement + wiring
             DrawPlacementSection();
@@ -88,6 +96,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Shorthand for a serialized property by path; nested Settings blocks use dotted paths
         // (e.g. "ocean.openWater"). Kept single-sourced so no section invents a raw string twice.
         SerializedProperty Prop(string path) => serializedObject.FindProperty(path);
+
+        // True when a directional light is wired into the body's sun slot (which then auto-drives lightDir).
+        bool HasSun => Prop("sun").objectReferenceValue != null;
 
         // Draws every named property field of a nested block, honouring its [Range]/[Min]/[Tooltip]
         // attributes automatically (PropertyField reads them), so this editor holds no range literals.

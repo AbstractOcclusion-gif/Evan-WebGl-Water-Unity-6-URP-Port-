@@ -147,8 +147,8 @@ Light:
   m_Enabled: 1
   serializedVersion: 12
   m_Type: 1
-  m_Color: {r: 0.99607843, g: 0.8924697, b: 0.53333336, a: 1}
-  m_Intensity: 0.5
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Intensity: 0.7
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -239,13 +239,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 177695279}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.06318852, y: -0.52427906, z: 0.03905269, w: 0.84830046}
+  m_LocalRotation: {x: 0.03460639, y: -0.5302166, z: 0.021666482, w: 0.84687865}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 773898433}
-  m_LocalEulerAnglesHint: {x: 8.52, y: -63.435, z: 0}
+  m_LocalEulerAnglesHint: {x: 4.68, y: -64.1, z: 0}
 --- !u!1 &230721764
 GameObject:
   m_ObjectHideFlags: 0
@@ -538,6 +538,55 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 612971047}
   m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
+--- !u!1 &639025605
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 639025607}
+  - component: {fileID: 639025606}
+  m_Layer: 0
+  m_Name: Global Volume
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &639025606
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 639025605}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.Volume
+  m_IsGlobal: 1
+  priority: 0
+  blendDistance: 0
+  weight: 1
+  sharedProfile: {fileID: 11400000, guid: 10fc4df2da32a41aaa32d77bc913491c, type: 2}
+--- !u!4 &639025607
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 639025605}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.019999996, y: -0.019999996, z: 1.5999999}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &773898432
 GameObject:
   m_ObjectHideFlags: 0
@@ -584,7 +633,7 @@ GameObject:
   - component: {fileID: 961739751}
   - component: {fileID: 961739750}
   - component: {fileID: 961739755}
-  - component: {fileID: 961739757}
+  - component: {fileID: 961739756}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -703,13 +752,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.8166919, z: 0, w: 0.577074}
+  m_LocalRotation: {x: 0, y: 0.8019842, z: 0, w: 0.59734535}
   m_LocalPosition: {x: 0, y: 4.61, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 109.51, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 106.64, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -729,15 +778,15 @@ MonoBehaviour:
     m_Bits: 39
   resolutionScale: 0.5
   clipPlaneOffset: 0.02
-  enableReflection: 1
---- !u!114 &961739757
+  enableReflection: 0
+--- !u!114 &961739756
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cddd9544bc6aa3a4a952344b09c15c46, type: 3}
   m_Name: 
@@ -873,24 +922,24 @@ MonoBehaviour:
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
-  largeBodyThreshold: 48
-  simWindowMeters: 32
+  largeBodyThreshold: 300
+  simWindowMeters: 200
   clampWindowToShore: 0
   simWindowFocus: {fileID: 0}
   simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
-    largeWaveAmplitude: 0.5
+    largeWaveAmplitude: 0.1
     largeWaveChoppiness: 0.7
-    swellHeight: 1
+    swellHeight: 0.1
     swellWavelength: 80
     unboundedOcean: 1
     clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
-    horizonHazeColor: {r: 0.53333336, g: 0.4431373, b: 0.21176472, a: 1}
+    horizonHazeColor: {r: 0.3019608, g: 0.3372549, b: 0.32156864, a: 1}
     horizonHazeDensity: 0.001
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
@@ -900,8 +949,8 @@ MonoBehaviour:
     largeGodRayCausticStrength: 4
     oceanFoamWindThreshold: 4
     oceanFoamCoverage: 0.85
-    oceanFoamStrength: 1.88
-    oceanFoamFadeRate: 0.96
+    oceanFoamStrength: 0.75
+    oceanFoamFadeRate: 2.73
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.723
@@ -946,7 +995,7 @@ MonoBehaviour:
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
-    reflectionStrength: 1
+    reflectionStrength: 0.4
     envReflectionIntensity: 1
     fresnelFloor: 0
     fresnelPower: 5
@@ -955,9 +1004,9 @@ MonoBehaviour:
     roughnessFarDistance: 3141
     roughnessFalloff: 3.02
     reflectionAnisoStretch: 0.093
-    sunSheen: 0
-    sunSheenRoughness: 0.307
-    sunGrazeBoost: 0.537
+    sunSheen: 0.623
+    sunSheenRoughness: 0.293
+    sunGrazeBoost: 0.298
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -966,14 +1015,14 @@ MonoBehaviour:
     refractionDistortion: 0.05
   detailNormalSettings:
     texture: {fileID: 2800000, guid: 07ff697babc958a4cb1ddcf8382f2101, type: 3}
-    strength: 2
-    tileMeters: 31.8
-    scrollSpeed: 1
+    strength: 1.5
+    tileMeters: 36.4
+    scrollSpeed: 1.33
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
-  lightDir: {x: 0.88455695, y: 0.14815472, z: -0.44227737}
-  causticResolution: 1024
+  lightDir: {x: 0.8965586, y: 0.08159068, z: -0.43534553}
+  causticResolution: 256
   objectInteractionSettings:
     objectInteraction: 0
     obstacleStrength: 0.25
@@ -987,9 +1036,9 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
+    fogColor: {r: 0.10105374, g: 0.24248955, b: 0.3132075, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 0.5
+    fogDensity: 0
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -997,14 +1046,14 @@ MonoBehaviour:
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
   volumeScatterSettings:
-    volumeScatter: 1
-    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
-    scatterIntensity: 0.5
-    scatterAnisotropy: 0.5
-    scatterAmbientTerm: 1
-    scatterSunTerm: 1
+    volumeScatter: 0
+    scatterColor: {r: 0.18128152, g: 0.55510145, b: 0.78113204, a: 1}
+    scatterIntensity: 0
+    scatterAnisotropy: 0.51
+    scatterAmbientTerm: 0.96
+    scatterSunTerm: 1.06
     crestScatter: 0
-    sssIntensity: 3
+    sssIntensity: 3.54
     sssSunFalloff: 2
     sssPinchMin: 0.1
     sssPinchMax: 0.6
@@ -1120,12 +1169,12 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 1
-    windSpeed: 4.3
+    windSpeed: 5
     windFromDegrees: 0
     waveScaleMeters: 500
     waveCount: 12
-    waveAmplitudeScale: 4
-    waveDirectionSpread: 2
+    waveAmplitudeScale: 12
+    waveDirectionSpread: 1
     waveNormalStrength: 1
   _legacyWindWaves: 1
   _legacyWindSpeed: 3
@@ -1262,3 +1311,4 @@ SceneRoots:
   - {fileID: 773898433}
   - {fileID: 230721768}
   - {fileID: 1318482036}
+  - {fileID: 639025607}

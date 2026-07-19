@@ -11,7 +11,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawSimulationSection()
         {
             _showSimulation = WaterEditorUI.Section("Simulation", _showSimulation, () =>
-                DrawFields("timeScale", "lightDir", "causticResolution"));
+            {
+                DrawFields("timeScale");
+                // lightDir is auto-driven from the assigned sun every tick (WaterUniformPublisher),
+                // so it is read-only while a sun drives it - editable only when no sun is set.
+                DrawFieldsIf(!HasSun, "lightDir");
+                DrawFields("causticResolution");
+            });
         }
 
         void DrawRippleSection()
