@@ -858,16 +858,28 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
     }
 
     // ---- Horizon haze: dissolve the far ocean surface into the sky so the outer mesh
-    // edge / water-sky boundary has no hard line. The sky along the near-horizontal view
-    // ray IS the horizon, so the surface fades toward SampleEnvironment(incomingRay),
-    // optionally tinted toward a fixed atmosphere colour by _HorizonHazeColor.a. The
-    // exponential 1 - exp(-density * dist) falloff reads like real distance haze instead
-    // of a hard band. Off when density is 0 (bounded bodies, unchanged). ----
+    // edge / water-sky boundary has no hard line. The exponential 1 - exp(-density * dist)
+    // falloff reads like real distance haze instead of a hard band. Off when density is 0
+    // (bounded bodies, unchanged). ----
     if (_HorizonHazeDensity > 0.0)
     {
         float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
         float haze = 1.0 - exp(-_HorizonHazeDensity * horizD);
-        float3 hazeTarget = lerp(SampleEnvironment(incomingRay), _HorizonHazeColor.rgb, _HorizonHazeColor.a);
+        // Haze target = what the camera actually RENDERED behind this pixel: URP draws the
+        // skybox before the opaque-colour copy, so at the far mesh edge _CameraOpaqueTexture
+        // IS the sky at the horizon - an exact colour match for ANY sky (procedural, gradient,
+        // cubemap, animating), no probe involved. The SH ambient probe was tried and rejected:
+        // unity_SHAr..SHC are never bound for this CGPROGRAM pass under URP Forward+ (zeros ->
+        // far water faded to black), the same per-object-binding failure as unity_SpecCube0
+        // (see SampleSkyEnvironmentGrad). Tiers without the opaque texture (no real refraction)
+        // fall back to the _Sky reflection cube along the view ray. Both branches are gated on
+        // uniforms, so the implicit-derivative samples are WGSL-safe here.
+        float3 skyBehind = (_RealRefraction > 0.5)
+            ? tex2D(_CameraOpaqueTexture, ScreenUV(i.screenPos)).rgb
+            : SampleEnvironment(incomingRay);
+        // _HorizonHazeColor stays an optional bias: alpha 0 (default) = pure auto-match;
+        // raise alpha to pull the haze toward a fixed atmosphere colour.
+        float3 hazeTarget = lerp(skyBehind, _HorizonHazeColor.rgb, _HorizonHazeColor.a);
         outColor = lerp(outColor, hazeTarget, haze);
     }
     // Legacy smoothstep stopgap (retired in a later increment): only when the new haze is
