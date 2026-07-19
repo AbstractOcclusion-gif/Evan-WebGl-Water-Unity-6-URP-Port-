@@ -239,13 +239,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 177695279}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.03460639, y: -0.5302166, z: 0.021666482, w: 0.84687865}
+  m_LocalRotation: {x: 0.034678046, y: -0.5274053, z: 0.021551605, w: 0.8486322}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 773898433}
-  m_LocalEulerAnglesHint: {x: 4.68, y: -64.1, z: 0}
+  m_LocalEulerAnglesHint: {x: 4.68, y: -63.72, z: 0}
 --- !u!1 &230721764
 GameObject:
   m_ObjectHideFlags: 0
@@ -753,7 +753,7 @@ Transform:
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.8535508, z: 0, w: 0.52100974}
-  m_LocalPosition: {x: 0, y: 4.61, z: -10}
+  m_LocalPosition: {x: 0, y: 11.98, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -795,7 +795,6 @@ MonoBehaviour:
   boostMultiplier: 3
   lookSensitivity: 0.1
   touchLookSensitivity: 0.12
-  touchTapTravelPixels: 16
   touchMoveRangePixels: 140
   pinchVerticalSpeed: 0.01
 --- !u!1 &1318482034
@@ -814,7 +813,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!215 &1318482035
 ReflectionProbe:
   m_ObjectHideFlags: 0
@@ -940,7 +939,7 @@ MonoBehaviour:
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.01
+    horizonHazeDensity: 0.003
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -995,13 +994,13 @@ MonoBehaviour:
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
-    reflectionStrength: 0.4
-    envReflectionIntensity: 1
+    reflectionStrength: 0.688
+    envReflectionIntensity: 1.37
     fresnelFloor: 0
     fresnelPower: 5
-    sunRoughness: 0.18
+    sunRoughness: 0.201
     roughnessFar: 0.494
-    roughnessFarDistance: 3141
+    roughnessFarDistance: 2989
     roughnessFalloff: 3.02
     reflectionAnisoStretch: 0.093
     sunSheen: 0.188
@@ -1038,7 +1037,7 @@ MonoBehaviour:
     waterFog: 1
     fogColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
     fogExtinction: {r: 0.8125, g: 0.0667, b: 0.1043, a: 1}
-    fogDensity: 1
+    fogDensity: 5.7
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -1048,7 +1047,7 @@ MonoBehaviour:
   volumeScatterSettings:
     volumeScatter: 1
     scatterColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
-    scatterIntensity: 1.54
+    scatterIntensity: 0.33
     scatterAnisotropy: 0.1
     scatterAmbientTerm: 0.96
     scatterSunTerm: 1.06

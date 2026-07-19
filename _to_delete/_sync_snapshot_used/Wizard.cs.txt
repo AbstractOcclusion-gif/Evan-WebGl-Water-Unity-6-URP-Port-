@@ -114,22 +114,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [SerializeField] List<GameObject> _objects = new List<GameObject>();
         [SerializeField] Vector2 _scroll;
 
-        // Standalone floater creation (no water required - it attaches to whatever body hosts
-        // it at runtime). Shares the buoyancy preset/advanced tuning of the section above it.
-        [SerializeField] FloaterShape _newFloaterShape = FloaterShape.Cube;
-        [SerializeField] Mesh _newFloaterMesh;
-        [SerializeField] float _newFloaterSize = DefaultFloaterSize;
-
-        // Boat creator (primitive hull by default; drop a mesh in for a custom hull).
-        [SerializeField] Mesh _boatHullMesh;
-        [SerializeField] bool _boatChaseCamera = true;
-
         [SerializeField] bool _createExpanded = true;
         [SerializeField] bool _objectsExpanded = true;
-        [SerializeField] bool _boatExpanded = true;
         [SerializeField] bool _utilitiesExpanded;
-
-        const float DefaultFloaterSize = 0.4f; // metres - reads clearly on the default 2x1x2 body
 
         [MenuItem(MenuPath)]
         static void Open()
@@ -145,7 +132,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.DrawHeader(WindowTitle, "Build a water body & its floaters");
             _createExpanded = WaterEditorUI.Section("Create Water", _createExpanded, DrawCreateSection);
             _objectsExpanded = WaterEditorUI.Section("Floating Objects", _objectsExpanded, DrawFloatingObjectsSection);
-            _boatExpanded = WaterEditorUI.Section("Boat", _boatExpanded, DrawBoatSection);
             _utilitiesExpanded = WaterEditorUI.Section("Utilities", _utilitiesExpanded, DrawUtilitiesSection);
             WaterEditorUI.DrawFooter();
             EditorGUILayout.EndScrollView();
@@ -469,70 +455,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     WireObjects();
                     Debug.Log($"[WebGL Water] Configured listed objects as {_objectMode}.");
                 }
-            }
-
-            DrawCreateFloater();
-        }
-
-        // One-click floater from scratch (vs the slots above, which retrofit EXISTING objects):
-        // spawns a shape above the water (or the origin), fully wired with the section's buoyancy
-        // preset + advanced tuning, in one undo step. No water needs to exist yet.
-        void DrawCreateFloater()
-        {
-            WaterEditorUI.SubHeading("Create New Floater");
-            _newFloaterShape = (FloaterShape)EditorGUILayout.EnumPopup(
-                new GUIContent("Shape", "Built-in primitive, or Custom Mesh to use your own model."),
-                _newFloaterShape);
-            if (_newFloaterShape == FloaterShape.CustomMesh)
-                _newFloaterMesh = (Mesh)EditorGUILayout.ObjectField(
-                    new GUIContent("Mesh", "Hull mesh; gets a convex MeshCollider + the pipeline's default material."),
-                    _newFloaterMesh, typeof(Mesh), allowSceneObjects: false);
-            _newFloaterSize = EditorGUILayout.FloatField(
-                new GUIContent("Size (m)", "Uniform scale of the spawned object."), _newFloaterSize);
-
-            if (GUILayout.Button("Create Buoyant Object", GUILayout.Height(24f)))
-            {
-                Undo.SetCurrentGroupName("Create Buoyant Object");
-                int undoGroup = Undo.GetCurrentGroup();
-                GameObject prop = CreateBuoyantObjectBody(_newFloaterShape, _newFloaterMesh, _newFloaterSize);
-                if (prop == null) return;
-                MakeFloatable(prop); // same wiring + preset path as the retrofit slots
-                Selection.activeObject = prop;
-                Undo.CollapseUndoOperations(undoGroup);
-                Debug.Log("[WebGL Water] Buoyant object created - it drops in and floats on whatever " +
-                          "water body hosts it (no wiring needed).");
-            }
-        }
-
-        // ---- boat section ----------------------------------------------------
-        // Resurrects the retired boat-demo rig as a first-class creator: primitive hull (works
-        // with zero assets) or a custom hull mesh, probe buoyancy + BoatController drive, and an
-        // optional yaw-only chase camera. Drive with W/S (throttle) and A/D (steer).
-        void DrawBoatSection()
-        {
-            EditorGUILayout.HelpBox("Creates a drivable boat (probe buoyancy + BoatController). It floats on " +
-                                    "whatever water hosts it - build an ocean first for the full experience. " +
-                                    "Drive with W/S and A/D.", MessageType.None);
-
-            _boatHullMesh = (Mesh)EditorGUILayout.ObjectField(
-                new GUIContent("Hull mesh (optional)", "Leave empty for the built-in primitive hull; assign a mesh " +
-                                                       "(e.g. your own boat model) for a custom hull with a convex collider."),
-                _boatHullMesh, typeof(Mesh), allowSceneObjects: false);
-            _boatChaseCamera = EditorGUILayout.Toggle(
-                new GUIContent("Chase camera", "Swap the scene camera's controller for a yaw-only follow camera " +
-                                               "locked to the boat (orbit/fly are disabled, not removed)."),
-                _boatChaseCamera);
-
-            if (GUILayout.Button("Create Boat", GUILayout.Height(26f)))
-            {
-                Undo.SetCurrentGroupName("Create Boat");
-                int undoGroup = Undo.GetCurrentGroup();
-                GameObject boat = CreateBoat(_boatHullMesh, withSplash: _splash);
-                if (boat == null) return;
-                if (_boatChaseCamera) FocusSceneOnBoat(boat);
-                Selection.activeObject = boat;
-                Undo.CollapseUndoOperations(undoGroup);
-                Debug.Log("[WebGL Water] Boat created. Press Play - drive with W/S (throttle) and A/D (steer).");
             }
         }
 

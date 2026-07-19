@@ -6,6 +6,9 @@
 
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with OceanFft.compute
 #include "WaterSurfWaves.hlsl"  // surf breaker-front whitewash source (pure math; textures below)
+#include "WaterShoreMath.hlsl"  // sampler-free shore math: SHORE_BORDER_FEATHER, ShoreFieldUVFrom,
+                                // ShoreFieldInfluence, ShoreDecodeToShore (this compute cannot
+                                // include the sampler2D-bearing WaterShore.hlsl; textures below)
 
 #pragma kernel Drop
 #pragma kernel SphereInteract
@@ -226,9 +229,6 @@ float _ShoreCrestFoamLutActive; // 1 = pop curve drives the crest injection
 float _ShoreCrestFoamGain;      // matches the surface's _SurfCrestFoamGain
 // Legacy weight of the cresting-lip signal in the injection (the pre-pop-curve behaviour).
 static const float SURF_SIM_BREAKER_WEIGHT = 0.6;
-// Matches SHORE_BORDER_FEATHER in WaterShore.hlsl (compute cannot include that header - see above).
-#define SHORE_FOAM_BORDER_FEATHER 0.08
-
 // "Deep" column depth used when no bed is active, so shoal/shore terms are no-ops there.
 static const float BED_DEEP_DEPTH = 1000.0;
 
@@ -543,19 +543,17 @@ void Foam(uint3 id : SV_DispatchThreadID)
         float2 shoreWorldXZ = _ShoreSimUvToWorldOrigin.xy
                             + uvShore.x * _ShoreSimUvToWorldAxes.xy
                             + uvShore.y * _ShoreSimUvToWorldAxes.zw;
-        float2 fieldUv = (shoreWorldXZ - _ShoreFieldCenterSim.xy)
-                       / (2.0 * _ShoreFieldSizeSim.xy) + 0.5;
-        float2 edge = saturate(min(fieldUv, 1.0 - fieldUv) / SHORE_FOAM_BORDER_FEATHER);
-        float influence = edge.x * edge.y;
+        float2 fieldUv = ShoreFieldUVFrom(shoreWorldXZ, _ShoreFieldCenterSim.xy,
+                                          _ShoreFieldSizeSim.xy);
+        float influence = ShoreFieldInfluence(fieldUv);
         if (influence > 0.001)
         {
             float shoreDepth = _ShoreDepthTexSim.SampleLevel(sampler_ShoreDepthTexSim,
                                                              saturate(fieldUv), 0);
             float4 shoreSdf = _ShoreSDFTexSim.SampleLevel(sampler_ShoreSDFTexSim,
                                                           saturate(fieldUv), 0);
-            float2 toShore = shoreSdf.rg * 2.0 - 1.0;
-            float toShoreLen = length(toShore);
-            toShore = toShoreLen > 1e-4 ? toShore / toShoreLen : float2(0.0, 0.0);
+            float2 toShore;
+            ShoreDecodeToShore(shoreSdf.rg, toShore); // zero on degenerate - press on, as before
             SurfWaveSample surfSim = EvaluateSurfWaves(shoreWorldXZ, shoreDepth, shoreSdf.b,
                                                        toShore, shoreSdf.a, influence,
                                                        _ShoreFoamTime);

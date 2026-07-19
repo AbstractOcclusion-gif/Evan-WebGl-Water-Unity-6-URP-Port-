@@ -1,0 +1,194 @@
+// WebGpuWater - WaterVolume: horizon geometry-CLIPMAP driver (unbounded oceans).
+// Split out of WaterVolume.cs (final-clean E, verbatim move - any behavior change here is a bug):
+// the nested-LOD annulus levels (above + under twins), their world-lattice snapping and geomorph
+// uniforms, and build / per-frame placement / teardown. The template mesh itself comes from
+// LargeWaterClipmap; the level-count/reach derivations live with the Ocean settings.
+using UnityEngine;
+
+namespace AbstractOcclusion.WebGpuWater
+{
+    public partial class WaterVolume
+    {
+        // geometry clipmap (see LargeWaterClipmap). One shared uniform-grid template is drawn as N nested
+        // LOD levels; each level scales the template to its cell size and SNAPS its centre to that level's
+        // own world lattice, so its vertices never slide under the world-space waves as the camera follows
+        // (the "swim" the old radial mesh suffered). The _IsClipmap flag + per-level morph uniforms ride
+        // each level's property block, so nothing leaks onto the pool-grid renderers. An underside twin
+        // per level (opposite cull, same material family as the bounded under-surface) reaches the horizon
+        // for the submerged view; its centre hole is filled by the near-field under-patch.
+        struct ClipmapLevel
+        {
+            public MeshRenderer above;
+            public MeshRenderer under;                 // null when the body has no under-surface material
+            public MaterialPropertyBlock aboveBlock;
+            public MaterialPropertyBlock underBlock;
+            public float cellSize;                     // world metres per grid cell at this level
+            public float depthBias;                    // view-space nudge toward the camera; finer levels win an overlap
+            public float morphStart;                   // cheb cell distance where the edge geomorph begins (>= M/2 = off)
+            public float morphScale;                   // 1 / morph-band width in cells
+        }
+        ClipmapLevel[] _clipmapLevels;
+        Mesh _clipmapTemplate;                         // shared uniform square-annulus grid backing every level
+        static readonly int ID_IsClipmap = Shader.PropertyToID("_IsClipmap");
+        static readonly int ID_ClipmapMorphStart = Shader.PropertyToID("_ClipmapMorphStart");
+        static readonly int ID_ClipmapMorphScale = Shader.PropertyToID("_ClipmapMorphScale");
+        const string ClipmapObjectName = "Ocean Clipmap";
+        const string ClipmapUnderObjectName = "Ocean Clipmap (under)";
+
+        // Re-place every clipmap LOD level each frame (per-level world-lattice snap + per-level uniforms).
+        void ApplyClipmapBlock()
+        {
+            if (_clipmapLevels == null) return;
+            for (int i = 0; i < _clipmapLevels.Length; i++)
+                PositionClipmapLevel(_clipmapLevels[i]);
+        }
+
+        // Place one LOD level: snap its centre to the level's own world lattice, scale the shared template
+        // to the level's cell size, and push its per-level uniforms (the _IsClipmap flag, the edge geomorph
+        // band, and a small toward-camera depth bias so a finer level wins where it overlaps a coarser one).
+        // The above and under twins share the centre + scale; only their material (and cull) differ.
+        void PositionClipmapLevel(ClipmapLevel level)
+        {
+            Vector3 center = ClipmapLevelSnappedCenter(level.cellSize);
+            Vector3 scale = new Vector3(level.cellSize, 1f, level.cellSize); // template verts are in cell units
+            PlaceClipmapRenderer(level.above, level.aboveBlock, center, scale, level);
+            PlaceClipmapRenderer(level.under, level.underBlock, center, scale, level);
+        }
+
+        void PlaceClipmapRenderer(MeshRenderer renderer, MaterialPropertyBlock block,
+                                  Vector3 center, Vector3 scale, ClipmapLevel level)
+        {
+            if (renderer == null) return;
+            WriteBodyProps(block);
+            block.SetFloat(ID_IsClipmap, 1f);
+            block.SetFloat(ID_PatchDepthBias, level.depthBias);
+            block.SetFloat(ID_ClipmapMorphStart, level.morphStart);
+            block.SetFloat(ID_ClipmapMorphScale, level.morphScale);
+            renderer.SetPropertyBlock(block);
+
+            Transform t = renderer.transform;
+            t.SetPositionAndRotation(center, VolumeRotation);
+            t.localScale = scale;
+        }
+
+        // Snap the level's follow centre to its own world lattice (multiples of 2*cell in the volume-local
+        // frame about VolumeCenter). Because the shared template's vertices sit at integer-cell offsets,
+        // snapping to 2*cell keeps every vertex on the fixed world lattice VolumeCenter + cell*Z, so the
+        // wave field (a pure function of world XZ) is sampled at stable points as the camera follows - which
+        // is what removes the geometry swim. Follows the same target as the sim window (an explicit focus,
+        // else the camera); falls back to the window centre when neither exists.
+        Vector3 ClipmapLevelSnappedCenter(float cellSize)
+        {
+            Transform follow = simWindowFocus != null ? simWindowFocus
+                             : (targetCamera != null ? targetCamera.transform : null);
+            if (follow == null) return SimWindowCenter;
+
+            Vector3 up = VolumeUp;
+            Vector3 followPos = follow.position;
+            Vector3 onPlane = followPos - Vector3.Dot(followPos - VolumeCenter, up) * up;
+            Vector3 local = Quaternion.Inverse(VolumeRotation) * (onPlane - VolumeCenter);
+            float snap = ClipmapSnapCellMultiple * cellSize;
+            local.x = Mathf.Round(local.x / snap) * snap;
+            local.z = Mathf.Round(local.z / snap) * snap;
+            return VolumeCenter + VolumeRotation * new Vector3(local.x, 0f, local.z);
+        }
+
+        // Build the unbounded-ocean clipmap: a radial ring mesh in world metres, reusing THIS body's
+        // surface material with _IsClipmap on its block. Play mode only, and only when the body is a
+        // true ocean (open water + opt-in + sim window). Fails loudly if the sim window is missing,
+        // because without it the near-field ripple fade can't keep the far field clean.
+        void CreateOceanClipmap()
+        {
+            if (!Application.isPlaying) return;
+            if (openWater && unboundedOcean && !_windowed)
+            {
+                Debug.LogWarning("WaterVolume: Unbounded Ocean needs the large-body sim window " +
+                                 "(Enable Large Body Window) for near-field ripples; the surface stays " +
+                                 "the bounded plane until it is enabled.", this);
+                return;
+            }
+            if (!IsOceanClipmap) return;
+            if (_clipmapLevels != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
+
+            // One shared uniform square-annulus template (integer cell units); every LOD level scales and
+            // snaps it independently. The central hole sits just inside the near-field patch so the dense
+            // patch owns the near field (its depth bias covers the overlap ring), and each level's hole is
+            // shrunk by the overlap margin so consecutive levels overlap rather than crack at the seam.
+            _clipmapTemplate = LargeWaterClipmap.BuildAnnulusTemplate(ClipmapGridRes, ClipmapHoleHalfCells);
+            _clipmapTemplate.hideFlags = HideFlags.HideAndDontSave;
+
+            int levelCount = ClipmapLevelCount;
+            float baseCell = ClipmapBaseCell;
+            float morphBandCells = Mathf.Max(1f, Mathf.Round((ClipmapGridRes / 4f) * ClipmapMorphBandFraction));
+            float biasStep = PatchDepthBiasMeters / (levelCount + 1);   // every level stays under the patch's bias
+            bool buildUnder = surfaceUnder != null && surfaceUnder.sharedMaterial != null;
+
+            _clipmapLevels = new ClipmapLevel[levelCount];
+            for (int level = 0; level < levelCount; level++)
+            {
+                bool outermost = level == levelCount - 1;
+                var entry = new ClipmapLevel
+                {
+                    cellSize = baseCell * Mathf.Pow(2f, level),
+                    // Finer levels get a larger toward-camera nudge so they win where they overlap a coarser
+                    // one; all stay below the patch bias so the patch still owns the innermost overlap.
+                    depthBias = biasStep * (levelCount - 1 - level),
+                    // Outermost level has no coarser neighbour: disable its edge morph by pushing the start
+                    // past the outer edge.
+                    morphStart = outermost ? ClipmapGridRes : (ClipmapGridRes / 2f - morphBandCells),
+                    morphScale = 1f / morphBandCells,
+                    above = CreateClipmapRenderer(ClipmapObjectName, _clipmapTemplate, surfaceAbove.sharedMaterial),
+                    aboveBlock = new MaterialPropertyBlock(),
+                };
+                if (buildUnder)
+                {
+                    entry.under = CreateClipmapRenderer(ClipmapUnderObjectName, _clipmapTemplate, surfaceUnder.sharedMaterial);
+                    entry.underBlock = new MaterialPropertyBlock();
+                }
+                _clipmapLevels[level] = entry;
+            }
+        }
+
+        // Enable/disable every LOD level's above + under renderer together.
+        void SetClipmapRenderersEnabled(bool on)
+        {
+            if (_clipmapLevels == null) return;
+            for (int i = 0; i < _clipmapLevels.Length; i++)
+            {
+                SetRendererEnabled(_clipmapLevels[i].above, on);
+                SetRendererEnabled(_clipmapLevels[i].under, on);
+            }
+        }
+
+        // Build one clipmap renderer: a never-shadowing MeshRenderer over 'mesh' using the given per-body
+        // surface material instance, parented beside the surface. The _IsClipmap flag rides its property
+        // block (written in ApplyClipmapBlock), so it never leaks onto the pool-grid renderers.
+        MeshRenderer CreateClipmapRenderer(string objectName, Mesh mesh, Material material)
+        {
+            var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(surfaceAbove.transform.parent, false);
+            ApplyWaterLayer(go);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = material;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            return mr;
+        }
+
+        void DestroyOceanClipmap()
+        {
+            if (_clipmapLevels != null)
+            {
+                for (int i = 0; i < _clipmapLevels.Length; i++)
+                {
+                    if (_clipmapLevels[i].above != null) DestroyRuntimeObject(_clipmapLevels[i].above.gameObject);
+                    if (_clipmapLevels[i].under != null) DestroyRuntimeObject(_clipmapLevels[i].under.gameObject);
+                }
+                _clipmapLevels = null;
+            }
+            DestroyRuntimeObject(_clipmapTemplate);
+            _clipmapTemplate = null;
+        }
+    }
+}

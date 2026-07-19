@@ -41,14 +41,13 @@ namespace AbstractOcclusion.WebGpuWater
 
         const float MinPitch = -89.99f;
         const float MaxPitch = 89.99f;
-        const float NoActivePinch = -1f; // sentinel: no pinch gesture in progress
         // Legacy Input Manager axis names (fallback path only).
         const string MouseXAxis = "Mouse X";
         const string MouseYAxis = "Mouse Y";
 
         float _yaw;
         float _pitch;
-        float _lastPinchDist = NoActivePinch;
+        PinchTracker _pinch; // shared pinch-distance state machine (WaterTouchInput.cs)
 
         void OnEnable()
         {
@@ -162,7 +161,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
 #if ENABLE_INPUT_SYSTEM
             var touchscreen = Touchscreen.current;
-            if (touchscreen == null || PressedCount(touchscreen) != 1) return Vector3.zero;
+            if (touchscreen == null || WaterTouchInput.PressedCount(touchscreen) != 1) return Vector3.zero;
 
             var touch = touchscreen.primaryTouch;
             Vector2 start = touch.startPosition.ReadValue();
@@ -186,7 +185,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
 #if ENABLE_INPUT_SYSTEM
             var touchscreen = Touchscreen.current;
-            if (touchscreen == null || PressedCount(touchscreen) != 1) return Vector2.zero;
+            if (touchscreen == null || WaterTouchInput.PressedCount(touchscreen) != 1) return Vector2.zero;
 
             var touch = touchscreen.primaryTouch;
             Vector2 start = touch.startPosition.ReadValue();
@@ -206,44 +205,18 @@ namespace AbstractOcclusion.WebGpuWater
         {
 #if ENABLE_INPUT_SYSTEM
             var touchscreen = Touchscreen.current;
-            if (touchscreen == null || PressedCount(touchscreen) < 2 || !TwoTouches(touchscreen, out Vector2 a, out Vector2 b))
+            if (touchscreen == null || WaterTouchInput.PressedCount(touchscreen) < 2 ||
+                !WaterTouchInput.TryGetTwoTouches(touchscreen, out Vector2 a, out Vector2 b))
             {
-                _lastPinchDist = NoActivePinch;
+                _pinch.Reset();
                 return 0f;
             }
 
-            float dist = Vector2.Distance(a, b);
-            float metres = _lastPinchDist > 0f ? (dist - _lastPinchDist) * pinchVerticalSpeed : 0f;
-            _lastPinchDist = dist;
-            return metres;
+            // The tracker yields the spread change in pixels; metres-per-pixel is THIS camera's tunable.
+            return _pinch.Update(a, b, out float deltaPixels) ? deltaPixels * pinchVerticalSpeed : 0f;
 #else
             return 0f;
 #endif
         }
-
-#if ENABLE_INPUT_SYSTEM
-        static int PressedCount(Touchscreen touchscreen)
-        {
-            int pressed = 0;
-            foreach (var touch in touchscreen.touches)
-                if (touch.press.isPressed) pressed++;
-            return pressed;
-        }
-
-        static bool TwoTouches(Touchscreen touchscreen, out Vector2 a, out Vector2 b)
-        {
-            a = b = Vector2.zero;
-            int n = 0;
-            foreach (var touch in touchscreen.touches)
-            {
-                if (!touch.press.isPressed) continue;
-                Vector2 pos = touch.position.ReadValue();
-                if (n == 0) a = pos;
-                else if (n == 1) { b = pos; return true; }
-                n++;
-            }
-            return false;
-        }
-#endif
     }
 }

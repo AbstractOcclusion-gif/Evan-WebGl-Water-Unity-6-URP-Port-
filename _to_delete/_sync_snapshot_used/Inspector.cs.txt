@@ -40,19 +40,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showSplash = false;
 
         const string FoldoutKeyPrefix = "WebGpuWater.WaterVolumeEditor.";
-        const string TabSessionKey = FoldoutKeyPrefix + "_tab";
 
-        void OnEnable()
-        {
-            SyncFoldouts(load: true);
-            _tab = (InspectorTab)SessionState.GetInt(TabSessionKey, (int)_tab);
-        }
-
-        void OnDisable()
-        {
-            SyncFoldouts(load: false);
-            SessionState.SetInt(TabSessionKey, (int)_tab);
-        }
+        void OnEnable() => SyncFoldouts(load: true);
+        void OnDisable() => SyncFoldouts(load: false);
 
         // ONE list drives both directions, so a new foldout can never be persisted in only one
         // of load/save. The field initializers above remain the first-session defaults.
@@ -91,10 +81,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         // The sun-driven lightDir is shown read-only; repaint live only while the Simulation section
-        // is VISIBLE (its tab active + open) AND a sun drives it, so the greyed value tracks the sun
-        // instead of showing a stale vector - and idle inspectors pay no continuous-repaint cost.
-        public override bool RequiresConstantRepaint() =>
-            _tab == InspectorTab.WavesWind && _showSimulation && HasSun;
+        // is open AND a sun drives it, so the greyed value tracks the sun instead of showing a stale
+        // vector - and idle inspectors (section collapsed, or no sun) pay no continuous-repaint cost.
+        public override bool RequiresConstantRepaint() => _showSimulation && HasSun;
 
         public override void OnInspectorGUI()
         {
@@ -110,67 +99,42 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // Physically-based Jerlov water colour: writes Fog Extinction + body/scatter colour.
             DrawJerlovWaterTypeSelector();
 
-            // Top-level category tabs: one category's sections render at a time instead of the
-            // former flat scroll of 20+ foldouts. The mapping mirrors the runtime partial split
-            // (Settings / Look / Waves / Shore / Performance), which is what makes it honest.
-            _tab = (InspectorTab)WaterEditorUI.TabBar((int)_tab, TabLabels);
-            switch (_tab)
-            {
-                case InspectorTab.Core:
-                    // Make it exist + hook it up: placement, wiring, cameras, interaction plumbing.
-                    DrawPlacementSection();
-                    DrawBodySection();
-                    DrawWiringSection();
-                    DrawObjectInteractionSection();
-                    DrawCameraSection();
-                    DrawSplashSection();
-                    break;
+            // Placement + wiring
+            DrawPlacementSection();
+            DrawLookSection();
+            DrawBodySection();
+            DrawWiringSection();
+            DrawPerformanceSection();
 
-                case InspectorTab.Look:
-                    // Everything that changes pixels but not motion.
-                    DrawLookSection();
-                    DrawReflectionsSection();
-                    DrawWaterFogSection();
-                    DrawVolumeScatterSection();
-                    DrawDepthAttenuationSection();
-                    DrawOceanGodRaysSection();
-                    DrawFoamSection();
-                    break;
+            // Surface look + light transport
+            DrawReflectionsSection();
+            DrawWaterFogSection();
+            DrawVolumeScatterSection();
+            DrawDepthAttenuationSection();
+            DrawBedDepthSection();
 
-                case InspectorTab.WavesWind:
-                    // Everything that moves the surface.
-                    DrawSimulationSection();
-                    DrawRippleSection();
-                    DrawWindWavesSection();
-                    DrawOceanOpenWaterSection();
-                    DrawOceanFoamSection();
-                    break;
+            // Motion
+            DrawSimulationSection();
+            DrawRippleSection();
+            DrawWindWavesSection();
+            DrawObjectInteractionSection();
+            DrawFoamSection();
 
-                case InspectorTab.ShoreSurf:
-                    // The coastline family (bed depth carries the shoal/surf/swash UI).
-                    DrawBedDepthSection();
-                    break;
+            // Large water / ocean
+            DrawWindowSection();
+            DrawOceanOpenWaterSection();
+            DrawOceanClipmapSection();
+            DrawOceanGodRaysSection();
+            DrawOceanFoamSection();
 
-                case InspectorTab.Performance:
-                    // The budget levers: quality tier, sim window, horizon clipmap.
-                    DrawPerformanceSection();
-                    DrawWindowSection();
-                    DrawOceanClipmapSection();
-                    break;
-            }
+            // Camera + splash
+            DrawCameraSection();
+            DrawSplashSection();
 
             WaterEditorUI.DrawFooter();
 
             serializedObject.ApplyModifiedProperties();
         }
-
-        // Category tabs. Order = a user's journey: create/wire it, make it pretty, make it move,
-        // shape the coast, then pay for it.
-        enum InspectorTab { Core, Look, WavesWind, ShoreSurf, Performance }
-
-        static readonly string[] TabLabels = { "Core", "Look", "Waves & Wind", "Shore & Surf", "Performance" };
-
-        InspectorTab _tab = InspectorTab.Core;
 
         // Shorthand for a serialized property by path; nested Settings blocks use dotted paths
         // (e.g. "ocean.openWater"). Kept single-sourced so no section invents a raw string twice.

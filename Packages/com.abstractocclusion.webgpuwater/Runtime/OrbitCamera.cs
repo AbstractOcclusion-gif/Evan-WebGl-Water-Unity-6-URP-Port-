@@ -33,9 +33,8 @@ namespace AbstractOcclusion.WebGpuWater
         // OS mouse-wheel delta per notch; dividing by it normalizes a notch to ~1 zoom step.
         const float MouseWheelNotchDelta = 120f;
         const float ScrollDeadzone = 0.0001f;       // ignore sub-pixel scroll jitter
-        const float NoActivePinch = -1f;            // sentinel: no pinch gesture in progress
 
-        float _lastPinchDist = NoActivePinch;
+        PinchTracker _pinch; // shared pinch-distance state machine (WaterTouchInput.cs)
 
         void OnEnable() => Apply();
 
@@ -72,33 +71,24 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (GetTwoTouches(out Vector2 a, out Vector2 b))
             {
-                float d = Vector2.Distance(a, b);
-                if (_lastPinchDist > 0f) Zoom((d - _lastPinchDist) * pinchZoomSpeed);
-                _lastPinchDist = d;
+                // Zoom only once a previous frame's spread exists (Update returns false on the
+                // gesture's first frame - even Zoom(0) would re-clamp distance). The pixels-to-zoom
+                // scaling is THIS camera's tunable; only the distance tracking is shared.
+                if (_pinch.Update(a, b, out float deltaPixels)) Zoom(deltaPixels * pinchZoomSpeed);
             }
             else
             {
-                _lastPinchDist = NoActivePinch;
+                _pinch.Reset();
             }
         }
 
         static bool GetTwoTouches(out Vector2 a, out Vector2 b)
         {
-            a = b = Vector2.zero;
 #if ENABLE_INPUT_SYSTEM
-            var ts = Touchscreen.current;
-            if (ts == null) return false;
-            int n = 0;
-            foreach (var t in ts.touches)
-            {
-                if (!t.press.isPressed) continue;
-                Vector2 pos = t.position.ReadValue();
-                if (n == 0) a = pos;
-                else if (n == 1) { b = pos; return true; }
-                n++;
-            }
-            return false;
+            // Shared helper null-checks Touchscreen.current itself, matching the old local copy.
+            return WaterTouchInput.TryGetTwoTouches(Touchscreen.current, out a, out b);
 #else
+            a = b = Vector2.zero;
             if (Input.touchCount < 2) return false;
             a = Input.GetTouch(0).position;
             b = Input.GetTouch(1).position;

@@ -60,7 +60,7 @@ namespace AbstractOcclusion.WebGpuWater
         // live. 256 m / 128 texels = 2 m per texel, enough for swell + medium waves under a boat.
         const int HeightFieldRes = 128;
         const float HeightFieldSize = 256f;
-        const int MaxReadbackErrors = 8; // give up on async readback after this many consecutive errors
+        // Readback give-up threshold lives on AsyncReadbackChannel.MaxConsecutiveErrors (shared).
 
         const string KernelSpectrumInit = "SpectrumInit";
         const string KernelSpectrumUpdate = "SpectrumUpdate";
@@ -134,10 +134,11 @@ namespace AbstractOcclusion.WebGpuWater
         bool _spectrumBuilt;
         float _lastWindSpeed, _lastWindHeading, _lastSwellWavelength, _lastSwellHeight;
 
-        // Async buoyancy readback state (mirrors WaterSurfaceSampler's pattern).
+        // Async buoyancy readback: throttle/error-streak/unsupported state lives on the shared
+        // channel (the same machinery WaterSurfaceSampler uses); the landed buffer stays here.
+        readonly AsyncReadbackChannel _readback;
         float[] _heightCpu;
-        bool _heightReady, _readbackInFlight, _readbackUnsupported;
-        int _readbackErrorStreak;
+        bool _heightReady;
         Vector2 _bakedCenter, _pendingCenter, _sampledCenter; // region centre at bake / in-flight / landed
         float _bakedSize, _pendingSize, _sampledSize;
 
@@ -200,7 +201,10 @@ namespace AbstractOcclusion.WebGpuWater
             _kBake = _cs.FindKernel(KernelBakeHeightField);
             _kPreview = _cs.FindKernel(KernelVisualizePreview);
             _onHeightReadback = OnHeightReadback;
-            _readbackUnsupported = !SystemInfo.supportsAsyncGPUReadback; // buoyancy falls back to analytic
+            // The channel probes SystemInfo.supportsAsyncGPUReadback itself; on give-up (backend
+            // unsupported or persistent errors) buoyancy falls back to analytic, and the stale
+            // field is dropped so nothing keeps floating on it.
+            _readback = new AsyncReadbackChannel(onGaveUp: () => _heightReady = false);
             _ready = TryAllocate();
         }
 
@@ -483,26 +487,21 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalVector(ID_GlobalVisibleAreas, _visibleAreas);
         }
 
-        // Throttled by the caller (like WaterSurfaceSampler): one request in flight, stored region centre so
-        // the landed data is sampled against the centre it was baked at (the camera moved since).
+        // Throttled by the shared channel (one request in flight, like WaterSurfaceSampler);
+        // region centre stored BEFORE issue so the landed data is sampled against the centre it
+        // was baked at (the camera moved since).
         internal void RequestHeightReadback()
         {
-            if (!_ready || _readbackInFlight || _readbackUnsupported) return;
-            _readbackInFlight = true;
+            if (!_ready || !_readback.CanRequest) return;
             _pendingCenter = _bakedCenter;
             _pendingSize = _bakedSize;
-            AsyncGPUReadback.Request(_heightField, 0, TextureFormat.RFloat, _onHeightReadback);
+            _readback.Request(_heightField, TextureFormat.RFloat, _onHeightReadback);
         }
 
+        // Successful landings only: the channel absorbs errors (and drops _heightReady via the
+        // ctor's onGaveUp when the streak crosses its threshold).
         void OnHeightReadback(AsyncGPUReadbackRequest req)
         {
-            _readbackInFlight = false;
-            if (req.hasError)
-            {
-                if (++_readbackErrorStreak >= MaxReadbackErrors) { _readbackUnsupported = true; _heightReady = false; }
-                return;
-            }
-            _readbackErrorStreak = 0;
             var data = req.GetData<float>();
             if (_heightCpu == null || _heightCpu.Length != data.Length) _heightCpu = new float[data.Length];
             data.CopyTo(_heightCpu);
@@ -549,18 +548,10 @@ namespace AbstractOcclusion.WebGpuWater
             return u >= 0f && u <= 1f && v >= 0f && v <= 1f;
         }
 
-        float SampleFieldBilinearFrom(float[] field, float u, float v)
-        {
-            int res = HeightFieldRes;
-            float sx = Mathf.Clamp(u * res - 0.5f, 0f, res - 1f);
-            float sz = Mathf.Clamp(v * res - 0.5f, 0f, res - 1f);
-            int x0 = (int)sx, z0 = (int)sz;
-            int x1 = Mathf.Min(x0 + 1, res - 1), z1 = Mathf.Min(z0 + 1, res - 1);
-            float tx = sx - x0, tz = sz - z0;
-            float b = Mathf.Lerp(field[z0 * res + x0], field[z0 * res + x1], tx);
-            float t = Mathf.Lerp(field[z1 * res + x0], field[z1 * res + x1], tx);
-            return Mathf.Lerp(b, t, tz);
-        }
+        // Shared filter (WaterFieldSampling) with exactly the clamp/half-texel semantics this
+        // method used to inline; the wrapper just binds the fixed field resolution.
+        static float SampleFieldBilinearFrom(float[] field, float u, float v)
+            => WaterFieldSampling.SampleBilinear(field, HeightFieldRes, u, v);
 
         // Latest landed readback height at a world xz. ~1-2 frames stale (async readback); the fog gate
         // tolerates that because the fog waterline itself is per-pixel exact (live depth in

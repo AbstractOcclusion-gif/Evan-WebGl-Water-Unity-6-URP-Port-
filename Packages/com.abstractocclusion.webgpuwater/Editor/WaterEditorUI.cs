@@ -140,6 +140,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return expanded;
         }
 
+        /// <summary>The inspector's top-level category tab bar (Core / Look / ...). One tab's
+        /// sections render at a time, so the 20+ foldouts stop being one flat scroll. Returns
+        /// the new selected index.</summary>
+        public static int TabBar(int selected, string[] labels)
+        {
+            EditorGUILayout.Space(Style.TabTopSpacing);
+            int picked = GUILayout.Toolbar(selected, labels, TabStyle, GUILayout.Height(Style.TabHeight));
+            EditorGUILayout.Space(Style.TabBottomSpacing);
+            return picked;
+        }
+
         /// <summary>A segmented Pond / Lake / Ocean selector bound to the bodyType enum property.</summary>
         public static void BodyTypeSelector(SerializedProperty bodyType)
         {
@@ -203,6 +214,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             onNormal = { textColor = Style.SubHeadingColor }
         };
 
+        private static GUIStyle _tabStyle;
+        private static GUIStyle TabStyle => _tabStyle ??= new GUIStyle(EditorStyles.toolbarButton)
+        {
+            fontSize = Style.TabFontSize,
+            fontStyle = FontStyle.Bold,
+            // Selected tab reads in the section-title cyan so the active category matches the
+            // rest of the water palette; idle tabs keep the toolbar's neutral grey.
+            onNormal = { textColor = Style.SectionTitleColor },
+            onHover = { textColor = Style.SectionTitleColor },
+            onFocused = { textColor = Style.SectionTitleColor }
+        };
+
         // ---- footer text (resolved package version, no hardcoded number) ---------------------
 
         private static string _footerText;
@@ -246,6 +269,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             public const float SubHeadingTopSpacing = 4f;
             public const float ToggleWidth = 20f;
             public const float BodyTypeLabelWidth = 70f;
+            public const int TabFontSize = 11;
+            public const float TabHeight = 22f;
+            public const float TabTopSpacing = 2f;
+            public const float TabBottomSpacing = 6f;
 
             public const string FooterPrefix = "AbstractOcclusion  ·  WebGPU Water";
         }

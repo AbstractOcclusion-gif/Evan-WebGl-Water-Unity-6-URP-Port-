@@ -25,37 +25,26 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // into a scene.
         internal static void CreateWaterVolumePrefab()
         {
-            EnsureGenFolder();
-            if (!TryLoadShaders(out ShaderSet shaders)) return;
+            // Asset half only (TryBuildSharedAssets): a prefab build must not rig a camera/sun/
+            // splash into the open scene the way CreateContext does.
+            if (!TryBuildSharedAssets(Gen, buildPoolMaterial: false, out BuildContext ctx)) return;
 
-            var grid = SaveAsset(BuildGrid(GridDetail), GridMeshPath);
-            var sky = SaveCubemap(BuildSky(SkyCubemapSize), SkyCubemapPath);
-            var tiles = LoadOrBuildTiles(TilesTexturePath);
-            var (matAbove, matUnder, _) = CreateWaterMaterials(shaders.Water, shaders.Pool, buildAnalyticPool: false, Gen);
-
-            var root = new GameObject(WaterVolumeObjectName);
+            // The build is temporary scene state: the creators register undo entries, so reverting
+            // the group below both destroys the temp objects AND leaves no stale undo steps behind.
+            int undoGroup = Undo.GetCurrentGroup();
+            var root = NewUndoableGameObject(WaterVolumeObjectName); // temp build object, reverted below
             var volume = root.AddComponent<WaterVolume>();
-            var above = CreateRenderer(SurfaceAboveName, grid, matAbove, root.transform);
-            var under = CreateRenderer(SurfaceUnderName, grid, matUnder, root.transform);
+            var above = CreateRenderer(SurfaceAboveName, ctx.Grid, ctx.MatAbove, root.transform);
+            var under = CreateRenderer(SurfaceUnderName, ctx.Grid, ctx.MatUnder, root.transform);
 
-            volume.simCompute = shaders.Compute;
-            volume.causticsShader = shaders.Caustics;
-            volume.obstacleShader = shaders.Obstacle;
-            volume.occluderShader = Shader.Find(ShaderCausticOccluder);
-            // Ocean-only, optional: keep the prefab at parity with the wizard body so an ocean
-            // dropped from this prefab gets FFT waves + near-field caustics without hand-wiring.
-            volume.oceanFftCompute = AssetDatabase.LoadAssetAtPath<ComputeShader>(OceanFftComputePath);
-            volume.largeBodyCausticsShader = Shader.Find(ShaderLargeBodyCaustics);
-            volume.waterMesh = grid;
-            volume.tiles = tiles;
-            volume.sky = sky;
-            volume.Quality = LoadOrCreateWaterQuality(WaterQualityAssetPath);
+            // Same wiring block as the wizard body (one source; scene refs resolve at runtime).
+            WireWaterVolumeAssets(volume, ctx.Shaders, ctx.Grid, ctx.Tiles, ctx.Sky, ctx.Quality);
             volume.surfaceAbove = above.GetComponent<Renderer>();
             volume.surfaceUnder = under.GetComponent<Renderer>();
             volume.IsPrimary = true;
 
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, WaterVolumePrefabPath);
-            Object.DestroyImmediate(root); // remove the temp build object; only the prefab persists
+            Undo.RevertAllDownToGroup(undoGroup); // remove the temp build objects; only the prefab persists
             AssetDatabase.SaveAssets();
 
             if (prefab == null)
@@ -87,6 +76,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return;
             }
             EnsureGenFolder();
+            Undo.SetCurrentGroupName("Add Foam Particles");
             AddFoamParticles(volume, MaterialFolderForActiveScene());
             Selection.activeObject = volume.gameObject;
         }
@@ -156,30 +146,24 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
             WaterVolume primary = System.Array.Find(all, c => c.IsPrimary) ?? all[0];
 
-            var bodyRoot = new GameObject("Water Body (secondary)");
+            // One undo step for the whole added body.
+            Undo.SetCurrentGroupName("Add Water Body (secondary)");
+            int undoGroup = Undo.GetCurrentGroup();
 
-            var frameGO = new GameObject(FrameObjectName);
+            var bodyRoot = NewUndoableGameObject("Water Body (secondary)");
+
+            var frameGO = NewUndoableGameObject(FrameObjectName);
             frameGO.transform.SetParent(bodyRoot.transform);
             float offsetX = 2f * primary.volumeExtent.x + SecondaryBodyGapMeters;
             frameGO.transform.position = primary.transform.position + new Vector3(offsetX, 0f, 0f);
 
             var body = frameGO.AddComponent<WaterVolume>();
-            body.simCompute = primary.simCompute;
-            body.causticsShader = primary.causticsShader;
-            body.obstacleShader = primary.obstacleShader;
-            body.occluderShader = primary.occluderShader;
-            body.oceanFftCompute = primary.oceanFftCompute;
-            body.largeBodyCausticsShader = primary.largeBodyCausticsShader;
-            body.waterMesh = primary.waterMesh;
-            body.targetCamera = primary.targetCamera;
-            body.sun = primary.sun;
-            body.tiles = primary.tiles;
-            body.sky = primary.sky;
-            body.Quality = primary.Quality;
+            // One shared wiring block (asset refs + camera/sun) sourced from the live primary.
+            WireWaterVolumeFrom(body, primary);
             body.volumeExtent = primary.volumeExtent;
             body.IsPrimary = false; // only ONE body mirrors to globals
 
-            var rendGO = new GameObject(RenderersObjectName);
+            var rendGO = NewUndoableGameObject(RenderersObjectName);
             rendGO.transform.SetParent(bodyRoot.transform);
             body.surfaceAbove = CloneBodyRenderer(primary.surfaceAbove, rendGO.transform, SurfaceAboveName);
             body.surfaceUnder = CloneBodyRenderer(primary.surfaceUnder, rendGO.transform, SurfaceUnderName);
@@ -188,7 +172,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Selection.activeObject = bodyRoot;
             EditorUtility.SetDirty(body);
-            UnityEditor.SceneManagement.EditorSceneManager.MarkAllScenesDirty();
+            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(bodyRoot.scene);
+            Undo.CollapseUndoOperations(undoGroup);
             Debug.Log("[WebGL Water] Secondary water body added. Move its 'Frame' child to reposition; " +
                       "edit that WaterVolume's Volume Extent for a different size/shape.");
         }
@@ -198,7 +183,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static Renderer CloneBodyRenderer(Renderer src, Transform parent, string name)
         {
             if (src == null) return null;
-            var go = new GameObject(name);
+            var go = NewUndoableGameObject(name);
             go.transform.SetParent(parent);
             go.transform.SetPositionAndRotation(src.transform.position, src.transform.rotation);
             go.transform.localScale = src.transform.lossyScale;

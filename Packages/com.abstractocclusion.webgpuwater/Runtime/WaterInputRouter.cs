@@ -236,11 +236,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
 #if ENABLE_INPUT_SYSTEM
             var touchscreen = Touchscreen.current;
-            if (touchscreen == null) return false;
-            int pressed = 0;
-            foreach (var touch in touchscreen.touches)
-                if (touch.press.isPressed) pressed++;
-            return pressed >= 2;
+            return touchscreen != null && WaterTouchInput.PressedCount(touchscreen) >= 2;
 #else
             return Input.touchCount >= 2;
 #endif

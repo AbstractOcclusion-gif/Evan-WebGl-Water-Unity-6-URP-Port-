@@ -11,6 +11,11 @@
 #ifndef WATER_PARTICLE_COMMON_INCLUDED
 #define WATER_PARTICLE_COMMON_INCLUDED
 
+// Sampler-free shore math (SHORE_DEEP_SENTINEL, ShoreFieldUVFrom, ShoreFieldInfluence,
+// ShoreDecodeToShore, ShoalWeight...) - the shared implementations this file used to hand-copy
+// as PARTICLE_SHORE_* constants + inline feather/decode math.
+#include "WaterShoreMath.hlsl"
+
 #define PARTICLE_TWO_PI 6.28318530718
 
 // ---- Deterministic randomness -------------------------------------------------------
@@ -59,13 +64,6 @@ float2 ParticleFlipbookUv(float2 corner, float2 gridRaw, float seed, float age, 
 // every read gates on _ShoreFoamActive. Declared here ONCE for both particle computes.
 #ifdef WATER_PARTICLE_SHORE_FIELD
 
-// Matches SHORE_DEEP_SENTINEL (WaterShore.hlsl, not includable here - sampler2D objects).
-// KEEP IN SYNC with that header.
-static const float PARTICLE_SHORE_DEEP_SENTINEL = 1e9;
-// Matches SHORE_BORDER_FEATHER (WaterShore.hlsl) / SHORE_FOAM_BORDER_FEATHER
-// (WaterSim.compute). KEEP IN SYNC with those.
-static const float PARTICLE_SHORE_BORDER_FEATHER = 0.08;
-
 float _ShoreFoamActive;
 float _ShoreFoamTime;        // THE MASTER SURF BEAT (matches the surface _SurfBeatTime)
 float4 _ShoreFieldCenterSim; // xy = world XZ centre of the Layer A field
@@ -81,23 +79,21 @@ Texture2D<float4> _ShoreSDFTexSim;    SamplerState sampler_ShoreSDFTexSim;
 bool ParticleSampleShoreField(float2 worldXZ, out float depth, out float sdfDist,
                               out float2 toShore, out float tanBeta, out float influence)
 {
-    depth = PARTICLE_SHORE_DEEP_SENTINEL;
+    depth = SHORE_DEEP_SENTINEL;
     sdfDist = 0.0;
     toShore = float2(0.0, 0.0);
     tanBeta = 0.0;
     influence = 0.0;
     if (_ShoreFoamActive < 0.5) return false;
+    // Half-size floor: this fetch keeps a degenerate-publish guard the surface-side ShoreSample
+    // does not carry (an all-zero _ShoreFieldSizeSim would divide the UV by zero here).
     float2 fieldHalf = max(_ShoreFieldSizeSim.xy, float2(1e-3, 1e-3));
-    float2 fieldUv = (worldXZ - _ShoreFieldCenterSim.xy) / (2.0 * fieldHalf) + 0.5;
-    float2 edge = saturate(min(fieldUv, 1.0 - fieldUv) / PARTICLE_SHORE_BORDER_FEATHER);
-    influence = edge.x * edge.y;
+    float2 fieldUv = ShoreFieldUVFrom(worldXZ, _ShoreFieldCenterSim.xy, fieldHalf);
+    influence = ShoreFieldInfluence(fieldUv);
     if (influence <= 0.001) { influence = 0.0; return false; }
     depth = _ShoreDepthTexSim.SampleLevel(sampler_ShoreDepthTexSim, saturate(fieldUv), 0);
     float4 shoreSdf = _ShoreSDFTexSim.SampleLevel(sampler_ShoreSDFTexSim, saturate(fieldUv), 0);
-    float2 dir = shoreSdf.rg * 2.0 - 1.0;
-    float len = length(dir);
-    if (len <= 1e-4) return false;
-    toShore = dir / len;
+    if (!ShoreDecodeToShore(shoreSdf.rg, toShore)) return false;
     sdfDist = shoreSdf.b;
     tanBeta = shoreSdf.a;
     return true;

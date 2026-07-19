@@ -24,7 +24,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
     {
         const string LargeWavesHlslAssetName = "WaterLargeWaves";
         const string SurfWavesHlslAssetName = "WaterSurfWaves";
-        const string ShoreHlslAssetName = "WaterShore";
+        const string ShoreHlslAssetName = "WaterShoreMath"; // SHORE_* defines moved to the sampler-free header
         const string HlslExtension = ".hlsl";
         const string CSharpAssetName = "LargeWaveField";
         const string CSharpExtension = ".cs";

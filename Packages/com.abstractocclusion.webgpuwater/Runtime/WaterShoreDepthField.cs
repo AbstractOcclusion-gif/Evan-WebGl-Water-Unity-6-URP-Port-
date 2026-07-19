@@ -430,21 +430,12 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
+        // Shared filter (WaterFieldSampling). The old local form clamped the UV first (Clamp01)
+        // and then the floor/fraction separately; that is output-identical to the shared
+        // clamp-the-texel-coordinate form for every input - both collapse out-of-range
+        // coordinates to the edge texel - so it was unified rather than kept as a variant.
         float BilinearCpu(float[] field, float u, float v)
-        {
-            int res = _res;
-            float fx = Mathf.Clamp01(u) * res - 0.5f;
-            float fz = Mathf.Clamp01(v) * res - 0.5f;
-            int x0 = Mathf.Clamp(Mathf.FloorToInt(fx), 0, res - 1);
-            int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, res - 1);
-            int x1 = Mathf.Min(x0 + 1, res - 1);
-            int z1 = Mathf.Min(z0 + 1, res - 1);
-            float tx = Mathf.Clamp01(fx - x0);
-            float tz = Mathf.Clamp01(fz - z0);
-            float a = Mathf.Lerp(field[z0 * res + x0], field[z0 * res + x1], tx);
-            float b = Mathf.Lerp(field[z1 * res + x0], field[z1 * res + x1], tx);
-            return Mathf.Lerp(a, b, tz);
-        }
+            => WaterFieldSampling.SampleBilinear(field, _res, u, v);
 
         void Publish()
         {
