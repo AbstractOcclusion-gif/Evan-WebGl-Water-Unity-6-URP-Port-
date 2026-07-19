@@ -25,7 +25,7 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _DetailNormalTex:
-        m_Texture: {fileID: 2800000, guid: f338347ed4c95374e9975a433289a9a6, type: 3}
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _FoamNormalTex:
@@ -52,7 +52,7 @@ Material:
     - _DetailNormalStrength: 0.95
     - _EnvReflectionIntensity: 1
     - _FoamNormalStrength: 2
-    - _FoamTexFPS: 1
+    - _FoamTexFPS: 5
     - _FresnelFloor: 0
     - _FresnelPower: 5
     - _RealRefraction: 1

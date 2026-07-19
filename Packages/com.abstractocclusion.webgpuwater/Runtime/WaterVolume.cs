@@ -98,8 +98,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal WaterWaveBank WaveBank => _waveBank;
         internal float WaveTime => _waveTime;
         internal RenderTexture CausticTexture => _caustics?.Texture;
-        // Per-body occluder state for _CausticOccluderActive (see WaterCausticsPass.OccluderActive).
-        internal bool CausticOccluderActive => _caustics != null && _caustics.OccluderActive;
+        // Per-body occluder state for _CausticOccluderActive (see WaterCausticsPass.OccluderChannelValid):
+        // 1 = caustic.g is the valid refracted object-shadow channel for this body (may be all-lit).
+        internal bool CausticOccluderActive => _caustics != null && _caustics.OccluderChannelValid;
         // Ocean FFT displacement cascade array (null on non-ocean bodies / before init) - for the debug view.
         internal RenderTexture OceanFftTexture => _oceanFft?.DisplacementTexture;
         // True only when this body is an unbounded ocean whose FFT pass is producing cascades. Drives the
@@ -1280,7 +1281,9 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // World point -> pool. Returns false if outside the [-1,1] horizontal footprint.
-        bool WorldToPoolXZ(Vector3 world, out float poolX, out float poolZ)
+        // Internal: WaterCausticsPass gates occluder draws on it (only in-footprint objects
+        // may stamp the caustic green channel).
+        internal bool WorldToPoolXZ(Vector3 world, out float poolX, out float poolZ)
         {
             Vector3 p = WorldToPool(world);
             poolX = p.x; poolZ = p.z;

@@ -75,11 +75,12 @@ float3 GetSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor
         if (_ProceduralPool < 0.5 || _RealRefraction > 0.5)
             return DeepWaterColor(worldOrigin, waterColor);
 
-        // Gate the floor caustic by the main-light shadow at the FLOOR's world position, so
-        // a caster's shadow on the pool bottom kills the caustic there (like the geometry paths).
-        // When the occluder pass is active the refracted object shadow is already baked into the
-        // caustic green channel (caustic.r * caustic.g in GetWallShadeSplit), so don't also
-        // apply the un-refracted shadow map on top - that would double-shadow the reflected floor.
+        // When the occluder pass is active (the normal case) the refracted object shadow is
+        // already baked into the caustic green channel (caustic.r * caustic.g in
+        // GetWallShadeSplit), so the un-refracted shadow map must NOT also apply - besides
+        // double-shadowing, a hand-rolled tap at a DEEP floor can sample outside the cascade
+        // range and read fully shadowed, deleting the caustics wholesale (the Deep Lake bug).
+        // The shadow-map gate remains only for setups without the occluder shader wired.
         float causticShadow = (_CausticOccluderActive > 0.5) ? 1.0 : WaterMainLightShadow(PoolToWorld(floorPool));
         return GetWallColorShadowedGrad(floorPool, causticShadow, floorDdx, floorDdy) * waterColor;
     }

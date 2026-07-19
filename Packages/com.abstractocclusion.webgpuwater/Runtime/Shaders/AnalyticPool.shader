@@ -133,9 +133,11 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
 
                 // Below the surface a caster's shadow must follow the REFRACTED light like the caustics
                 // do - the un-refracted shadow map lands offset underwater (the reported caustic-border
-                // vs shadow mismatch). The occluder pass writes the object silhouette into the caustic
-                // green channel along that same projection; use it below the waterline, keep the real
-                // shadow map for the sunlit rim above. Legacy path when the occluder pass is inactive.
+                // vs shadow mismatch) and carries OTHER bodies' casters across pool boundaries. The
+                // occluder pass writes this body's silhouettes into the caustic green channel along that
+                // same projection (1 = lit where nothing is submerged); use it below the waterline, keep
+                // the real shadow map for the sunlit rim above. The shadow-map fallback remains only for
+                // setups without the occluder shader wired (_CausticOccluderActive 0).
                 float occluderShadow = tex2D(_CausticTex, ProjectCausticUV(i.position, -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER))).g;
                 float objectShadow = (_CausticOccluderActive > 0.5 && underwater) ? occluderShadow : urpShadow;
                 // wallCaustic already carries the green occlusion, so when the pass is active the

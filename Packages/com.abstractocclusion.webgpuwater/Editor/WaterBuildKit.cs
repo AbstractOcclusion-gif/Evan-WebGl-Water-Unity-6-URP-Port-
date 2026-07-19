@@ -398,18 +398,34 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         const string BoatHullName = "Hull";
 
+        // ---- dry interior (water exclusion) -----------------------------------
+        const string BoatDryInteriorName = "Dry Interior";
+        // Primitive hull: the dry box is the hull box inset by a wall thickness per face, so the
+        // surface's cut edge stays hidden INSIDE the hull walls (the content rule both reference
+        // implementations state: the walls must cover the cut).
+        const float DryInteriorWallInset = 0.05f; // metres, per face
+        // Custom hull model: renderer bounds shrunk by this factor - a hull mesh is wider than
+        // its interior, and the fitted box is a starting point the user refines on the child.
+        const float DryInteriorBoundsShrink = 0.9f;
+        // Floor on a fitted dry-box edge so an extreme inset/shrink on a tiny hull can never
+        // collapse (or invert) the box.
+        const float DryInteriorMinEdge = 0.05f; // metres
+
         /// <summary>A drivable boat: probe buoyancy, BoatController drive, wake + membership,
         /// optional splash. The ROOT stays at scale (1,1,1) and carries all physics (Rigidbody,
         /// fitted BoxCollider, buoyancy - WaterBuoyancy reads the collider on its own object);
         /// the visuals are CHILDREN, so a custom hull model drops in without inheriting the
         /// primitive hull's (2, 0.6, 5) stretch - and can be swapped later by replacing the child.
+        /// withDryInterior adds a "Dry Interior" WaterExclusionVolume child fitted to the same
+        /// box the collider uses, so the water surface never renders inside the hull.
         /// Undo-registered; the caller owns the undo group.</summary>
-        internal static GameObject CreateBoat(GameObject hullModel, bool withSplash)
+        internal static GameObject CreateBoat(GameObject hullModel, bool withSplash, bool withDryInterior)
         {
             var boat = NewUndoableGameObject(BoatName);
             boat.transform.position = PropSpawnPosition();
 
             Vector3 hullSize;
+            Vector3 hullCenterLocal;
             if (hullModel != null)
             {
                 GameObject visual = InstantiateVisual(hullModel, boat.transform);
@@ -424,6 +440,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 box.center = boat.transform.InverseTransformPoint(worldBounds.center);
                 box.size = worldBounds.size; // root is unscaled + unrotated at creation, so world == local
                 hullSize = worldBounds.size;
+                hullCenterLocal = box.center;
             }
             else
             {
@@ -431,6 +448,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 var box = boat.AddComponent<BoxCollider>();
                 box.size = BoatHullScale;
                 hullSize = BoatHullScale;
+                hullCenterLocal = Vector3.zero;
             }
 
             var rigidbody = boat.AddComponent<Rigidbody>();
@@ -450,7 +468,26 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             boat.AddComponent<WaterMembership>();
             boat.AddComponent<WaterInteractable>(); // wake ripples
             if (withSplash) boat.AddComponent<WaterSplash>();
+            if (withDryInterior) AddDryInterior(boat.transform, hullCenterLocal, hullSize, hullModel != null);
             return boat;
+        }
+
+        // The "boat doesn't fill with water" step: a WaterExclusionVolume over the hull so the
+        // surface sheet never renders inside it. Sized from the SAME fitted box physics uses -
+        // inset (primitive hull) or shrunk (custom model) so the cut edge stays behind the hull
+        // walls. Visual-only (buoyancy reads the collider, not this); resize or delete the child
+        // freely to fit an open cockpit. Creation is undo-registered like every build step.
+        static void AddDryInterior(Transform root, Vector3 hullCenterLocal, Vector3 hullSize, bool customHull)
+        {
+            var dry = NewUndoableGameObject(BoatDryInteriorName);
+            dry.transform.SetParent(root, worldPositionStays: false);
+            dry.transform.localPosition = hullCenterLocal;
+
+            Vector3 size = customHull
+                ? hullSize * DryInteriorBoundsShrink
+                : hullSize - 2f * DryInteriorWallInset * Vector3.one;
+            var volume = dry.AddComponent<WaterExclusionVolume>();
+            volume.size = Vector3.Max(size, DryInteriorMinEdge * Vector3.one);
         }
 
         // Instantiate the hull visual under the boat root (prefab-linked when the source is a
@@ -529,6 +566,25 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 primary.simWindowFocus = boat.transform;
                 EditorUtility.SetDirty(primary);
             }
+        }
+
+        // ---------------------------------------------------------------- exclusion volume
+        // Standalone dry rooms (underwater houses, caves): a SCENE-OBJECT creator, so it lives
+        // on the GameObject menu like Unity's own primitives - the Window/ MenuRoot hosts tool
+        // windows, not scene objects. Boats get theirs automatically via CreateBoat.
+        const string ExclusionVolumeMenuPath = "GameObject/AbstractOcclusion/Water Exclusion Volume";
+        const string ExclusionVolumeObjectName = "Water Exclusion Volume";
+        const int ExclusionVolumeMenuPriority = 10; // Unity's standard create-menu priority band
+        static readonly Vector3 ExclusionVolumeDefaultSize = new Vector3(4f, 3f, 4f); // a small room
+
+        [MenuItem(ExclusionVolumeMenuPath, false, ExclusionVolumeMenuPriority)]
+        static void CreateExclusionVolume(MenuCommand command)
+        {
+            var go = NewUndoableGameObject(ExclusionVolumeObjectName);
+            // Parent under the right-clicked object (context menu) like Unity's built-in creators.
+            GameObjectUtility.SetParentAndAlign(go, command.context as GameObject);
+            go.AddComponent<WaterExclusionVolume>().size = ExclusionVolumeDefaultSize;
+            Selection.activeGameObject = go;
         }
 
         // ---------------------------------------------------------------- materials

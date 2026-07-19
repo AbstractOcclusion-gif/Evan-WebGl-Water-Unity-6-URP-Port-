@@ -31,6 +31,8 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         const string FoamComputeAssetName = "WaterFoamParticles";
         const string ComputeExtension = ".compute";
         const string SplashEmitterAssetName = "WaterSplashEmitter";
+        const string ExclusionHlslAssetName = "WaterExclusion";
+        const string ExclusionVolumeAssetName = "WaterExclusionVolume";
 
         // Relative tolerance for a matching value. The constants are authored to a few
         // decimal places; anything closer than this is the same number written two ways.
@@ -162,6 +164,14 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             ("BURST_SPAWN_HEIGHT",      "SpawnHeightAboveSurface"),
         };
 
+        // The exclusion-volume cap is authored twice: EXCLUSION_MAX_VOLUMES sizes the shader's
+        // uniform array (WaterExclusion.hlsl) and WaterExclusionVolume.MaxVolumes sizes the C#
+        // publish buffer. A drift would truncate or over-read the array silently.
+        static readonly (string Hlsl, string CSharp)[] ExclusionConstantPairs =
+        {
+            ("EXCLUSION_MAX_VOLUMES", "MaxVolumes"),
+        };
+
         // Captures the numeric literal, tolerating scientific notation and a trailing C# 'f'.
         const string NumberPattern = @"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)";
 
@@ -179,7 +189,9 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
                 !TryReadPackageAsset(ShoreHlslAssetName, HlslExtension, out string shoreSource, out readError) ||
                 !TryReadPackageAsset(CSharpAssetName, CSharpExtension, out string cSharpSource, out readError) ||
                 !TryReadPackageAsset(FoamComputeAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
-                !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError))
+                !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError) ||
+                !TryReadPackageAsset(ExclusionHlslAssetName, HlslExtension, out string exclusionHlslSource, out readError) ||
+                !TryReadPackageAsset(ExclusionVolumeAssetName, CSharpExtension, out string exclusionVolumeSource, out readError))
             {
                 Debug.LogWarning(LogPrefix + "validation skipped - " + readError);
                 return;
@@ -194,6 +206,8 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
                             CSharpAssetName, cSharpSource, ShoreConstantPairs);
             CollectProblems(problems, FoamComputeAssetName, ComputeExtension, foamComputeSource,
                             SplashEmitterAssetName, splashEmitterSource, SplashBurstConstantPairs);
+            CollectProblems(problems, ExclusionHlslAssetName, HlslExtension, exclusionHlslSource,
+                            ExclusionVolumeAssetName, exclusionVolumeSource, ExclusionConstantPairs);
             if (problems.Count == 0) return;
 
             Debug.LogError(BuildReport(problems));

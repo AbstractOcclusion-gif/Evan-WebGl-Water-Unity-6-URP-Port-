@@ -117,6 +117,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterFog.hlsl"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
+            #include "WaterExclusion.hlsl" // dry-interior exclusion volumes (global OBBs)
             #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
             #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
             // ---- Pass-local code split into includes (SHADER-SPLIT-2, verbatim moves).
@@ -366,6 +367,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 frag(v2f i) : SV_Target
             {
+                // Dry-interior exclusion (boat hull, sub room): kill the surface fragment
+                // BEFORE any shading work. Runs on both sides (_Underwater 0 and 1), so a
+                // dry room seen from below loses its ceiling sheet too. WGSL-safe: discard
+                // demotes the invocation (helpers keep feeding neighbour derivatives, the
+                // same contract ShorelineStage's clip() already relies on), and with zero
+                // volumes the uniform count skips the loop entirely.
+                if (InsideExclusion(i.worldPos)) discard;
+
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
                 float waterClarity = EvaluateWaterClarity(i, geom.shore);
 

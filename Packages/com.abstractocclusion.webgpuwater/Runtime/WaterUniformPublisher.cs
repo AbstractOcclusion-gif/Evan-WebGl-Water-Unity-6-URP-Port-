@@ -131,6 +131,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SSRMaxSteps = Shader.PropertyToID("_SSRMaxSteps");
         static readonly int ID_SSRThickness = Shader.PropertyToID("_SSRThickness");
         static readonly int ID_RefractionDistortion = Shader.PropertyToID("_RefractionDistortion");
+        static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
+        static readonly int ID_ExclusionWorldToBox = Shader.PropertyToID("_ExclusionWorldToBox");
+
+        // Persistent FULL-SIZE buffer for the exclusion matrices: Unity locks a global
+        // array's size at its FIRST set, so every publish sends MaxVolumes matrices and
+        // _ExclusionCount clamps the shader loop. Static (the volumes are global state,
+        // shared by every body's publisher) and reused every frame - no allocation.
+        static readonly Matrix4x4[] _exclusionMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
 
         readonly WaterVolume _body;
         // Two sinks over the SAME derivations; cached to avoid per-frame allocation.
@@ -151,6 +159,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Genuinely shared (scene lighting, not per body), so it rides with the sun here.
             Shader.SetGlobalColor(ID_ScatterAmbient, RenderSettings.ambientLight);
             if (_body.tiles != null) Shader.SetGlobalTexture(ID_Tiles, _body.tiles);
+            // Exclusion volumes are GLOBAL, not per body (a dry room is dry in whichever
+            // body intersects it), so they ride the shared-globals path, not the sink.
+            PublishExclusionVolumes();
             // NOTE: the reflection cube (_Sky) is published PER BODY in WriteBodyUniforms, not here -
             // a global would be stomped by the last body each frame when bodies use different skies.
             // The wave clock (_WaveTime) moved to WriteBodyUniforms for the same reason: a shared global
@@ -158,6 +169,22 @@ namespace AbstractOcclusion.WebGpuWater
             // paused) every surface animated on whichever body updated last while CPU buoyancy used its
             // own clock. Per-renderer blocks now carry each body's clock; the primary's global mirror
             // (PublishBodyGlobals) remains the fallback for camera passes and membership-less objects.
+        }
+
+        // Dry-interior exclusion volumes -> shader globals. The over-limit tie-break
+        // (nearest win) is anchored on the target camera - the volumes the viewer can
+        // actually see into matter most; the body centre is the camera-less fallback
+        // (edit-mode previews, headless).
+        void PublishExclusionVolumes()
+        {
+            Vector3 reference = _body.targetCamera != null
+                ? _body.targetCamera.transform.position
+                : _body.VolumeCenter;
+            int count = WaterExclusionVolume.WriteMatrices(_exclusionMatrices, reference);
+            Shader.SetGlobalFloat(ID_ExclusionCount, count);
+            // With count 0 the shader loop never reads the array, so skipping the set is
+            // safe and keeps the zero-volume frame free of the array upload.
+            if (count > 0) Shader.SetGlobalMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
         }
 
         // Reflection base cube for Reflect URP Probe: the scene skybox's cubemap if it exposes one, else

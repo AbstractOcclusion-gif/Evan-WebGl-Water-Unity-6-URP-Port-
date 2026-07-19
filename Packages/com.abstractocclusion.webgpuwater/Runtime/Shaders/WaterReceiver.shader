@@ -51,7 +51,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
             float3 _LightDir;   // global "toward the light", driven from the Unity sun
             float4 _WaterTexel; // (1/w, 1/h, w, h) of _WaterTex, pushed from C#
-            float _CausticOccluderActive; // 1 when submerged objects wrote the refracted occluder shadow into caustic.g
+            float _CausticOccluderActive; // 1 when caustic.g is this body's valid refracted occluder-shadow channel (see WaterCommon.hlsl)
 
             // Manual bilinear height sample: WebGPU cannot hardware-filter the float32 sim
             // texture, so a filtered SAMPLE_TEXTURE2D silently point-samples there and the
@@ -196,8 +196,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                     // Caustics soften with depth at their own independent rate (world depth,
                     // consistent with the downwelling term above).
                     float causticFade = DepthFadeScalar(IN.positionWS.y, surfaceY, _CausticDepthFade);
-                    // Underwater the object shadow follows the refracted light (caustic green channel),
-                    // matching the pool floor; fall back to the shadow map when the occluder pass is off.
+                    // Underwater the object shadow follows the refracted light (caustic green channel,
+                    // 1 = lit when nothing is submerged), matching the pool floor; the raw shadow-map
+                    // fallback remains only for setups without the occluder shader wired - it is
+                    // un-refracted, so it drags other bodies' caster shadows across pool boundaries.
                     float causticShadow = (_CausticOccluderActive > 0.5) ? causticSample.g : mainLight.shadowAttenuation;
                     color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * causticShadow);
                     color *= _UnderwaterTint.rgb;

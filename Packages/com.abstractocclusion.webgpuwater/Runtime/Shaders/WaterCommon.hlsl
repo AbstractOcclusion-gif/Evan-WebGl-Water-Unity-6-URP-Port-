@@ -17,8 +17,12 @@ samplerCUBE _Sky;          // sky cubemap
 
 float3 _LightDir;          // normalized direction toward the light
 float4 _WaterTexel;        // (1/width, 1/height, width, height) of _WaterTex, pushed from C#
-// 1 when the caustic occluder pass drew submerged objects into the green channel this frame, so the
-// pool/receiver source the underwater object shadow from that refracted term; 0 = legacy shadow-map path.
+// 1 when this body's caustic occluder pass ran, so caustic.g is the valid refracted object-shadow
+// channel (cleared to 1 = lit, submerged objects drawn in at 0) and the pool/receiver source the
+// underwater object shadow from it. 0 (occluder shader unwired / large-body path) = legacy
+// shadow-map path. Never "did anything get drawn": an all-lit green channel is the correct
+// "no object shadow" answer - falling back to the raw un-refracted shadow map on empty bodies
+// projected other pools' shadows across body boundaries and killed deep floors' caustics.
 float _CausticOccluderActive;
 
 // Manual bilinear sample of the float sim texture. WebGPU does NOT hardware-filter

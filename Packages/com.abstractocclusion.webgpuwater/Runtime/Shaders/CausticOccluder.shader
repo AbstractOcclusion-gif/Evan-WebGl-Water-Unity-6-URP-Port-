@@ -24,8 +24,8 @@ Shader "AbstractOcclusion/WebGpuWater/CausticOccluder"
             #pragma fragment frag
             #pragma target 4.0
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            #include "WaterShared.hlsl" // IOR_*, ProjectCausticUV, SafeRefractedLightY
-            #include "WaterVolume.hlsl" // WorldToPool + the volume-frame globals
+            #include "WaterShared.hlsl" // IOR_*, POOL_HEIGHT, RAY_SLAB_EPSILON, ProjectCausticUV
+            #include "WaterVolume.hlsl" // WorldToPool / WorldDirToPool + the volume-frame globals
 
             // Volume frame + light are set EXPLICITLY on this material by WaterCausticsPass: the body
             // publishes _VolumeCenter/_VolumeRot as globals only AFTER the caustic pass, so the material
@@ -42,7 +42,20 @@ Shader "AbstractOcclusion/WebGpuWater/CausticOccluder"
                 float3 poolPos  = WorldToPool(worldPos);
                 // Refracted light, upward convention - identical to the floor's ProjectCausticUV call.
                 float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
-                float2 uv  = ProjectCausticUV(poolPos, refractedLight); // caustic-map UV in [0,1]
+                // Walk the vertex down the refracted ray to the pool floor IN POOL SPACE, then project
+                // that floor point with the exact formula the floor samples with. The old direct
+                // ProjectCausticUV(poolPos, refractedLight) mixed a POOL-space position with the
+                // WORLD-space direction - correct only for a uniform volume (the original 1:1:1 pool).
+                // On a non-uniform body (a deep pool, extent y >> xz) every silhouette landed
+                // displaced/stretched until the green channel was stamped to 0 across most of the map,
+                // blacking out the caustics and god rays that multiply by it. For a uniform extent the
+                // walk reduces EXACTLY to the old formula (the pool-space ratio equals the world one).
+                float3 poolLight = WorldDirToPool(refractedLight);
+                // NaN guard only (see RAY_SLAB_EPSILON): a near-horizontal refracted ray throws the
+                // shadow far off the map where the rasterizer clips it; it just must not divide by zero.
+                float poolLightY = abs(poolLight.y) < RAY_SLAB_EPSILON ? RAY_SLAB_EPSILON : poolLight.y;
+                float3 floorPool = poolPos - ((poolPos.y + POOL_HEIGHT) / poolLightY) * poolLight;
+                float2 uv  = ProjectCausticUV(floorPool, refractedLight); // caustic-map UV in [0,1]
                 float2 ndc = uv * 2.0 - 1.0;
                 // Match Caustics.shader's manual render-target Y-flip so the occluder write and the
                 // floor's sample agree on every backend (_ProjectionParams.x is -1 when flipped).

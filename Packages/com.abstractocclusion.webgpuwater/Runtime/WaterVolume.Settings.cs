@@ -681,6 +681,7 @@ namespace AbstractOcclusion.WebGpuWater
 #endif
             WaterSimScheduler.ResetStaticState();
             WaterInteractable.ResetStaticState();
+            WaterExclusionVolume.ResetStaticState();
         }
 
         [Header("Simulation")]

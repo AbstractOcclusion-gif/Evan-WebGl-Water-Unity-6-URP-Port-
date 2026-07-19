@@ -123,6 +123,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Boat creator (primitive hull by default; drop a model prefab in for a custom hull).
         [SerializeField] GameObject _boatHullModel;
         [SerializeField] bool _boatChaseCamera = true;
+        [SerializeField] bool _boatDryInterior = true;
 
         [SerializeField] bool _createExpanded = true;
         [SerializeField] bool _objectsExpanded = true;
@@ -524,12 +525,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 new GUIContent("Chase camera", "Swap the scene camera's controller for a yaw-only follow camera " +
                                                "locked to the boat (orbit/fly are disabled, not removed)."),
                 _boatChaseCamera);
+            _boatDryInterior = EditorGUILayout.Toggle(
+                new GUIContent("Dry interior", "Add a \"Dry Interior\" exclusion box fitted to the hull so the " +
+                                               "water surface never renders inside the boat. Resize or delete " +
+                                               "the child afterwards to fit an open cockpit."),
+                _boatDryInterior);
 
             if (GUILayout.Button("Create Boat", GUILayout.Height(26f)))
             {
                 Undo.SetCurrentGroupName("Create Boat");
                 int undoGroup = Undo.GetCurrentGroup();
-                GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash);
+                GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash, withDryInterior: _boatDryInterior);
                 if (boat == null) return;
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;

@@ -29,18 +29,28 @@ namespace AbstractOcclusion.WebGpuWater
         readonly Material _occluderMaterial;  // null when the occluder shader isn't assigned -> object shadows stay on the shadow map
         readonly RenderTexture _target;
         readonly CommandBuffer _cb;
+        // The body this pass belongs to: DrawOccluders draws ONLY interactables contained in this
+        // body. The old unfiltered loop stamped EVERY submerged interactable in the scene into
+        // every body's caustic RT through that body's frame - close-together pools got each
+        // other's silhouettes as phantom duplicate shadows (the Multi-Lake "2 shadows, 1 object").
+        readonly WaterVolume _owner;
 
         internal RenderTexture Texture => _target;
 
-        // True when this body's last caustic pass wrote at least one submerged-object silhouette into
-        // the RT's green channel. Published PER BODY by WaterUniformPublisher (a global here was
-        // last-writer-wins: with 2+ caustic bodies, one body's occluder state toggled the underwater
-        // shadow sourcing for every other body's floor).
-        internal bool OccluderActive { get; private set; }
+        // True when this body's last POOL caustic pass ran with the occluder material wired, i.e. the
+        // RT's green channel is the valid refracted object-shadow term (cleared to 1 = lit, then this
+        // body's submerged interactables drawn in). Published PER BODY by WaterUniformPublisher.
+        // Deliberately NOT "drew at least one occluder this frame": with that meaning, a body with no
+        // submerged objects fell back to the RAW UN-REFRACTED shadow map underwater, which projected
+        // other pools' caster shadows across body boundaries (Multi-Lake) and multiplied deep floors'
+        // caustics by an out-of-range shadow sample (Deep Lake, caustics gone). An empty green channel
+        // reads 1 everywhere = "no object shadow", which is the correct answer for those bodies.
+        internal bool OccluderChannelValid { get; private set; }
 
-        internal WaterCausticsPass(Shader causticsShader, Shader largeBodyCausticsShader,
+        internal WaterCausticsPass(WaterVolume owner, Shader causticsShader, Shader largeBodyCausticsShader,
                                    Shader occluderShader, int resolution)
         {
+            _owner = owner ?? throw new System.ArgumentNullException(nameof(owner));
             if (causticsShader == null) throw new System.ArgumentNullException(nameof(causticsShader));
             if (resolution <= 0)
                 throw new System.ArgumentException($"Caustic resolution must be positive, got {resolution}.",
@@ -83,16 +93,20 @@ namespace AbstractOcclusion.WebGpuWater
             Graphics.ExecuteCommandBuffer(_cb);
         }
 
-        // Project every submerged interactable along the refracted light into the caustic RT green
-        // channel (0 = occluded), using the same ProjectCausticUV mapping the floor samples with - so
-        // the object shadow is registered with the caustics, not the un-refracted shadow map. The volume
-        // frame is set on the material explicitly because the body publishes those globals only after
-        // this pass runs. _CausticOccluderActive tells the pool/receiver shaders to source the underwater
-        // object shadow from green (0 -> unchanged legacy shadow-map look).
+        // Project THIS BODY's submerged interactables along the refracted light into the caustic RT
+        // green channel (0 = occluded), using the same ProjectCausticUV mapping the floor samples with -
+        // so the object shadow is registered with the caustics, not the un-refracted shadow map. The
+        // volume frame is set on the material explicitly because the body publishes those globals only
+        // after this pass runs. _CausticOccluderActive (see OccluderChannelValid) tells the pool/receiver
+        // shaders to source the underwater object shadow from green; the shadow-map path remains only
+        // for setups without the occluder shader wired.
         void DrawOccluders(float waterRestY, Vector3 volumeCenter, Vector3 volumeExtent,
                            Quaternion volumeRotation, Vector3 lightDir)
         {
-            if (_occluderMaterial == null) { OccluderActive = false; return; }
+            if (_occluderMaterial == null) { OccluderChannelValid = false; return; }
+            // Green was just cleared to 1 (lit) and only this body's silhouettes go in, so the
+            // channel is valid even when nothing is submerged - "no object shadow" is the answer.
+            OccluderChannelValid = true;
 
             _occluderMaterial.SetVector(ID_LightDir, lightDir);
             _occluderMaterial.SetVector(ID_VolumeCenter, volumeCenter);
@@ -100,17 +114,22 @@ namespace AbstractOcclusion.WebGpuWater
             _occluderMaterial.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(volumeRotation));
 
             var list = WaterInteractable.Active;
-            bool drewAny = false;
             for (int i = 0; i < list.Count; i++)
             {
                 WaterInteractable it = list[i];
                 if (it == null || it.Renderer == null) continue;
+                // Same containment rule the interactable itself uses for drops/waterline, so an
+                // object is stamped into exactly ONE body's RT - its own.
+                if (WaterVolume.BodyContaining(it.Renderer.bounds.center) != _owner) continue;
+                // AND inside the footprint: containment falls back to the PRIMARY body for points
+                // outside every footprint, and IsSubmerged tests against the flat surface plane -
+                // so a prop on ground beside (below) a raised pool passed both checks and stamped
+                // a wildly-projected silhouette across the whole green channel, blacking out the
+                // caustics and god rays that multiply by it (the Deep Lake play-mode blackout).
+                if (!_owner.WorldToPoolXZ(it.Renderer.bounds.center, out _, out _)) continue;
                 if (!it.IsSubmerged(it.WaterlineY(waterRestY))) continue;
                 _cb.DrawRenderer(it.Renderer, _occluderMaterial, 0, 0);
-                drewAny = true;
             }
-
-            OccluderActive = drewAny;
         }
 
         // Ocean version: project the near-field WINDOW sim into the caustic RT via the large-body
@@ -121,7 +140,7 @@ namespace AbstractOcclusion.WebGpuWater
                                       Vector3 windowCenter, Vector3 windowHalfExtent)
         {
             if (_largeBodyMaterial == null || windowMesh == null) return;
-            OccluderActive = false; // the large-body path draws no occluder silhouettes
+            OccluderChannelValid = false; // the large-body path clears green to 0 and draws no silhouettes
             if (simTexture != null) _largeBodyMaterial.SetTexture(ID_Water, simTexture);
             _largeBodyMaterial.SetVector(ID_SimCenter, windowCenter);
             _largeBodyMaterial.SetVector(ID_SimExtent, windowHalfExtent);
