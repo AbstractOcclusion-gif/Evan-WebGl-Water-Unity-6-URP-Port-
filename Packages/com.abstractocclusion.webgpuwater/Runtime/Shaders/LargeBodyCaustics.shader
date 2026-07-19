@@ -38,10 +38,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
 
             // Reference-plane depth is shared with the god-ray sampler via WaterVolume.hlsl
             // (LARGE_CAUSTIC_REFERENCE_DEPTH), so generation and sampling can't drift apart.
-            // Full surface slopes over-focus into hard sparkles; the pool caustic softens the same way.
-            #define CAUSTIC_NORMAL_SOFTEN   0.5
-            // Brightness of the focused caustic (matches the pool caustic's CAUSTIC_FOCUS_SCALE).
-            #define CAUSTIC_FOCUS_SCALE     0.2
+            // CAUSTIC_NORMAL_SOFTEN + CAUSTIC_FOCUS_SCALE now live in WaterShared.hlsl (via
+            // WaterCommon), ONE definition shared with the pool caustic generator.
             // The interactive ripple sim is coarse over a large window, so weight it DOWN against the
             // analytic swell; it stays a soft splash/wake detail rather than the dominant (weird) focus.
             #define CAUSTIC_RIPPLE_WEIGHT   0.3

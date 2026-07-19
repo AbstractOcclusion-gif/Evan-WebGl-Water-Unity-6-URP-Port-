@@ -17,9 +17,12 @@ namespace AbstractOcclusion.WebGpuWater
 {
     public partial class WaterVolume : IWaterHeightSampler
     {
-        // Explicit Scripts category so a ProfilerRecorder (WaterMetricsOverlay) can match it by (category, name).
+        // Explicit Scripts category so a ProfilerRecorder (WaterMetricsOverlay) can match it by
+        // (category, name). The name is a shared const: the overlay reads the SAME string, so a
+        // rename here can no longer silently blank its buoyancy line.
+        internal const string SampleHeightsMarkerName = "WaterVolume.SampleHeights";
         static readonly ProfilerMarker SampleHeightsMarker =
-            new ProfilerMarker(ProfilerCategory.Scripts, "WaterVolume.SampleHeights");
+            new ProfilerMarker(ProfilerCategory.Scripts, SampleHeightsMarkerName);
 
         /// <inheritdoc/>
         public bool SampleHeight(Vector3 worldPoint, out WaterSample sample, float minimumLength = 0f,

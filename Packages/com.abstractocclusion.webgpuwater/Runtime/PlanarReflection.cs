@@ -30,10 +30,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Range(0.25f, 1f)]
         [Tooltip("Reflection RT size as a fraction of the screen. Lower = faster, blurrier.")]
-        [SerializeField] internal float resolutionScale = 0.5f;
+        [SerializeField] internal float resolutionScale = WaterVolume.PlanarMirrorResolutionScale;
 
         [Tooltip("Push the clip plane slightly below the surface to avoid seam artifacts.")]
-        [SerializeField] internal float clipPlaneOffset = 0.02f;
+        [SerializeField] internal float clipPlaneOffset = WaterVolume.PlanarMirrorClipPlaneOffset;
 
         [Tooltip("Render the reflection at all. Turn off to disable planar reflections cheaply.")]
         [SerializeField] internal bool enableReflection = true;

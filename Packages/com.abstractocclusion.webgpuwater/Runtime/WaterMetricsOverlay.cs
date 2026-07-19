@@ -35,7 +35,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             // The buoyancy batch marker lives in the Scripts category (see WaterVolume.Query.cs). Physics is
             // best-effort: the marker name varies by version, so the line is hidden when the recorder is invalid.
-            _queryRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, "WaterVolume.SampleHeights");
+            _queryRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, WaterVolume.SampleHeightsMarkerName);
             _physicsRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Physics, "Physics.Simulate");
         }
 

@@ -62,9 +62,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             #define DENSITY_HIGH_WEIGHT  0.5
             // Soft occlusion band (metres) against the opaque scene depth.
             #define OCCLUSION_SOFTNESS   0.15
-            // Inverse of DEPTH_TO_MM in WaterFoamParticles.compute - KEEP IN SYNC (the splat
-            // quantizes eye depth to millimetres; this turns it back into metres).
-            #define DEPTH_MM_TO_METERS   0.001
+            // DEPTH_MM_TO_METERS comes from WaterFoamCommon.hlsl, defined as the exact
+            // reciprocal of the compute's DEPTH_TO_MM - no keep-in-sync pair anymore.
             // The foam layer sits ON the water surface, so its splatted depth lands within
             // quantization noise of the wave depth at the same pixel - bias the z-test depth
             // this much toward the camera so on-surface foam never self-occludes against the

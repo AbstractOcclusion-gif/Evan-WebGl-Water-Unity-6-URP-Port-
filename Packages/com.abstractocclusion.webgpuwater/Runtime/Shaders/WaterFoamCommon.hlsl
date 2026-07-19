@@ -19,6 +19,13 @@
 #define FOAM_LIGHT_WRAP  0.4
 #define FOAM_AMBIENT     0.35
 
+// ---- Density-splat depth quantisation ---------------------------------------------
+// The particle compute splats eye depth as millimetres in a uint buffer (InterlockedMin);
+// the composite pass turns it back into metres. Defined as a reciprocal PAIR here so the
+// two sides (WaterFoamParticles.compute / FoamDensityComposite.shader) cannot drift.
+#define DEPTH_TO_MM        1000.0
+#define DEPTH_MM_TO_METERS (1.0 / DEPTH_TO_MM)
+
 // Wrapped-diffuse factor from a precomputed N.L (callers with no meaningful normal,
 // e.g. splash sheets, pass the sun's height _LightDir.y = "upward-facing foam").
 float FoamWrappedDiffuseNdotL(float ndotl)

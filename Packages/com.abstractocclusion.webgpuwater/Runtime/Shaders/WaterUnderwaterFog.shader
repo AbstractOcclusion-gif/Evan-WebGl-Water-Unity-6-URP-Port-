@@ -57,7 +57,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #define UNDERWATER_CROSS_MAX_STEPS   40
         #define UNDERWATER_SURFACE_BAND_AMPS 3.0
         #define UNDERWATER_SURFACE_BAND_PAD  2.0
-        #define UNDERWATER_SURF_SETAMP_MAX   1.1 // max SurfSetAmp jitter (see WaterSurfWaves.SurfSetAmp)
+        // Max SurfSetAmp jitter: SURF_SETAMP_JITTER_MAX from WaterSurfWaves.hlsl (via
+        // WaterLargeWaves above) - the crossing-search band brackets the highest surf crest the
+        // set jitter can produce, so it must be the SAME constant, not a hand copy.
+        #define UNDERWATER_SURF_SETAMP_MAX   SURF_SETAMP_JITTER_MAX
 
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -170,7 +173,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // ABOVE a tall shore crest and miss the crossing, flattening the fog waterline onto the rest
             // plane. Include that reach so the search brackets the shore crest. Inert (0) when surf is off.
             float surfReach = (_SurfActive > 0.5)
-                            ? _SurfAmplitude * UNDERWATER_SURF_SETAMP_MAX * max(_SurfGreens, 1.0)
+                            ? _SurfAmplitude * UNDERWATER_SURF_SETAMP_MAX * max(_SurfGreens, SURF_MIN_GREENS)
                             : 0.0;
             float band = max(abs(_LargeWaveAmplitude) * UNDERWATER_SURFACE_BAND_AMPS, surfReach)
                        + UNDERWATER_SURFACE_BAND_PAD;
@@ -251,7 +254,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float sceneT = length(rayPool);
             rayPool /= max(sceneT, 1e-5);
 
-            float2 hit = IntersectCube(originPool, rayPool, float3(-1.0, -1.0, -1.0), float3(1.0, 0.0, 1.0));
+            float2 hit = IntersectCube(originPool, rayPool, POOL_WATER_BOX_MIN, POOL_WATER_BOX_MAX);
             float tEnter = max(hit.x, 0.0);
             float tExit = min(hit.y, sceneT); // never fog past the scene surface
             if (tExit <= tEnter)

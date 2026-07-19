@@ -5856,12 +5856,27 @@ MonoBehaviour:
     realRefraction: 0
     reflectionStrength: 1
     envReflectionIntensity: 1
+    fresnelFloor: 0
+    fresnelPower: 5
+    sunRoughness: 0.08
+    roughnessFar: 0.2
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+  detailNormalSettings:
+    texture: {fileID: 0}
+    strength: 0.6
+    tileMeters: 18
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -6081,6 +6096,7 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 609365078}
+  jerlovWaterType: 3
 --- !u!1 &703219087
 GameObject:
   m_ObjectHideFlags: 0
@@ -6505,6 +6521,9 @@ MonoBehaviour:
   moveSpeed: 6
   boostMultiplier: 3
   lookSensitivity: 0.1
+  touchLookSensitivity: 0.12
+  touchMoveRangePixels: 140
+  pinchVerticalSpeed: 0.01
 --- !u!1 &1096229070
 GameObject:
   m_ObjectHideFlags: 0
@@ -11837,12 +11856,27 @@ MonoBehaviour:
     realRefraction: 1
     reflectionStrength: 1
     envReflectionIntensity: 1
+    fresnelFloor: 0
+    fresnelPower: 5
+    sunRoughness: 0.08
+    roughnessFar: 0.2
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+  detailNormalSettings:
+    texture: {fileID: 0}
+    strength: 0.6
+    tileMeters: 18
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -12062,6 +12096,7 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 0}
+  jerlovWaterType: 3
 --- !u!114 &1579798800
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -22173,7 +22208,7 @@ MonoBehaviour:
   sun: {fileID: 903012772}
   tiles: {fileID: 2800000, guid: e7b4ba6bb2530f343b0302546a3b0d75, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
-  rippleQuality: 0
+  rippleQuality: 3
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
@@ -22242,7 +22277,7 @@ MonoBehaviour:
   godRayRenderer: {fileID: 0}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 11400000, guid: d8574713c868143418d4679d0fc51663, type: 2}
+  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
   enableCulling: 0
   activationDistance: 100
   reflectionSettings:
@@ -22252,12 +22287,27 @@ MonoBehaviour:
     realRefraction: 1
     reflectionStrength: 0.5
     envReflectionIntensity: 1
+    fresnelFloor: 0
+    fresnelPower: 5
+    sunRoughness: 0.08
+    roughnessFar: 0.2
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+  detailNormalSettings:
+    texture: {fileID: 0}
+    strength: 0.6
+    tileMeters: 18
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -22477,6 +22527,7 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 1936119241}
+  jerlovWaterType: 3
 --- !u!1 &2123071595
 GameObject:
   m_ObjectHideFlags: 0

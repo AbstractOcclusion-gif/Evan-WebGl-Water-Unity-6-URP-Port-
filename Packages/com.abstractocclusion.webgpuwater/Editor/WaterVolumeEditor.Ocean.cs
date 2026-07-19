@@ -27,7 +27,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawOceanOpenWaterSection()
         {
             _showOceanOpenWater = WaterEditorUI.SectionWithToggle(
-                "Ocean · Open Water", _showOceanOpenWater, Prop("ocean.openWater"), () =>
+                "Ocean · Open Water", _showOceanOpenWater, Prop(WaterVolumePropertyPaths.OpenWater), () =>
                 {
                     EditorGUILayout.HelpBox(SwellHelp, MessageType.None);
                     DrawFields(
@@ -35,7 +35,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "ocean.largeWaveChoppiness",
                         "ocean.swellHeight",
                         "ocean.swellWavelength",
-                        "ocean.unboundedOcean");
+                        WaterVolumePropertyPaths.UnboundedOcean);
                 },
                 contentEnabled: LakeOrOcean);
         }

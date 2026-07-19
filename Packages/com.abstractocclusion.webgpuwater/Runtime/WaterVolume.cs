@@ -653,8 +653,8 @@ namespace AbstractOcclusion.WebGpuWater
         // scan can spot a loose crate/pool that uses one and give it a WaterMembership.
         static readonly string[] WaterMaterialShaderNames =
         {
-            "AbstractOcclusion/WebGpuWater/WaterReceiver",
-            "AbstractOcclusion/WebGpuWater/AnalyticPool",
+            WaterShaderNames.WaterReceiver,
+            WaterShaderNames.AnalyticPool,
         };
 
         /// <summary>One-time play-mode scan (primary body only): give every scene renderer that
@@ -1291,11 +1291,11 @@ namespace AbstractOcclusion.WebGpuWater
         // 9 s period on ~25 m, matching the historical hand default of 26 m).
         const float SurfDispersionLengthCoef = 1.56f;
         const float SurfAutoWavelengthFraction = 0.2f;
-        // Fronts per master-beat wrap - LOCKSTEP with SURF_BEAT_WRAP_FRONTS in WaterSurfWaves.hlsl
-        // (must stay a multiple of SURF_SET_WAVES so the set envelope is beat-periodic).
-        internal const float SurfBeatWrapFronts = 1280f;
-        // Same period floor as max(_SurfPeriod, 0.5) in the shader - one definition of "a period".
-        internal float SurfPeriodFloored => Mathf.Max(surfPeriod, 0.5f);
+        // Fronts per master-beat wrap - aliases the validator-guarded LargeWaveField mirror of
+        // SURF_BEAT_WRAP_FRONTS (must stay a multiple of SURF_SET_WAVES for beat periodicity).
+        internal const float SurfBeatWrapFronts = LargeWaveField.SurfBeatWrapFronts;
+        // Same period floor as max(_SurfPeriod, SURF_MIN_PERIOD) in the shader - one definition.
+        internal float SurfPeriodFloored => Mathf.Max(surfPeriod, LargeWaveField.SurfMinPeriod);
 
         /// <summary>THE MASTER SURF BEAT: the body's wave clock wrapped to SurfBeatWrapFronts
         /// front periods. Every surf consumer - the _SurfBeatTime global (surface, swash, curl
@@ -3384,8 +3384,10 @@ namespace AbstractOcclusion.WebGpuWater
         // Fraction of screen resolution + clip-plane push for the per-body planar mirror. Constants (not
         // per-body inspector fields yet) to keep the Reflections block small - the budget, not resolution,
         // is the cost lever. KEEP in sync with PlanarReflection's inspector defaults.
-        const float PlanarMirrorResolutionScale = 0.5f;
-        const float PlanarMirrorClipPlaneOffset = 0.02f;
+        // Also the field-initializer defaults of the standalone PlanarReflection component, so the
+        // per-body path and the legacy global component start from the same tuning by construction.
+        internal const float PlanarMirrorResolutionScale = 0.5f;
+        internal const float PlanarMirrorClipPlaneOffset = 0.02f;
 
         PlanarMirror _planarMirror;
 

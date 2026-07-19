@@ -14,6 +14,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
         static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
         static readonly int ID_Caustic = Shader.PropertyToID("_CausticTex");
+        // "Skybox/Cubemap" material texture slot - cached like every other ID: the lookup runs on
+        // the per-frame body-uniform path, where an inline string was the one uncached exception.
+        static readonly int ID_SkyboxCubemapTex = Shader.PropertyToID("_Tex");
         static readonly int ID_CausticOccluderActive = Shader.PropertyToID("_CausticOccluderActive");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
         static readonly int ID_Sky = Shader.PropertyToID("_Sky");
@@ -175,8 +178,8 @@ namespace AbstractOcclusion.WebGpuWater
         static Cubemap SceneSkyboxCubemap()
         {
             Material skybox = RenderSettings.skybox;
-            if (skybox == null || !skybox.HasProperty("_Tex")) return null;
-            return skybox.GetTexture("_Tex") as Cubemap;
+            if (skybox == null || !skybox.HasProperty(ID_SkyboxCubemapTex)) return null;
+            return skybox.GetTexture(ID_SkyboxCubemapTex) as Cubemap;
         }
 
         /// <summary>Overwrite the block with the body's per-renderer uniforms.</summary>

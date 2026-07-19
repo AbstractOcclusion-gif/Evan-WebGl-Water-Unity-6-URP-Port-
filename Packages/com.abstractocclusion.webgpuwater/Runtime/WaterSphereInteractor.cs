@@ -21,6 +21,10 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinStepDistance = 1e-4f;
         const float AutoRadiusFloor = 0.05f;
         const float FallbackRadius = 0.5f;
+        // Auto radius = the MEAN of the two horizontal bounds extents: a sphere approximation of a
+        // possibly-oblong footprint (a box's exact half-diagonal over-drives the dipole on long
+        // hulls; the mean under-shoots evenly instead).
+        const float HorizontalExtentMeanWeight = 0.5f;
 
         [Tooltip("Local-space offset from this object's origin used as the sphere centre - the point that " +
                  "pushes the water. Put it near the waterline / hull centre.")]
@@ -85,12 +89,12 @@ namespace AbstractOcclusion.WebGpuWater
             if (_collider != null)
             {
                 Vector3 e = _collider.bounds.extents;
-                return Mathf.Max(AutoRadiusFloor, 0.5f * (e.x + e.z));
+                return Mathf.Max(AutoRadiusFloor, HorizontalExtentMeanWeight * (e.x + e.z));
             }
             if (_renderer != null)
             {
                 Vector3 e = _renderer.bounds.extents;
-                return Mathf.Max(AutoRadiusFloor, 0.5f * (e.x + e.z));
+                return Mathf.Max(AutoRadiusFloor, HorizontalExtentMeanWeight * (e.x + e.z));
             }
             return FallbackRadius;
         }

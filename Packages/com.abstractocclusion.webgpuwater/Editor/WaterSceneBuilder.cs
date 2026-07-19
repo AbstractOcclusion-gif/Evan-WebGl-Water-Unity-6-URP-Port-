@@ -13,6 +13,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static class WaterSceneBuilder
     {
+        // World-space gap between the primary body's edge and a newly added secondary body,
+        // so the two footprints never touch (touching footprints made BodyContaining ambiguous).
+        const float SecondaryBodyGapMeters = 1f;
         const string WaterVolumePrefabPath = WaterBuildKit.Root + "/WaterVolume.prefab";
         const string WaterVolumeObjectName = "WaterVolume";
         const string DemoMaterialsRoot = WaterBuildKit.Root + "/Demos/Materials/";
@@ -38,11 +41,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.simCompute = shaders.Compute;
             volume.causticsShader = shaders.Caustics;
             volume.obstacleShader = shaders.Obstacle;
-            volume.occluderShader = Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
+            volume.occluderShader = Shader.Find(ShaderCausticOccluder);
             // Ocean-only, optional: keep the prefab at parity with the wizard body so an ocean
             // dropped from this prefab gets FFT waves + near-field caustics without hand-wiring.
             volume.oceanFftCompute = AssetDatabase.LoadAssetAtPath<ComputeShader>(OceanFftComputePath);
-            volume.largeBodyCausticsShader = Shader.Find("AbstractOcclusion/WebGpuWater/LargeBodyCaustics");
+            volume.largeBodyCausticsShader = Shader.Find(ShaderLargeBodyCaustics);
             volume.waterMesh = grid;
             volume.tiles = tiles;
             volume.sky = sky;
@@ -157,7 +160,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             var frameGO = new GameObject(FrameObjectName);
             frameGO.transform.SetParent(bodyRoot.transform);
-            float offsetX = 2f * primary.volumeExtent.x + 1f;
+            float offsetX = 2f * primary.volumeExtent.x + SecondaryBodyGapMeters;
             frameGO.transform.position = primary.transform.position + new Vector3(offsetX, 0f, 0f);
 
             var body = frameGO.AddComponent<WaterVolume>();

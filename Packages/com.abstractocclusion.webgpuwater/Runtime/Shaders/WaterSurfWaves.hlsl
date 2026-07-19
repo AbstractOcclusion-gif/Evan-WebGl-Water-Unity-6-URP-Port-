@@ -67,6 +67,13 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 
 #define SURF_TWO_PI            6.28318530718
 #define SURF_MIN_DEPTH         0.05  // metre floor under every depth divide
+// Knob floors: _SurfPeriod / _SurfWavelength are artist-typed, so every consumer (this file,
+// WaterSurfaceFragStages' swash foam, and the CPU mirror LargeWaveField.cs) clamps through THESE
+// - one named floor per knob, so a zero knob can never divide-by-zero and both sides of the
+// CPU/GPU mirror clamp to the exact same number (validator-guarded).
+#define SURF_MIN_PERIOD        0.5   // seconds
+#define SURF_MIN_WAVELENGTH    1.0   // metres
+#define SURF_MIN_GREENS        1.0   // _SurfGreens floor: a growth CAP below 1 would attenuate
 // Fronts per master-beat wrap (WaterVolume.SurfBeatTime = waveTime mod period*WRAP). MUST be a
 // multiple of SURF_SET_WAVES so the set envelope (sin(frontIndex / SURF_SET_WAVES * 2pi)) is
 // exactly periodic across the wrap. 1280 fronts ~= 3.2 h of surf at the default 9 s period.
@@ -79,9 +86,31 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 // beat-periodic - no teleport at the wrap instant. Persistence 0 (the default) never reads them.
 #define SURF_CREST_SEED_DRIFT_A 0.34852044
 #define SURF_CREST_SEED_DRIFT_B 0.45160394
+// Crest-segmentation noise shaping (SurfCrestFactor - height-affecting, so every value below is
+// mirrored in LargeWaveField.cs and validator-guarded):
+#define SURF_CREST_MIN_LENGTH   4.0  // metres floor on _SurfCrestLength (keeps invLen finite)
+#define SURF_CREST_SEED_FRESH_SCALE 37.0 // spreads the 0..1 per-front hash across many noise cycles
+#define SURF_CREST_FRESH_OCTAVE_RATIO 1.3 // octave-B fresh-seed multiplier (decorrelates octaves)
+#define SURF_CREST_DIR_A_Z      0.31 // octave-A world direction = (1, this) - irrational-ish tilt
+#define SURF_CREST_DIR_B_X      -0.42 // octave-B world direction = (this, 1) - rotated vs octave A
+#define SURF_CREST_FREQ_RATIO   1.7  // octave-B spatial frequency multiplier (breaks periodicity)
+#define SURF_CREST_OCTAVE_B_WEIGHT 0.5 // octave-B amplitude weight in the two-octave sum
+#define SURF_CREST_NOISE_NORM   1.5  // max |sum| of the two octaves (normalizes the noise to 0..1)
 #define SURF_FACE_FRACTION     0.10  // steep shoreward face length, as a fraction of front spacing
 #define SURF_BACK_FRACTION     0.24  // long offshore back length, as a fraction of front spacing
 #define SURF_SET_WAVES         5.0   // pseudo-period (in fronts) of the set envelope
+// Set-amplitude shaping (SurfSetAmp - height-affecting, mirrored in LargeWaveField.cs):
+#define SURF_SETAMP_HASH_PHASE 2.4   // radians of per-front phase jitter fed into the set sine
+#define SURF_SETAMP_FLOOR      0.35  // smallest set-wave amplitude at full _SurfSetStrength
+// Per-front hash jitter bounds on the amplitude. The MAX is a published contract: other shaders
+// (WaterUnderwaterFog's UNDERWATER_SURF_SETAMP_MAX copy) size against the largest possible front,
+// so the name SURF_SETAMP_JITTER_MAX must stay stable for them to re-point at.
+#define SURF_SETAMP_JITTER_MIN 0.9
+#define SURF_SETAMP_JITTER_MAX 1.1
+// Shore-distance compression reach, in front spacings: reach = this * wavelength. The SAME curve
+// is published to the ambient swell as _ShoreWarpReach (WaterShoreDepthField.Publish computes
+// 2 x spacing with its own copy of this factor), so fronts and swell bunch in lockstep.
+#define SURF_WARP_REACH_SPACINGS 2.0
 // Per-front amplitude cross-fade: |f - 0.5| (half-cells from the crest) where the blend toward
 // the NEIGHBOURING front's amplitude begins, reaching 50/50 exactly at the cell edge. Without it
 // the per-front hash steps at f = 0/1 while the bore shape is still ~0.43 there - a shore-parallel
@@ -91,6 +120,17 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 #define SURF_NEAR_FADE         0.55  // fraction of _SurfBandDepth where fronts are fully developed
 #define SURF_SECH_ARG_MAX      20.0  // cosh overflow clamp (WGSL float overflow is impl-defined)
 #define SURF_SLOPE_EPSILON     0.5   // metres, finite-difference step for the front slope
+// Field-mask shaping (SurfFieldMask / EvaluateSurfWaves - the mask scales the height, so all
+// four are mirrored in LargeWaveField.cs and validator-guarded):
+#define SURF_MIN_INFLUENCE     0.001 // influence/mask gate: below this the layer is provably inert
+#define SURF_MIN_BAND_DEPTH    0.25  // metres floor on _SurfBandDepth (develop ramp never /0)
+#define SURF_WET_FADE_LO       -0.05 // depth (m) where the waterline wet fade starts (on the sand)
+#define SURF_WET_FADE_HI       0.1   // depth (m) of full strength - tight, so fronts run nearly
+                                     // to the waterline (a wide fade STRANDED the foam ~25 cm deep)
+// Shore-exposure gate window (SurfExposure): smoothstep over dot(swell dir, toShore). The soft
+// negative lower edge lets waves wrap a little past the tangent point (cheap diffraction stand-in).
+#define SURF_EXPOSURE_FACING_LO -0.25
+#define SURF_EXPOSURE_FACING_HI 0.5
 // Swash timing: fraction of the front period spent on the quick uprush (the rest is the slower
 // backwash), and how much of the run-up height stays glistening wet through one full cycle.
 #define SURF_SWASH_UPRUSH      0.30
@@ -122,6 +162,7 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 // Deep-water wavelength L0 = g/(2 pi) * T^2 = 1.56 * T^2 (linear dispersion, metres).
 #define SURF_DEEPWATER_LENGTH_COEF 1.56
 #define SURF_XI_HEIGHT_EPSILON 1e-3  // H0 floor inside the Iribarren sqrt (crest-segment gaps)
+#define SURF_XI_LENGTH_EPSILON 1e-3  // L0 floor inside the Iribarren sqrt (degenerate period)
 // Slope-dependent breaker index gamma = Hb/db, replacing the fixed McCowan 0.78. Simplified from
 // Weggel (1972) gamma = b(m) - a(m)*Hb/(g T^2): the linear ramp approximates b(m)'s initial rise
 // (db/dm ~ 7.6 at m = 0, softened to 5.0 over the playable slope range) and the sub-McCowan base
@@ -137,6 +178,17 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 // RELAXES onto the 0.4*d envelope with the existing 'broken' blend (documented approximation:
 // matches the reference behaviour's direction and end state, skips the exponential transient).
 #define SURF_BORE_STABLE_GAMMA 0.40
+// Front lifecycle shaping (SurfComputeFrontTerms - ALL height-affecting, mirrored in
+// LargeWaveField.cs and validator-guarded; the bore width factor is the exact constant whose
+// unnamed twin once drifted to 2.0 in the CPU mirror):
+#define SURF_GREEN_EXPONENT    0.25  // Green's law: amplitude ~ depth^(-1/4)
+#define SURF_CAP_EPSILON       1e-3  // breaking-cap floor under the overCap divide
+#define SURF_CRESTING_START    0.75  // overCap window where the front reads as cresting
+#define SURF_CRESTING_END      1.05
+#define SURF_BROKEN_START      1.05  // overCap window of the break -> whitewash-bore hand-over
+#define SURF_BROKEN_END        1.5
+#define SURF_LEAN_REACH_FRACTION 0.25 // lean-shear e-folding reach, fraction of front spacing
+#define SURF_BORE_WIDTH_FACTOR 1.4   // bore sech width = backLen * this (wider than the crest)
 // Hunt (1959) run-up R = xi * H0, valid up to xi ~ 2.3 where measured run-up saturates - the cap
 // doubles as the cliff guard (xi is unbounded on near-vertical shores). Swash is render-only.
 #define SURF_RUNUP_XI_CAP      2.3
@@ -183,15 +235,17 @@ float SurfSetAmp(float frontIndex)
 {
     float wrapped = SurfWrapIndex(frontIndex);
     float h = SurfHash(wrapped);
-    float setWave = 0.5 + 0.5 * sin((wrapped / SURF_SET_WAVES) * SURF_TWO_PI + h * 2.4);
-    return lerp(1.0, lerp(0.35, 1.0, setWave), _SurfSetStrength) * lerp(0.9, 1.1, h);
+    float setWave = 0.5 + 0.5 * sin((wrapped / SURF_SET_WAVES) * SURF_TWO_PI
+                                    + h * SURF_SETAMP_HASH_PHASE);
+    return lerp(1.0, lerp(SURF_SETAMP_FLOOR, 1.0, setWave), _SurfSetStrength)
+         * lerp(SURF_SETAMP_JITTER_MIN, SURF_SETAMP_JITTER_MAX, h);
 }
 
 // Shore-distance warp: compresses front spacing toward the waterline (waves slow down, crests
 // bunch). Monotonic for gains up to ~2 so fronts never fold back on themselves.
 float SurfWarpDistance(float s)
 {
-    float reach = 2.0 * max(_SurfWavelength, 1.0);
+    float reach = SURF_WARP_REACH_SPACINGS * max(_SurfWavelength, SURF_MIN_WAVELENGTH);
     return s * (1.0 + _SurfCompression * exp(-max(s, 0.0) / reach));
 }
 
@@ -204,7 +258,7 @@ float SurfWarpDistance(float s)
 float SurfCrestFactor(float2 worldXZ, float frontIndex)
 {
     if (_SurfCrestVariation <= 0.0) return 1.0;
-    float invLen = 1.0 / max(_SurfCrestLength, 4.0);
+    float invLen = 1.0 / max(_SurfCrestLength, SURF_CREST_MIN_LENGTH);
     float wrapped = SurfWrapIndex(frontIndex);
     // Seed persistence: lerp between a fresh hash per front (0 - the classic wandering hot spots)
     // and a slow constant drift per front (1 - anchored break spots). Continuous in the knob, and
@@ -212,12 +266,15 @@ float SurfCrestFactor(float2 worldXZ, float frontIndex)
     // exact multiples of 2pi/SURF_BEAT_WRAP_FRONTS - see the constants block) instead of the old
     // seed * 1.3, so the anchored pattern is exactly beat-periodic.
     float persistence = saturate(_SurfCrestPersistence);
-    float seedFresh = SurfHash(wrapped) * 37.0;
+    float seedFresh = SurfHash(wrapped) * SURF_CREST_SEED_FRESH_SCALE;
     float seedA = lerp(seedFresh, wrapped * SURF_CREST_SEED_DRIFT_A, persistence);
-    float seedB = lerp(seedFresh * 1.3, wrapped * SURF_CREST_SEED_DRIFT_B, persistence);
-    float n = sin(dot(worldXZ, float2(1.0, 0.31)) * (SURF_TWO_PI * invLen) + seedA)
-            + 0.5 * sin(dot(worldXZ, float2(-0.42, 1.0)) * (SURF_TWO_PI * invLen * 1.7) + seedB);
-    float n01 = saturate(n / 1.5 * 0.5 + 0.5);
+    float seedB = lerp(seedFresh * SURF_CREST_FRESH_OCTAVE_RATIO,
+                       wrapped * SURF_CREST_SEED_DRIFT_B, persistence);
+    float n = sin(dot(worldXZ, float2(1.0, SURF_CREST_DIR_A_Z)) * (SURF_TWO_PI * invLen) + seedA)
+            + SURF_CREST_OCTAVE_B_WEIGHT
+            * sin(dot(worldXZ, float2(SURF_CREST_DIR_B_X, 1.0))
+                  * (SURF_TWO_PI * invLen * SURF_CREST_FREQ_RATIO) + seedB);
+    float n01 = saturate(n / SURF_CREST_NOISE_NORM * 0.5 + 0.5);
     return 1.0 - _SurfCrestVariation * (1.0 - n01);
 }
 
@@ -226,7 +283,8 @@ float SurfCrestFactor(float2 worldXZ, float frontIndex)
 // cutting off knife-sharp at 90 degrees. 1 everywhere when _SurfDirectionality = 0.
 float SurfExposure(float2 toShore)
 {
-    float facing = smoothstep(-0.25, 0.5, dot(_SurfWindDirXZ.xy, toShore));
+    float facing = smoothstep(SURF_EXPOSURE_FACING_LO, SURF_EXPOSURE_FACING_HI,
+                              dot(_SurfWindDirXZ.xy, toShore));
     return lerp(1.0, facing, saturate(_SurfDirectionality));
 }
 
@@ -234,9 +292,10 @@ float SurfExposure(float2 toShore)
 // tanBeta (Battjes 1974). L0 from linear deep-water dispersion. Mirrored in LargeWaveField.cs.
 float SurfIribarren(float tanBeta, float deepHeight)
 {
-    float T = max(_SurfPeriod, 0.5); // same floor as every other period use (CPU mirror lockstep)
+    float T = max(_SurfPeriod, SURF_MIN_PERIOD);
     float deepLength = SURF_DEEPWATER_LENGTH_COEF * T * T;
-    return tanBeta / sqrt(max(deepHeight, SURF_XI_HEIGHT_EPSILON) / max(deepLength, 1e-3));
+    return tanBeta / sqrt(max(deepHeight, SURF_XI_HEIGHT_EPSILON)
+                          / max(deepLength, SURF_XI_LENGTH_EPSILON));
 }
 
 // Breaker-type weights from the Iribarren number: x = spilling, y = plunging, z = surging.
@@ -288,8 +347,8 @@ SurfFrontTerms SurfComputeFrontTerms(float2 worldXZ, float sWarp, float depth, f
                                      float time)
 {
     SurfFrontTerms t;
-    float L = max(_SurfWavelength, 1.0);
-    float T = max(_SurfPeriod, 0.5);
+    float L = max(_SurfWavelength, SURF_MIN_WAVELENGTH);
+    float T = max(_SurfPeriod, SURF_MIN_PERIOD);
     // Phase grows with time at fixed distance, so an iso-phase crest moves TOWARD the shore
     // (smaller s) as time advances; speed drops where the warp has compressed the spacing.
     float phase = sWarp / L + time / T;
@@ -317,14 +376,15 @@ SurfFrontTerms SurfComputeFrontTerms(float2 worldXZ, float sWarp, float depth, f
 
     // Local height: Green's-law growth toward the shore, capped by the breaking criterion -
     // the slope-dependent Weggel gamma now, not the fixed McCowan 0.78.
-    float green = min(pow(max(_SurfBandDepth, d) / d, 0.25), max(_SurfGreens, 1.0));
+    float green = min(pow(max(_SurfBandDepth, d) / d, SURF_GREEN_EXPONENT),
+                      max(_SurfGreens, SURF_MIN_GREENS));
     float H = _SurfAmplitude * t.setAmp * green;
     float capH = SurfGamma(tanBeta) * d;
-    t.overCap = H / max(capH, 1e-3);
-    t.cresting = smoothstep(0.75, 1.05, t.overCap); // cresting: approaching/at the limit
+    t.overCap = H / max(capH, SURF_CAP_EPSILON);
+    t.cresting = smoothstep(SURF_CRESTING_START, SURF_CRESTING_END, t.overCap); // at/near the limit
     // Fully broken -> whitewash bore. Surging waves SKIP the bore entirely (their weight kills the
     // hand-over): the unbroken face runs to the waterline and hands its energy to the swash.
-    t.broken = smoothstep(1.05, 1.5, t.overCap) * (1.0 - t.breakType.z);
+    t.broken = smoothstep(SURF_BROKEN_START, SURF_BROKEN_END, t.overCap) * (1.0 - t.breakType.z);
     // (Later hand-over than v1: the cresting face stays tall further in, so the wave is
     // still VISIBLY a wave when it arrives instead of collapsing to a flat foam smear.)
     t.height = min(H, capH);
@@ -334,7 +394,7 @@ SurfFrontTerms SurfComputeFrontTerms(float2 worldXZ, float sWarp, float depth, f
     // The lean shear throws the crest top shoreward as it steepens (phase-advance forward lean).
     t.dAcross = (f - 0.5) * L;                       // metres from the crest, + = offshore side
     float lean = _SurfLean * t.height * t.cresting;  // lean grows as the front approaches breaking
-    t.dAcross += lean * exp(-abs(t.dAcross) / (0.25 * L));
+    t.dAcross += lean * exp(-abs(t.dAcross) / (SURF_LEAN_REACH_FRACTION * L));
     t.faceLen = SURF_FACE_FRACTION * L;
     t.backLen = SURF_BACK_FRACTION * L;
     // Plunging face steepening: see SURF_PLUNGE_FACE_SHARPEN (height-affecting, CPU-mirrored).
@@ -344,10 +404,11 @@ SurfFrontTerms SurfComputeFrontTerms(float2 worldXZ, float sWarp, float depth, f
     t.profile = sechTerm * sechTerm;
 
     // Broken front: collapse toward a LOWER, WIDER whitewash bore (rounded step of churned water
-    // that keeps running shoreward). sech (not sech^2) at 1.4x the back length reads as the mound.
-    // The bore amplitude relaxes onto the Dally-Dean-Dalrymple STABLE height (0.4 * depth) instead
-    // of keeping a fixed fraction of its break height - see SURF_BORE_STABLE_GAMMA.
-    t.boreSech = 1.0 / cosh(min(abs(t.dAcross) / (t.backLen * 1.4), SURF_SECH_ARG_MAX));
+    // that keeps running shoreward). sech (not sech^2) at SURF_BORE_WIDTH_FACTOR x the back length
+    // reads as the mound. The bore amplitude relaxes onto the Dally-Dean-Dalrymple STABLE height
+    // (0.4 * depth) instead of a fixed fraction of its break height - see SURF_BORE_STABLE_GAMMA.
+    t.boreSech = 1.0 / cosh(min(abs(t.dAcross) / (t.backLen * SURF_BORE_WIDTH_FACTOR),
+                                SURF_SECH_ARG_MAX));
     t.boreAmp = lerp(t.height, SURF_BORE_STABLE_GAMMA * d, t.broken);
     return t;
 }
@@ -412,8 +473,8 @@ SurfFrontFoam SurfFrontFoamFromTerms(SurfFrontTerms t)
     // Deposit age: the front travels ~one wavelength per period, so metres behind the crest map
     // to seconds since it passed. A render-only heuristic (the warp compresses true speed near
     // the waterline) - good enough to drive the FOAM-2 hole-dissolve, never height.
-    float L = max(_SurfWavelength, 1.0);
-    float T = max(_SurfPeriod, 0.5);
+    float L = max(_SurfWavelength, SURF_MIN_WAVELENGTH);
+    float T = max(_SurfPeriod, SURF_MIN_PERIOD);
     foam.trailAge = t.broken * max(t.dAcross, 0.0) * (T / L);
     return foam;
 }
@@ -466,9 +527,9 @@ SurfWaveSample SurfWaveSampleInert()
 // every other surf consumer, so they all mask exactly like the surface.
 float SurfFieldMask(float depth, float2 toShore, float influence)
 {
-    float band = max(_SurfBandDepth, 0.25);
+    float band = max(_SurfBandDepth, SURF_MIN_BAND_DEPTH);
     float develop = 1.0 - smoothstep(SURF_NEAR_FADE * band, band, max(depth, 0.0));
-    float wet = smoothstep(-0.05, 0.1, depth);
+    float wet = smoothstep(SURF_WET_FADE_LO, SURF_WET_FADE_HI, depth);
     return develop * wet * influence * SurfExposure(toShore);
 }
 
@@ -476,7 +537,7 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
                                  float tanBeta, float influence, float time)
 {
     SurfWaveSample o = SurfWaveSampleInert();
-    if (_SurfActive < 0.5 || influence <= 0.001) return o;
+    if (_SurfActive < 0.5 || influence <= SURF_MIN_INFLUENCE) return o;
 
     float exposure = SurfExposure(toShore); // the lace below reuses it beyond the mask
     float mask = SurfFieldMask(depth, toShore, influence);
@@ -486,13 +547,13 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
     // as flat open water. Exposure-gated AND segmented alongshore like the fronts (seeded by the
     // most recent arrival, so the segmentation drifts with each wave instead of forming one
     // endless static ribbon around the island).
-    float laceIndex = floor(time / max(_SurfPeriod, 0.5) - 0.5);
+    float laceIndex = floor(time / max(_SurfPeriod, SURF_MIN_PERIOD) - 0.5);
     float laceSeg = SurfCrestFactor(worldXZ, laceIndex);
     float lace = (1.0 - smoothstep(0.2, 1.8, max(depth, 0.0)))
                * smoothstep(-0.35, -0.05, depth)
                * _SurfWaterlineFoam * influence * exposure * laceSeg;
 
-    if (mask <= 0.001 && lace <= 0.001) return o;
+    if (mask <= SURF_MIN_INFLUENCE && lace <= SURF_MIN_INFLUENCE) return o;
 
     float s = max(sdfDist, 0.0);
     // ONE terms evaluation shared by height, whitewash/breaker AND the FOAM-1/2 extras (overCap /
@@ -537,10 +598,10 @@ float SurfAmbientWeight(float surfMask)
 // current film as the dark wet-sand glaze - wet sand with zero extra state.
 float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float tanBeta, float influence, float time)
 {
-    if (_SurfActive < 0.5 || influence <= 0.001 || _SurfSwashAmplitude <= 0.0)
+    if (_SurfActive < 0.5 || influence <= SURF_MIN_INFLUENCE || _SurfSwashAmplitude <= 0.0)
         return float2(0.0, 0.0);
 
-    float T = max(_SurfPeriod, 0.5);
+    float T = max(_SurfPeriod, SURF_MIN_PERIOD);
     // SYNC: a front's CREST reaches the waterline when its cell phase f hits 0.5 at s = 0, i.e.
     // when frac(time/T) = 0.5. Shifting the swash cycle by that half-cell makes the uprush START
     // exactly as the bore arrives (v1 peaked ~0.15 T BEFORE the wave hit - the "swash pops out of

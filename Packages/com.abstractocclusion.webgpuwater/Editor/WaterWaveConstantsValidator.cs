@@ -2,8 +2,8 @@
 // open-water swell + surf-front constants.
 //
 // WHY: the wave fields are authored twice - as LBW_* #defines in
-// Runtime/Shaders/WaterLargeWaves.hlsl and SURF_* #defines in WaterSurfWaves.hlsl
-// (drive the rendered surface) and as consts in Runtime/LargeWaveField.cs (the CPU
+// Runtime/Shaders/WaterLargeWaves.hlsl, SURF_* #defines in WaterSurfWaves.hlsl and SHORE_*
+// #defines in WaterShore.hlsl (drive the rendered surface) and as consts in Runtime/LargeWaveField.cs (the CPU
 // buoyancy mirror). Nothing links them, so if one side is retuned and the other is
 // forgotten, floating objects silently desync from the visible crests. This validator
 // reads the source files on editor load and reports any drifted constant loudly,
@@ -24,6 +24,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
     {
         const string LargeWavesHlslAssetName = "WaterLargeWaves";
         const string SurfWavesHlslAssetName = "WaterSurfWaves";
+        const string ShoreHlslAssetName = "WaterShore";
         const string HlslExtension = ".hlsl";
         const string CSharpAssetName = "LargeWaveField";
         const string CSharpExtension = ".cs";
@@ -93,6 +94,58 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             ("SURF_GAMMA_MAX",              "SurfGammaMax"),
             ("SURF_BORE_STABLE_GAMMA",      "SurfBoreStableGamma"),
             ("SURF_PLUNGE_FACE_SHARPEN",    "SurfPlungeFaceSharpen"),
+            // Formerly-inline mirrored literals, hoisted so drift (like the bore width factor's
+            // shader-1.4 / mirror-2.0 incident) is a console error instead of hand-discipline.
+            ("SURF_MIN_PERIOD",             "SurfMinPeriod"),
+            ("SURF_MIN_WAVELENGTH",         "SurfMinWavelength"),
+            ("SURF_MIN_GREENS",             "SurfMinGreens"),
+            ("SURF_SETAMP_HASH_PHASE",      "SurfSetAmpHashPhase"),
+            ("SURF_SETAMP_FLOOR",           "SurfSetAmpFloor"),
+            ("SURF_SETAMP_JITTER_MIN",      "SurfSetAmpJitterMin"),
+            // NAME CONTRACT: WaterUnderwaterFog's UNDERWATER_SURF_SETAMP_MAX copy re-points at
+            // SURF_SETAMP_JITTER_MAX - renaming it breaks that link, not just this table.
+            ("SURF_SETAMP_JITTER_MAX",      "SurfSetAmpJitterMax"),
+            ("SURF_WARP_REACH_SPACINGS",    "SurfWarpReachSpacings"),
+            ("SURF_CREST_MIN_LENGTH",       "SurfCrestMinLength"),
+            ("SURF_CREST_SEED_FRESH_SCALE", "SurfCrestSeedFreshScale"),
+            ("SURF_CREST_FRESH_OCTAVE_RATIO", "SurfCrestFreshOctaveRatio"),
+            ("SURF_CREST_DIR_A_Z",          "SurfCrestDirAZ"),
+            ("SURF_CREST_DIR_B_X",          "SurfCrestDirBX"),
+            ("SURF_CREST_FREQ_RATIO",       "SurfCrestFreqRatio"),
+            ("SURF_CREST_OCTAVE_B_WEIGHT",  "SurfCrestOctaveBWeight"),
+            ("SURF_CREST_NOISE_NORM",       "SurfCrestNoiseNorm"),
+            ("SURF_EXPOSURE_FACING_LO",     "SurfExposureFacingLo"),
+            ("SURF_EXPOSURE_FACING_HI",     "SurfExposureFacingHi"),
+            ("SURF_XI_LENGTH_EPSILON",      "SurfXiLengthEpsilon"),
+            ("SURF_GREEN_EXPONENT",         "SurfGreenExponent"),
+            ("SURF_CAP_EPSILON",            "SurfCapEpsilon"),
+            ("SURF_CRESTING_START",         "SurfCrestingStart"),
+            ("SURF_CRESTING_END",           "SurfCrestingEnd"),
+            ("SURF_BROKEN_START",           "SurfBrokenStart"),
+            ("SURF_BROKEN_END",             "SurfBrokenEnd"),
+            ("SURF_LEAN_REACH_FRACTION",    "SurfLeanReachFraction"),
+            ("SURF_BORE_WIDTH_FACTOR",      "SurfBoreWidthFactor"),
+            ("SURF_MIN_INFLUENCE",          "SurfMinInfluence"),
+            ("SURF_MIN_BAND_DEPTH",         "SurfMinBandDepth"),
+            ("SURF_WET_FADE_LO",            "SurfWetFadeLo"),
+            ("SURF_WET_FADE_HI",            "SurfWetFadeHi"),
+        };
+
+        // SHORE_* #defines in WaterShore.hlsl (the Layer A shoal transform) mirrored as consts in
+        // LargeWaveField.cs: ShoalWeight/GreenGain/WarpExtra move the CPU buoyancy surface exactly
+        // like the shader's ShoalWeight/ShoreGreenGain/ShoreWarpExtra move the render.
+        // SHORE_DEEP_SENTINEL / SHORE_BORDER_FEATHER are field-sampling plumbing with no C# math
+        // twin (the CPU samples via WaterShoreDepthField), so they are intentionally absent.
+        static readonly (string Hlsl, string CSharp)[] ShoreConstantPairs =
+        {
+            ("SHORE_SHOAL_WAVELENGTH_FACTOR", "ShoreShoalWavelengthFactor"),
+            ("SHORE_WAVELENGTH_EPSILON",      "ShoreWavelengthEpsilon"),
+            ("SHORE_BAND_EPSILON",            "ShoreBandEpsilon"),
+            ("SHORE_BAND_INNER_FRACTION",     "ShoreBandInnerFraction"),
+            ("SHORE_GREEN_MIN_DEPTH",         "ShoreGreenMinDepth"),
+            ("SHORE_GREEN_EXPONENT",          "ShoreGreenExponent"),
+            ("SHORE_WARP_REACH_MIN",          "ShoreWarpReachMin"),
+            ("SHORE_MIN_GREENS",              "ShoreMinGreens"),
         };
 
         // Splash-burst shaping: authored twice as BURST_* static consts in
@@ -123,6 +176,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         {
             if (!TryReadPackageAsset(LargeWavesHlslAssetName, HlslExtension, out string largeWavesSource, out string readError) ||
                 !TryReadPackageAsset(SurfWavesHlslAssetName, HlslExtension, out string surfWavesSource, out readError) ||
+                !TryReadPackageAsset(ShoreHlslAssetName, HlslExtension, out string shoreSource, out readError) ||
                 !TryReadPackageAsset(CSharpAssetName, CSharpExtension, out string cSharpSource, out readError) ||
                 !TryReadPackageAsset(FoamComputeAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
                 !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError))
@@ -136,6 +190,8 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
                             CSharpAssetName, cSharpSource, LargeWavesConstantPairs);
             CollectProblems(problems, SurfWavesHlslAssetName, HlslExtension, surfWavesSource,
                             CSharpAssetName, cSharpSource, SurfWavesConstantPairs);
+            CollectProblems(problems, ShoreHlslAssetName, HlslExtension, shoreSource,
+                            CSharpAssetName, cSharpSource, ShoreConstantPairs);
             CollectProblems(problems, FoamComputeAssetName, ComputeExtension, foamComputeSource,
                             SplashEmitterAssetName, splashEmitterSource, SplashBurstConstantPairs);
             if (problems.Count == 0) return;
@@ -234,7 +290,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         {
             var report = new StringBuilder();
             report.Append(LogPrefix);
-            report.AppendLine($"wave constants have drifted between the HLSL sources ({LargeWavesHlslAssetName}/{SurfWavesHlslAssetName}{HlslExtension}) " +
+            report.AppendLine($"wave constants have drifted between the HLSL sources ({LargeWavesHlslAssetName}/{SurfWavesHlslAssetName}/{ShoreHlslAssetName}{HlslExtension}) " +
                               $"and {CSharpAssetName}{CSharpExtension}. " +
                               "The rendered surface and CPU buoyancy will disagree until these match:");
             foreach (string problem in problems)

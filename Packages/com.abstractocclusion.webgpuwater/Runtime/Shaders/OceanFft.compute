@@ -13,6 +13,7 @@
 // The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grid is fixed at
 // FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
 // WebGPU-safe: FFT_SIZE=128 -> 128 threads/group (<256) and 6 KB groupshared (<16 KB); half-float targets.
+#include "WaterShared.hlsl"     // OCEAN_FFT_MAX_CASCADES (shared cascade layout)
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
 
 #pragma kernel SpectrumInit
@@ -76,7 +77,7 @@ uint   OceanFieldRes;                // texels per side of the height field
 float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveAmplitude height scaling
 
 #define OCEAN_FFT_TG        8
-#define OCEAN_FFT_MAX_CASCADES 4
+// OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (shared with the sampling/foam sides).
 #define FFT_SIZE            128   // must equal WaterOceanFft.DefaultResolution
 #define FFT_STAGES          7     // log2(FFT_SIZE)
 #define OCEAN_TWO_PI        6.28318530718

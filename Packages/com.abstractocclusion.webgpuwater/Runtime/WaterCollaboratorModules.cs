@@ -71,7 +71,7 @@ namespace AbstractOcclusion.WebGpuWater
         static UnityEngine.Shader ResolveOccluderShader(WaterVolume owner)
             => owner.occluderShader != null
                 ? owner.occluderShader
-                : UnityEngine.Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
+                : UnityEngine.Shader.Find(WaterShaderNames.CausticOccluder);
 
         public void Dispose()
         {

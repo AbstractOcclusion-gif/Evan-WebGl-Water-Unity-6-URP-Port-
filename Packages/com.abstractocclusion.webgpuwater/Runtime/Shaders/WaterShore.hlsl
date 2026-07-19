@@ -48,6 +48,24 @@ float _ShoreWarpReach;    // compression e-folding reach (m) = 2 x the surf fron
 // rectangular border never prints a seam into the swell (B5 in the coastline audit).
 #define SHORE_BORDER_FEATHER 0.08
 
+// Shore-transform shaping (ShoalWeight / ShoreGreenGain / ShoreWarpExtra). ALL height-affecting:
+// LargeWaveField.cs runs the same math on the CPU for buoyancy, so every value below is mirrored
+// there as a const and guarded by WaterWaveConstantsValidator - retune HERE and the C# twin,
+// never inline. (WaterLargeWaves.hlsl's per-component shoal ramp still carries an inline copy of
+// the factor/epsilon - candidates to re-point at these defines when that file is next touched.)
+#define SHORE_SHOAL_WAVELENGTH_FACTOR 2.0  // shoal ramp = saturate(this * depth / wavelength)
+                                           // (Crest's saturate(2*depth/L) recovery rule)
+#define SHORE_WAVELENGTH_EPSILON      1e-3 // wavelength floor under the shoal-ramp divide
+#define SHORE_BAND_EPSILON            1e-3 // _ShoreShoalDepth floor (0 = "shoaling off", never /0)
+// Inner fraction of the shoal band: ShoalWeight's hand-over to full strength STARTS here and the
+// Green's-law gain fades out across the same stretch (ShoreGreenGain), so amplification and
+// attenuation trade over one shared band instead of two competing depth thresholds.
+#define SHORE_BAND_INNER_FRACTION     0.35
+#define SHORE_GREEN_MIN_DEPTH         0.05 // metres; depth floor under the Green's-law divide
+#define SHORE_GREEN_EXPONENT          0.25 // Green's law: amplitude ~ depth^(-1/4)
+#define SHORE_WARP_REACH_MIN          1.0  // metres; floor on _ShoreWarpReach (degenerate publish)
+#define SHORE_MIN_GREENS              1.0  // _ShoreGreens floor: a growth CAP below 1 would attenuate
+
 // Everything the wave/foam/swash code needs from the shore substrate at one world xz, from ONE
 // depth fetch + ONE sdf fetch. 'influence' is the feathered in-field weight: every shore effect
 // multiplies by it, so leaving the field is always seamless.
@@ -134,9 +152,11 @@ float ShoreShoalDepth(float2 worldXZ)
 float ShoalWeight(float depth, float wavelength)
 {
     float clamped = max(depth, 0.0);
-    float raw = saturate(2.0 * clamped / max(wavelength, 1e-3));
-    float band = max(_ShoreShoalDepth, 1e-3);
-    float deep = smoothstep(0.35 * band, band, clamped); // smooth hand-over to full strength
+    float raw = saturate(SHORE_SHOAL_WAVELENGTH_FACTOR * clamped
+                         / max(wavelength, SHORE_WAVELENGTH_EPSILON));
+    float band = max(_ShoreShoalDepth, SHORE_BAND_EPSILON);
+    // Smooth hand-over to full strength across the outer part of the band.
+    float deep = smoothstep(SHORE_BAND_INNER_FRACTION * band, band, clamped);
     return lerp(raw, 1.0, deep);
 }
 
@@ -145,13 +165,13 @@ float ShoalWeight(float depth, float wavelength)
 // the breaking/whitewash layer takes over. 1 offshore / off-field: pure amplification-only term.
 float ShoreGreenGain(ShoreData shore)
 {
-    float band = max(_ShoreShoalDepth, 1e-3);
+    float band = max(_ShoreShoalDepth, SHORE_BAND_EPSILON);
     if (shore.influence <= 0.0 || shore.depth >= band) return 1.0;
-    float d = max(shore.depth, 0.05);
-    float green = min(pow(band / d, 0.25), max(_ShoreGreens, 1.0));
+    float d = max(shore.depth, SHORE_GREEN_MIN_DEPTH);
+    float green = min(pow(band / d, SHORE_GREEN_EXPONENT), max(_ShoreGreens, SHORE_MIN_GREENS));
     // Fade the gain out over the last stretch to the waterline: attenuation (ShoalWeight) wins the
     // final metres, so amplified waves hand over to the surf/whitewash layer instead of spiking.
-    green = lerp(green, 1.0, saturate(1.0 - shore.depth / (0.35 * band)));
+    green = lerp(green, 1.0, saturate(1.0 - shore.depth / (SHORE_BAND_INNER_FRACTION * band)));
     return lerp(1.0, green, shore.influence);
 }
 
@@ -165,7 +185,7 @@ float ShoreWarpExtra(ShoreData shore)
 {
     if (shore.influence <= 0.0 || _ShoreCompression <= 0.0) return 0.0;
     float s = max(shore.sdfDist, 0.0);
-    float reach = max(_ShoreWarpReach, 1.0);
+    float reach = max(_ShoreWarpReach, SHORE_WARP_REACH_MIN);
     return _ShoreCompression * s * exp(-s / reach) * shore.influence;
 }
 

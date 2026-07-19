@@ -17,7 +17,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     [InitializeOnLoad]
     internal static class WaterEditorPreviewDriver
     {
-        const string MenuPath = "Window/AbstractOcclusion/WebGpuWater/Live Water Preview";
+        const string MenuPath = WaterBuildKit.MenuRoot + "Live Water Preview";
         const string EditorPrefsKey = "AbstractOcclusion.WebGpuWater.LivePreview";
 
         // The ripple sim advances a fixed amount per player-loop tick (stepsPerFrame), so the

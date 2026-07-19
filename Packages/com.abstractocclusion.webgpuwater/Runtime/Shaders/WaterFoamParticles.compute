@@ -24,6 +24,7 @@
 // pools/bounded bodies, so the cascade texture is never declared or bound on those dispatches.
 #pragma multi_compile _ OCEAN_CREST_FOAM
 
+#include "WaterShared.hlsl"     // OCEAN_FFT_* cascade layout (shared with generation/sampling)
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
 #include "WaterSurfWaves.hlsl"  // surf breaker fronts: plunging-lip spray source (uniforms set by
@@ -151,7 +152,7 @@ uint   _SprayTileCap;        // max spray spawns per screen tile per frame
 // per particle per frame, and crests between samples slipped through).
 
 // Depth quantisation for the InterlockedMin buffer: millimetres in uint.
-static const float DEPTH_TO_MM = 1000.0;
+// DEPTH_TO_MM comes from WaterFoamCommon.hlsl (its inverse lives beside it - one pair).
 // Density buffer cleared depth (no particle) - uint max.
 static const uint DEPTH_CLEAR = 0xFFFFFFFFu;
 // Splat footprint clamp (density texels). Small pool sizes keep the per-particle loop bounded;
@@ -173,9 +174,9 @@ static const float SURF_SPRAY_THROW_SPEED = 6.0;
 // (Shore border feather + deep sentinel now come from WaterParticleCommon.hlsl:
 // PARTICLE_SHORE_BORDER_FEATHER / PARTICLE_SHORE_DEEP_SENTINEL - one copy for both
 // particle computes.)
-// Matches OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION (WaterLargeWaves.hlsl): a cascade's shore
-// attenuation uses one representative wavelength = this fraction of its domain size.
-static const float CASCADE_WAVELENGTH_FRACTION_SIM = 0.25;
+// A cascade's shore attenuation uses one representative wavelength = this fraction of its
+// domain size - OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION from WaterShared.hlsl, the SAME define
+// the sampling side (WaterLargeWaves.hlsl) uses, so the two can no longer drift.
 
 // ---- CPU-event splash bursts (spray unification): rigidbody impacts and mouse splashes
 // queue burst requests on the CPU; the SpawnBurst kernel throws KIND_SPRAY droplets from
@@ -231,7 +232,7 @@ SamplerState sampler_OceanFftNormal;
 float4 _OceanFftDomainSizes;   // metres per cascade
 float  _OceanFftCascadeCount;  // active cascades (<= 4)
 float2 _CrestRoll;             // world xz drift (m/s) along the wave direction: foam rolls with the crest
-#define OCEAN_FFT_MAX_CASCADES 4
+// OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (via the include block above).
 
 // Sum the accumulated whitecap foam (.w) across cascades at a world xz. No distance fade here (the
 // spawn window is already near-camera): we want to emit wherever the surface is actually breaking.
@@ -391,7 +392,7 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
         float domain = max(_OceanFftDomainSizes[c], 1e-3);
         float2 uv = worldPos.xz / domain;
         float cascadeShoal = lerp(1.0, ShoalWeightSim(shoreDepth,
-                                                      domain * CASCADE_WAVELENGTH_FRACTION_SIM),
+                                                      domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION),
                                   shoreInfluence);
         height += active * cascadeShoal
                 * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;

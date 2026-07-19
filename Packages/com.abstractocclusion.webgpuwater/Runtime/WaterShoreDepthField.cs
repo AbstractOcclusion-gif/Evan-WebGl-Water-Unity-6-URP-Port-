@@ -470,9 +470,12 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_Refraction, _body.shoreRefraction);
             Shader.SetGlobalFloat(ID_Compression, _body.shoreCompression);
             Shader.SetGlobalFloat(ID_Greens, _body.shoreGreens);
-            // ONE compression curve: the ambient swell's warp reach is the same 2 x front spacing
-            // the surf fronts use (SurfWarpDistance), so both wave families bunch in lockstep.
-            Shader.SetGlobalFloat(ID_WarpReach, 2f * Mathf.Max(_body.SurfWavelengthEffective, 1f));
+            // ONE compression curve: the ambient swell's warp reach is the same front-spacing
+            // multiple the surf fronts use (SurfWarpDistance), so both wave families bunch in
+            // lockstep - via the validator-guarded shared constants, not a hand copy.
+            Shader.SetGlobalFloat(ID_WarpReach,
+                LargeWaveField.SurfWarpReachSpacings
+                * Mathf.Max(_body.SurfWavelengthEffective, LargeWaveField.SurfMinWavelength));
 
             // P2 surf breaker fronts: active only with BOTH fields baked (they steer by the SDF)
             // and the body opted in. The same values feed the ripple-sim foam injection through

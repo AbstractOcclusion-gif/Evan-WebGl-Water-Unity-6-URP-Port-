@@ -89,14 +89,14 @@ float4 SampleWaterBicubic(float2 uv)
 // Grad clone and the AnalyticPool geometry pass (which supplies its own texture/normal).
 void WallSurface(float3 p, out float2 uv, out float3 normal, out float3 tangent, out float3 bitangent)
 {
-    if (abs(p.x) > 0.999)
+    if (abs(p.x) > POOL_WALL_FACE_EPS)
     {
         uv = p.yz * 0.5 + float2(1.0, 0.5);
         normal = float3(-p.x, 0.0, 0.0);
         tangent = float3(0.0, 1.0, 0.0);   // U = pool Y
         bitangent = float3(0.0, 0.0, 1.0); // V = pool Z
     }
-    else if (abs(p.z) > 0.999)
+    else if (abs(p.z) > POOL_WALL_FACE_EPS)
     {
         uv = p.yx * 0.5 + float2(1.0, 0.5);
         normal = float3(0.0, 0.0, -p.z);

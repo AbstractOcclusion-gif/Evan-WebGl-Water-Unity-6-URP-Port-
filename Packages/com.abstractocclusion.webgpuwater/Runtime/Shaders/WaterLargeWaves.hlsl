@@ -13,6 +13,7 @@
 #ifndef WEBGPUWATER_LARGE_WAVES_INCLUDED
 #define WEBGPUWATER_LARGE_WAVES_INCLUDED
 
+#include "WaterShared.hlsl" // OCEAN_FFT_* cascade layout (shared with the computes)
 // Layer B shoaling reads the world-frame seabed depth field (Layer A) to attenuate waves near shore.
 #include "WaterShore.hlsl"
 // Surf breaker wavefronts (Layer C-analytic): shore-parallel fronts driven by the SDF + depth,
@@ -110,7 +111,7 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
         // depth drops below half its wavelength. Drives attenuation, refraction and compression
         // together, so long waves feel the bottom sooner than short chop - exactly the cue that
         // separates a coastline from a bathtub edge.
-        float shoalRaw = saturate(2.0 * max(shore.depth, 0.0) / max(wavelength, 1e-3));
+        float shoalRaw = saturate(SHORE_SHOAL_WAVELENGTH_FACTOR * max(shore.depth, 0.0) / max(wavelength, SHORE_WAVELENGTH_EPSILON));
         float feel = (1.0 - shoalRaw) * shore.influence; // how much this component feels the bottom
 
         // Refraction: bend the travel direction toward the shore as the component feels the
@@ -206,11 +207,8 @@ float4 _OceanFoamColor;        // whitecap tint (rgb) + master opacity (a); defa
 float  _OceanFoamTileSize;     // metres per foam-pattern tile on the ocean surface
 float  _OceanFoamFeather;      // black-point dissolve softness (0..1) for the foam texture
 
-#define OCEAN_FFT_MAX_CASCADES 4
-// A tiled cascade has no per-component wavelength at sample time, so shore attenuation uses one
-// REPRESENTATIVE wavelength per cascade: the dominant energy of a tile sits around a quarter of
-// its domain (Crest attenuates per wave-band at input time; this is the sampled-cascade analogue).
-#define OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION 0.25
+// OCEAN_FFT_MAX_CASCADES / OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION live in WaterShared.hlsl
+// (included above), shared with OceanFft.compute and WaterFoamParticles.compute.
 
 // Depth attenuation for one cascade near shore (P0 fix B1: the FFT path never shoaled at all -
 // on the one body type a coastline is for, depth changed nothing).

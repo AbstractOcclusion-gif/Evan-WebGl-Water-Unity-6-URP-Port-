@@ -28,16 +28,23 @@ namespace AbstractOcclusion.WebGpuWater
         [Header("Touch")]
         [Tooltip("Degrees of rotation per pixel of finger movement while dragging on the right half.")]
         [SerializeField] internal float touchLookSensitivity = 0.12f;
-        [Tooltip("Finger travel (px) beyond which a drag counts as camera control. Below this it stays a tap, so the water can ripple under it.")]
-        [SerializeField] internal float touchTapTravelPixels = 16f;
         [Tooltip("Left-stick finger offset (px) that maps to full move speed.")]
         [SerializeField] internal float touchMoveRangePixels = 140f;
+
+        // Finger travel (px) beyond which a drag counts as camera control; below it the finger is
+        // still a tap and the water ripples under it. Shared CONST with WaterInputRouter (the tap
+        // side) rather than a serialized field: the handshake only works if both sides split on the
+        // same value, so it must not be scene-tweakable on one side only.
+        const float TouchTapTravelPixels = WaterInputRouter.TapMaxTravelPixels;
         [Tooltip("Vertical metres per pixel of two-finger pinch spread (spread fingers = ascend).")]
         [SerializeField] internal float pinchVerticalSpeed = 0.01f;
 
         const float MinPitch = -89.99f;
         const float MaxPitch = 89.99f;
         const float NoActivePinch = -1f; // sentinel: no pinch gesture in progress
+        // Legacy Input Manager axis names (fallback path only).
+        const string MouseXAxis = "Mouse X";
+        const string MouseYAxis = "Mouse Y";
 
         float _yaw;
         float _pitch;
@@ -141,7 +148,7 @@ namespace AbstractOcclusion.WebGpuWater
 #if ENABLE_INPUT_SYSTEM
             return Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
 #else
-            return new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y"));
+            return new Vector2(Input.GetAxisRaw(MouseXAxis), Input.GetAxisRaw(MouseYAxis));
 #endif
         }
 
@@ -163,10 +170,10 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector2 offset = touch.position.ReadValue() - start;
             float travel = offset.magnitude;
-            if (travel <= touchTapTravelPixels) return Vector3.zero; // dead zone / still a tap
+            if (travel <= TouchTapTravelPixels) return Vector3.zero; // dead zone / still a tap
 
-            float range = Mathf.Max(1f, touchMoveRangePixels - touchTapTravelPixels);
-            float amount = Mathf.Clamp01((travel - touchTapTravelPixels) / range);
+            float range = Mathf.Max(1f, touchMoveRangePixels - TouchTapTravelPixels);
+            float amount = Mathf.Clamp01((travel - TouchTapTravelPixels) / range);
             Vector2 dir = offset / travel;
             return new Vector3(dir.x * amount, 0f, dir.y * amount);
 #else
@@ -186,7 +193,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (start.x < Screen.width * 0.5f) return Vector2.zero; // left half is Move, not Look
 
             Vector2 pos = touch.position.ReadValue();
-            if ((pos - start).magnitude <= touchTapTravelPixels) return Vector2.zero; // still a tap
+            if ((pos - start).magnitude <= TouchTapTravelPixels) return Vector2.zero; // still a tap
 
             return touch.delta.ReadValue() * touchLookSensitivity;
 #else

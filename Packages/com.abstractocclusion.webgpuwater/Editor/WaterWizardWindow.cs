@@ -18,7 +18,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal sealed class WaterWizardWindow : EditorWindow
     {
-        const string MenuPath = "Window/AbstractOcclusion/WebGpuWater/Water Wizard";
+        const string MenuPath = MenuRoot + "Water Wizard";
         const string WindowTitle = "Water Wizard";
 
         const string RootObjectName = "WebGL Water";
@@ -26,6 +26,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         static readonly Vector3 DefaultExtent = new Vector3(2f, 1f, 2f);
         const float MinExtentComponent = 0.05f;
+        const float WindowMinWidth = 340f;
+        const float WindowMinHeight = 520f;
 
         // WaterVolume.foamBorderWidth default; applied when edge foam is enabled, zeroed otherwise.
         const float EdgeFoamBorderWidth = 0.08f;
@@ -37,11 +39,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Serialized paths into WaterVolume's private reflection + ocean blocks. Set via SerializedObject
         // so the wizard doesn't force a wider public runtime API just to flip these flags.
-        const string SsrPropertyPath = "reflectionSettings.useScreenSpaceReflection";
-        const string PlanarPropertyPath = "reflectionSettings.usePlanarReflection";
-        const string OpenWaterPropertyPath = "ocean.openWater";
-        const string UnboundedOceanPropertyPath = "ocean.unboundedOcean";
-        const string BodyTypePropertyPath = "bodyType";
+        // Aliases of the shared WaterVolumePropertyPaths registry (also used by WaterVolumeEditor).
+        const string SsrPropertyPath = WaterVolumePropertyPaths.ScreenSpaceReflection;
+        const string PlanarPropertyPath = WaterVolumePropertyPaths.PlanarReflection;
+        const string OpenWaterPropertyPath = WaterVolumePropertyPaths.OpenWater;
+        const string UnboundedOceanPropertyPath = WaterVolumePropertyPaths.UnboundedOcean;
+        const string BodyTypePropertyPath = WaterVolumePropertyPaths.BodyType;
 
         // The base water type. Fog is a property of the type: only SurfaceWithFog turns it on, so the pool
         // and plain surface start fog-free. OpenWaterOcean drives the experimental large-body/clipmap path.
@@ -116,7 +119,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static void Open()
         {
             var window = GetWindow<WaterWizardWindow>(utility: false, title: WindowTitle, focus: true);
-            window.minSize = new Vector2(340f, 520f);
+            window.minSize = new Vector2(WindowMinWidth, WindowMinHeight);
             window.Show();
         }
 
@@ -258,7 +261,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             if (!ExtentIsValid())
             {
-                Debug.LogError("[WebGL Water] Water not created: every size component must be positive.");
+                Debug.LogError($"[WebGL Water] Water not created: every size component must be at least {MinExtentComponent}.");
                 return;
             }
 

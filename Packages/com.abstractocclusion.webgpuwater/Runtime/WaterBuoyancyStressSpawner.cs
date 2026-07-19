@@ -44,9 +44,11 @@ namespace AbstractOcclusion.WebGpuWater
 
         int SpawnGrid()
         {
-            float halfX = (gridX - 1) * spacing * 0.5f;
-            float halfZ = (gridZ - 1) * spacing * 0.5f;
+            // Halves derive from the CLAMPED step (not the raw spacing), so a sub-minimum spacing
+            // still yields a centred grid instead of one shifted off the spawner.
             float step = Mathf.Max(MinSpacing, spacing);
+            float halfX = (gridX - 1) * step * 0.5f;
+            float halfZ = (gridZ - 1) * step * 0.5f;
 
             int index = 0;
             for (int ix = 0; ix < gridX; ix++)

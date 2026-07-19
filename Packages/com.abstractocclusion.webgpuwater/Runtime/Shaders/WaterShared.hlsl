@@ -23,7 +23,35 @@
 #define POOL_BOX_MIN float3(-1.0, -POOL_HEIGHT, -1.0)
 #define POOL_BOX_MAX float3(1.0, POOL_BOX_TOP, 1.0)
 
+// The WATER-ONLY half of the pool box (top at the rest waterline y = 0): the volume the god rays
+// and the bounded underwater fog march through. Shared so the two passes always march the same box.
+#define POOL_WATER_BOX_MIN float3(-1.0, -POOL_HEIGHT, -1.0)
+#define POOL_WATER_BOX_MAX float3(1.0, 0.0, 1.0)
+
+// Wall-face pick threshold on |pool xz|: a point this close to the +/-1 footprint edge is ON that
+// wall. Shared by WallSurface (shading) and the pool-trace gradient face pick - if they drifted,
+// the gradient path would pick a different face than the shading and the tile mip would break
+// silently at the corners.
+#define POOL_WALL_FACE_EPS 0.999
+
 #define CAUSTIC_PROJECTION_SCALE 0.75 // fits the projected caustic map into the pool footprint
+
+// Shared by BOTH caustic generators (Caustics.shader pool path, LargeBodyCaustics.shader ocean
+// path) so the two can never drift apart:
+// - FOCUS_SCALE: brightness of the focused caustic (area-ratio gain).
+// - NORMAL_SOFTEN: softens the sampled surface normal before focusing - full-strength slopes
+//   over-focus the caustics into hard sparkles (inherited from the original WebGL demo).
+#define CAUSTIC_FOCUS_SCALE   0.2
+#define CAUSTIC_NORMAL_SOFTEN 0.5
+
+// FFT ocean cascade layout, shared by every consumer (WaterLargeWaves.hlsl sampling,
+// OceanFft.compute generation, WaterFoamParticles.compute crest-foam spawning) - three files used
+// to carry their own copies. MAX_CASCADES also mirrors WaterOceanFft.cs MaxCascades (C#, not
+// validator-parsed - keep lockstep by hand). A tiled cascade has no per-component wavelength at
+// sample time, so shore attenuation uses one REPRESENTATIVE wavelength per cascade: the dominant
+// energy of a tile sits around this fraction of its domain.
+#define OCEAN_FFT_MAX_CASCADES 4
+#define OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION 0.25
 
 // Rim-shadow sigmoid shaping (softens the pool-wall shadow edge in the caustic/wall passes).
 #define RIM_SHADOW_SHARPNESS 200.0

@@ -35,8 +35,8 @@ float3 GetWallColorShadowedGrad(float3 p, float causticShadow, float3 pDdx, floa
     // The wall UV is a per-face linear pick of two position components (WallSurface):
     // mirror the same face selection on the hoisted position derivatives.
     float2 uvDdx, uvDdy;
-    if (abs(p.x) > 0.999)      { uvDdx = pDdx.yz * 0.5; uvDdy = pDdy.yz * 0.5; }
-    else if (abs(p.z) > 0.999) { uvDdx = pDdx.yx * 0.5; uvDdy = pDdy.yx * 0.5; }
+    if (abs(p.x) > POOL_WALL_FACE_EPS)      { uvDdx = pDdx.yz * 0.5; uvDdy = pDdy.yz * 0.5; }
+    else if (abs(p.z) > POOL_WALL_FACE_EPS) { uvDdx = pDdx.yx * 0.5; uvDdy = pDdy.yx * 0.5; }
     else                       { uvDdx = pDdx.xz * 0.5; uvDdy = pDdy.xz * 0.5; }
     float causticTerm;
     float scale = GetWallShadeSplit(p, normal, pDdx, pDdy, causticTerm);

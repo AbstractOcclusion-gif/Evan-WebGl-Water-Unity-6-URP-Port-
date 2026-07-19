@@ -126,7 +126,7 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                 float3 roPool = WorldToPool(_WorldSpaceCameraPos);
                 float3 rdPool = normalize(IN.poolPos - roPool);
 
-                float2 t = IntersectCube(roPool, rdPool, float3(-1.0, -1.0, -1.0), float3(1.0, 0.0, 1.0));
+                float2 t = IntersectCube(roPool, rdPool, POOL_WATER_BOX_MIN, POOL_WATER_BOX_MAX);
                 float tEnter = max(t.x, 0.0);
                 float tExit  = t.y;
                 if (tExit <= tEnter) return half4(0, 0, 0, 0);

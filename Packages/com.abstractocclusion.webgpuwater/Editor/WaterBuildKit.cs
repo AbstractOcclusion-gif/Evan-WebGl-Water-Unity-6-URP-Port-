@@ -62,6 +62,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string GodRaysObjectName = "God Rays";
         internal const string MainCameraTag = "MainCamera";
 
+        // Menu root for every editor entry point (Asset Store guideline 2.5.1.a forbids custom
+        // top-level menus, so everything lives under Window/).
+        internal const string MenuRoot = "Window/AbstractOcclusion/WebGpuWater/";
+
         // Generated shared-asset paths (create-once; see LoadOrCreateMaterial et al).
         internal const string GridMeshPath = Gen + "/WaterGrid.asset";
         internal const string PoolMeshPath = Gen + "/Pool.asset";
@@ -70,12 +74,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string TilesTexturePath = Gen + "/Tiles.png";
         internal const string WaterQualityAssetPath = Gen + "/WaterQuality.asset";
 
-        // Shader names (keep in sync with the Shader "..." declarations in Shaders/).
-        internal const string ShaderWaterSurface = "AbstractOcclusion/WebGpuWater/WaterSurface";
-        internal const string ShaderAnalyticPool = "AbstractOcclusion/WebGpuWater/AnalyticPool";
-        internal const string ShaderCaustics = "AbstractOcclusion/WebGpuWater/Caustics";
-        internal const string ShaderObstacle = "AbstractOcclusion/WebGpuWater/ObstacleDepth";
-        internal const string ShaderGodRays = "AbstractOcclusion/WebGpuWater/GodRays";
+        // Shader names: aliases of the runtime WaterShaderNames registry (one source; the
+        // registry is internal and reachable via InternalsVisibleTo).
+        internal const string ShaderWaterSurface = WaterShaderNames.WaterSurface;
+        internal const string ShaderAnalyticPool = WaterShaderNames.AnalyticPool;
+        internal const string ShaderCaustics = WaterShaderNames.Caustics;
+        internal const string ShaderObstacle = WaterShaderNames.ObstacleDepth;
+        internal const string ShaderGodRays = WaterShaderNames.GodRays;
+        internal const string ShaderLargeBodyCaustics = WaterShaderNames.LargeBodyCaustics;
+        internal const string ShaderCausticOccluder = WaterShaderNames.CausticOccluder;
 
         // Material property names (keep in sync with the shader Properties blocks).
         internal const string PropUnderwater = "_Underwater";
@@ -89,13 +96,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropParticleTex = "_ParticleTex";
 
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
-        internal const string ShaderFoamParticles = "AbstractOcclusion/WebGpuWater/FoamParticles";
-        internal const string ShaderFoamDensityComposite = "AbstractOcclusion/WebGpuWater/FoamDensityComposite";
+        internal const string ShaderFoamParticles = WaterShaderNames.FoamParticles;
+        internal const string ShaderFoamDensityComposite = WaterShaderNames.FoamDensityComposite;
         internal const string FoamParticleComputePath = PackageShadersRoot + "/WaterFoamParticles.compute";
         internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
 
         // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
-        internal const string ShaderSplashParticles = "AbstractOcclusion/WebGpuWater/SplashParticles";
+        internal const string ShaderSplashParticles = WaterShaderNames.SplashParticles;
         internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
         internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
         internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
@@ -212,10 +219,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.causticsShader = ctx.Shaders.Caustics;
             // Optional (oceans only): near-field caustics in the sim-window frame. Non-fatal if absent,
             // so bounded/pool builds don't require it - Shader.Find just leaves the field null.
-            volume.largeBodyCausticsShader = Shader.Find("AbstractOcclusion/WebGpuWater/LargeBodyCaustics");
+            volume.largeBodyCausticsShader = Shader.Find(ShaderLargeBodyCaustics);
             // Optional: refracted-light object shadow into the caustic RT. Non-fatal if absent (the
             // occluder pass no-ops and object shadows stay on the un-refracted shadow map).
-            volume.occluderShader = Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
+            volume.occluderShader = Shader.Find(ShaderCausticOccluder);
             // Optional (oceans only): the FFT-cascade wave compute. The runtime module only arms on an
             // ocean clipmap body AND with this assigned, so wiring it on every build is inert for
             // pools/lakes - but a wizard-built ocean now gets its FFT waves without hand-wiring the

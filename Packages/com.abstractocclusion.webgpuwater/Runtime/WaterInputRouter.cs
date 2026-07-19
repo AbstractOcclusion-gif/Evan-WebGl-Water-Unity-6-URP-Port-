@@ -26,10 +26,12 @@ namespace AbstractOcclusion.WebGpuWater
         const float DragSplashStrengthScale = 0.6f;   // drag splashes stay softer than impact splashes
         const float DragSplashRadiusScale = 4f;       // splash radius per ripple radius
 
-        // Touch only: a finger that lifts within this travel is a tap -> one ripple. Anything longer is a
-        // drag, which the FlyCamera claims for move/look (it uses the same threshold), so the two never
-        // both fire on one finger.
-        const float TapMaxTravelPixels = 16f;
+        // Touch only: a finger that lifts within this travel is a tap -> one ripple. Anything longer is
+        // a drag, which the FlyCamera claims for move/look. INTERNAL and referenced by FlyCamera so the
+        // tap-vs-drag handshake is ONE value by construction - it used to be two independent 16s (a
+        // const here, a serialized field there) held together only by comments, and an inspector tweak
+        // could silently make one finger both ripple AND move the camera.
+        internal const float TapMaxTravelPixels = 16f;
         const float TapSplashStrength = 0.5f;
 
         readonly WaterVolume _owner; // the primary body: camera/orbit/splash wiring + ripple look

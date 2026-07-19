@@ -23,9 +23,9 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
             #pragma fragment frag
             #pragma target 4.0
             #include "UnityCG.cginc"
-            #include "WaterCommon.hlsl" // brings WaterShared: CAUSTIC_PROJECTION_SCALE, RIM_SHADOW_*, POOL_*
-
-            #define CAUSTIC_FOCUS_SCALE 0.2 // brightness of the focused caustic
+            // Brings WaterShared: CAUSTIC_PROJECTION_SCALE, CAUSTIC_FOCUS_SCALE,
+            // CAUSTIC_NORMAL_SOFTEN (shared with LargeBodyCaustics), RIM_SHADOW_*, POOL_*.
+            #include "WaterCommon.hlsl"
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f
@@ -52,9 +52,9 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // plain sample makes the projected heights/normals - and therefore the whole
                 // caustic focusing - blocky in builds whenever mesh res != sim res.
                 float4 info = SampleWaterBilinear(v.vertex.xy * 0.5 + 0.5);
-                // Softens the normal (inherited from the original WebGL demo): full-strength
-                // slopes over-focus the caustics into hard sparkles.
-                info.ba *= 0.5;
+                // Softens the normal (CAUSTIC_NORMAL_SOFTEN, WaterShared - shared with the
+                // large-body caustic): full-strength slopes over-focus into hard sparkles.
+                info.ba *= CAUSTIC_NORMAL_SOFTEN;
                 float3 normal = float3(info.b, sqrt(max(0.0, 1.0 - dot(info.ba, info.ba))), info.a);
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);

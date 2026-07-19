@@ -130,9 +130,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void ApplyBodyTypeDefaults(WaterVolume.WaterBodyType type)
         {
             bool openWater = type != WaterVolume.WaterBodyType.Pond;
-            Prop("ocean.openWater").boolValue = openWater;
-            Prop("ocean.unboundedOcean").boolValue = type == WaterVolume.WaterBodyType.Ocean;
-            Prop("enableLargeBodyWindow").boolValue = openWater;
+            Prop(WaterVolumePropertyPaths.OpenWater).boolValue = openWater;
+            Prop(WaterVolumePropertyPaths.UnboundedOcean).boolValue = type == WaterVolume.WaterBodyType.Ocean;
+            Prop(WaterVolumePropertyPaths.EnableLargeBodyWindow).boolValue = openWater;
         }
 
         string BodySubtitle()

@@ -76,7 +76,7 @@ namespace AbstractOcclusion.WebGpuWater
         // WaterWaveConstantsValidator). Only height-affecting constants are mirrored; the
         // whitewash/breaker foam shaping is render-only and has no CPU counterpart.
         const float SurfMinDepth = 0.05f;
-        const float SurfBeatWrapFronts = 1280f;      // SURF_BEAT_WRAP_FRONTS
+        internal const float SurfBeatWrapFronts = 1280f;      // SURF_BEAT_WRAP_FRONTS
         const float SurfCrestSeedDriftA = 0.34852044f; // SURF_CREST_SEED_DRIFT_A (2pi*71/1280)
         const float SurfCrestSeedDriftB = 0.45160394f; // SURF_CREST_SEED_DRIFT_B (2pi*92/1280)
         const float SurfFaceFraction = 0.10f;
@@ -99,6 +99,65 @@ namespace AbstractOcclusion.WebGpuWater
         const float SurfGammaMax = 1.1f;
         const float SurfBoreStableGamma = 0.40f;
         const float SurfPlungeFaceSharpen = 0.6f;
+        // Knob floors (SURF_MIN_PERIOD / SURF_MIN_WAVELENGTH): both sides clamp the artist-typed
+        // period/wavelength through the SAME named floor, so the mirror can never disagree on a
+        // degenerate knob.
+        internal const float SurfMinPeriod = 0.5f;
+        internal const float SurfMinWavelength = 1.0f;
+        const float SurfMinGreens = 1.0f; // SURF_MIN_GREENS
+        // Set-amplitude shaping (SURF_SETAMP_*). The jitter MAX doubles as a cross-shader
+        // contract: WaterUnderwaterFog's UNDERWATER_SURF_SETAMP_MAX copy re-points at the HLSL
+        // name, so keep this pair's naming stable.
+        const float SurfSetAmpHashPhase = 2.4f;
+        const float SurfSetAmpFloor = 0.35f;
+        const float SurfSetAmpJitterMin = 0.9f;
+        const float SurfSetAmpJitterMax = 1.1f;
+        // Compression reach in front spacings (SURF_WARP_REACH_SPACINGS) - also the factor inside
+        // the published _ShoreWarpReach, so WarpExtra below rebuilds the same reach the shader
+        // reads back from the global.
+        internal const float SurfWarpReachSpacings = 2.0f;
+        // Crest-segmentation noise shaping (SURF_CREST_*).
+        const float SurfCrestMinLength = 4.0f;
+        const float SurfCrestSeedFreshScale = 37.0f;
+        const float SurfCrestFreshOctaveRatio = 1.3f;
+        const float SurfCrestDirAZ = 0.31f;
+        const float SurfCrestDirBX = -0.42f;
+        const float SurfCrestFreqRatio = 1.7f;
+        const float SurfCrestOctaveBWeight = 0.5f;
+        const float SurfCrestNoiseNorm = 1.5f;
+        // Shore-exposure gate window (SURF_EXPOSURE_FACING_*).
+        const float SurfExposureFacingLo = -0.25f;
+        const float SurfExposureFacingHi = 0.5f;
+        // Iribarren deep-length floor (SURF_XI_LENGTH_EPSILON).
+        const float SurfXiLengthEpsilon = 1e-3f;
+        // Front lifecycle shaping (SURF_GREEN_EXPONENT .. SURF_BORE_WIDTH_FACTOR). The bore width
+        // factor is the constant whose unnamed twin once drifted to 2.0f here while the shader
+        // used 1.4 - exactly the drift class these pairs now turn into a console error.
+        const float SurfGreenExponent = 0.25f;
+        const float SurfCapEpsilon = 1e-3f;
+        const float SurfCrestingStart = 0.75f;
+        const float SurfCrestingEnd = 1.05f;
+        const float SurfBrokenStart = 1.05f;
+        const float SurfBrokenEnd = 1.5f;
+        const float SurfLeanReachFraction = 0.25f;
+        const float SurfBoreWidthFactor = 1.4f;
+        // Field-mask shaping (SURF_MIN_INFLUENCE / SURF_MIN_BAND_DEPTH / SURF_WET_FADE_*).
+        const float SurfMinInfluence = 0.001f;
+        const float SurfMinBandDepth = 0.25f;
+        const float SurfWetFadeLo = -0.05f;
+        const float SurfWetFadeHi = 0.1f;
+
+        // Shore-transform constants - MUST match the SHORE_* defines in WaterShore.hlsl (guarded
+        // by WaterWaveConstantsValidator): ShoalWeight/GreenGain/WarpExtra below run the same
+        // math the shader's ShoalWeight/ShoreGreenGain/ShoreWarpExtra run.
+        const float ShoreShoalWavelengthFactor = 2.0f;
+        const float ShoreWavelengthEpsilon = 1e-3f;
+        const float ShoreBandEpsilon = 1e-3f;
+        const float ShoreBandInnerFraction = 0.35f;
+        const float ShoreGreenMinDepth = 0.05f;
+        const float ShoreGreenExponent = 0.25f;
+        const float ShoreWarpReachMin = 1.0f;
+        const float ShoreMinGreens = 1.0f;
 
         // Matches LBW_INVERSION_ITERATIONS in WaterLargeWaves.hlsl (Crest's SampleInvertedDisplacement
         // uses 4). Inverting the horizontal Gerstner displacement is how a fixed world xz maps back to
@@ -146,20 +205,23 @@ namespace AbstractOcclusion.WebGpuWater
         static float ShoalWeight(in ShoreWaveContext ctx, float depth, float wavelength)
         {
             float clamped = Mathf.Max(depth, 0f);
-            float raw = Mathf.Clamp01(2f * clamped / Mathf.Max(wavelength, 1e-3f));
-            float band = Mathf.Max(ctx.ShoalDepth, 1e-3f);
-            float deep = SmoothStep(0.35f * band, band, clamped);
+            float raw = Mathf.Clamp01(ShoreShoalWavelengthFactor * clamped
+                                      / Mathf.Max(wavelength, ShoreWavelengthEpsilon));
+            float band = Mathf.Max(ctx.ShoalDepth, ShoreBandEpsilon);
+            float deep = SmoothStep(ShoreBandInnerFraction * band, band, clamped);
             return Mathf.Lerp(raw, 1f, deep);
         }
 
         // Mirrors ShoreGreenGain() in WaterShore.hlsl.
         static float GreenGain(in ShoreWaveContext ctx, in ShoreSampleCpu shore)
         {
-            float band = Mathf.Max(ctx.ShoalDepth, 1e-3f);
+            float band = Mathf.Max(ctx.ShoalDepth, ShoreBandEpsilon);
             if (shore.Influence <= 0f || shore.Depth >= band) return 1f;
-            float d = Mathf.Max(shore.Depth, 0.05f);
-            float green = Mathf.Min(Mathf.Pow(band / d, 0.25f), Mathf.Max(ctx.Greens, 1f));
-            green = Mathf.Lerp(green, 1f, Mathf.Clamp01(1f - shore.Depth / (0.35f * band)));
+            float d = Mathf.Max(shore.Depth, ShoreGreenMinDepth);
+            float green = Mathf.Min(Mathf.Pow(band / d, ShoreGreenExponent),
+                                    Mathf.Max(ctx.Greens, ShoreMinGreens));
+            green = Mathf.Lerp(green, 1f,
+                               Mathf.Clamp01(1f - shore.Depth / (ShoreBandInnerFraction * band)));
             return Mathf.Lerp(1f, green, shore.Influence);
         }
 
@@ -169,7 +231,11 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (shore.Influence <= 0f || ctx.Compression <= 0f) return 0f;
             float s = Mathf.Max(shore.SdfDist, 0f);
-            float reach = Mathf.Max(2f * Mathf.Max(ctx.SurfWavelength, 1f), 1f);
+            // Rebuilds the published _ShoreWarpReach (reach spacings x effective spacing), then
+            // applies the shader's SHORE_WARP_REACH_MIN floor on the result.
+            float reach = Mathf.Max(SurfWarpReachSpacings
+                                    * Mathf.Max(ctx.SurfWavelength, SurfMinWavelength),
+                                    ShoreWarpReachMin);
             return ctx.Compression * s * Mathf.Exp(-s / reach) * shore.Influence;
         }
 
@@ -185,14 +251,15 @@ namespace AbstractOcclusion.WebGpuWater
         {
             float wrapped = SurfWrapIndex(frontIndex);
             float h = Hash(wrapped);
-            float setWave = 0.5f + 0.5f * Mathf.Sin((wrapped / SurfSetWaves) * TwoPi + h * 2.4f);
-            return Mathf.Lerp(1f, Mathf.Lerp(0.35f, 1f, setWave), ctx.SurfSetStrength)
-                 * Mathf.Lerp(0.9f, 1.1f, h);
+            float setWave = 0.5f + 0.5f * Mathf.Sin((wrapped / SurfSetWaves) * TwoPi
+                                                    + h * SurfSetAmpHashPhase);
+            return Mathf.Lerp(1f, Mathf.Lerp(SurfSetAmpFloor, 1f, setWave), ctx.SurfSetStrength)
+                 * Mathf.Lerp(SurfSetAmpJitterMin, SurfSetAmpJitterMax, h);
         }
 
         static float SurfWarpDistance(in ShoreWaveContext ctx, float s)
         {
-            float reach = 2f * Mathf.Max(ctx.SurfWavelength, 1f);
+            float reach = SurfWarpReachSpacings * Mathf.Max(ctx.SurfWavelength, SurfMinWavelength);
             return s * (1f + ctx.Compression * Mathf.Exp(-Mathf.Max(s, 0f) / reach));
         }
 
@@ -200,22 +267,25 @@ namespace AbstractOcclusion.WebGpuWater
         static float SurfCrestFactor(in ShoreWaveContext ctx, float x, float z, float frontIndex)
         {
             if (ctx.SurfCrestVariation <= 0f) return 1f;
-            float invLen = 1f / Mathf.Max(ctx.SurfCrestLength, 4f);
+            float invLen = 1f / Mathf.Max(ctx.SurfCrestLength, SurfCrestMinLength);
             float wrapped = SurfWrapIndex(frontIndex);
             float persistence = Mathf.Clamp01(ctx.SurfCrestPersistence);
-            float seedFresh = Hash(wrapped) * 37f;
+            float seedFresh = Hash(wrapped) * SurfCrestSeedFreshScale;
             float seedA = Mathf.Lerp(seedFresh, wrapped * SurfCrestSeedDriftA, persistence);
-            float seedB = Mathf.Lerp(seedFresh * 1.3f, wrapped * SurfCrestSeedDriftB, persistence);
-            float n = Mathf.Sin((x * 1f + z * 0.31f) * (TwoPi * invLen) + seedA)
-                    + 0.5f * Mathf.Sin((x * -0.42f + z * 1f) * (TwoPi * invLen * 1.7f) + seedB);
-            float n01 = Mathf.Clamp01(n / 1.5f * 0.5f + 0.5f);
+            float seedB = Mathf.Lerp(seedFresh * SurfCrestFreshOctaveRatio,
+                                     wrapped * SurfCrestSeedDriftB, persistence);
+            float n = Mathf.Sin((x * 1f + z * SurfCrestDirAZ) * (TwoPi * invLen) + seedA)
+                    + SurfCrestOctaveBWeight
+                    * Mathf.Sin((x * SurfCrestDirBX + z * 1f) * (TwoPi * invLen * SurfCrestFreqRatio)
+                                + seedB);
+            float n01 = Mathf.Clamp01(n / SurfCrestNoiseNorm * 0.5f + 0.5f);
             return 1f - ctx.SurfCrestVariation * (1f - n01);
         }
 
         // Mirrors SurfExposure() in WaterSurfWaves.hlsl (surf gated by shore facing the swell).
         static float SurfExposure(in ShoreWaveContext ctx, float dirX, float dirZ)
         {
-            float facing = SmoothStep(-0.25f, 0.5f,
+            float facing = SmoothStep(SurfExposureFacingLo, SurfExposureFacingHi,
                                       ctx.SurfWindDirX * dirX + ctx.SurfWindDirZ * dirZ);
             return Mathf.Lerp(1f, facing, Mathf.Clamp01(ctx.SurfDirectionality));
         }
@@ -223,10 +293,10 @@ namespace AbstractOcclusion.WebGpuWater
         // Mirrors SurfIribarren() in WaterSurfWaves.hlsl (surf-similarity number, Battjes 1974).
         static float SurfIribarren(in ShoreWaveContext ctx, float tanBeta, float deepHeight)
         {
-            float period = Mathf.Max(ctx.SurfPeriod, 0.5f); // matches the HLSL _SurfPeriod floor
+            float period = Mathf.Max(ctx.SurfPeriod, SurfMinPeriod);
             float deepLength = SurfDeepwaterLengthCoef * period * period;
             return tanBeta / Mathf.Sqrt(Mathf.Max(deepHeight, SurfXiHeightEpsilon)
-                                        / Mathf.Max(deepLength, 1e-3f));
+                                        / Mathf.Max(deepLength, SurfXiLengthEpsilon));
         }
 
         // Mirrors SurfBreakerWeights().z in WaterSurfWaves.hlsl (kills the bore hand-over).
@@ -246,8 +316,8 @@ namespace AbstractOcclusion.WebGpuWater
         static float SurfFrontHeight(in ShoreWaveContext ctx, float x, float z,
                                      float sWarp, float depth, float tanBeta, float time)
         {
-            float wavelength = Mathf.Max(ctx.SurfWavelength, 1f);
-            float period = Mathf.Max(ctx.SurfPeriod, 0.5f);
+            float wavelength = Mathf.Max(ctx.SurfWavelength, SurfMinWavelength);
+            float period = Mathf.Max(ctx.SurfPeriod, SurfMinPeriod);
             float phase = sWarp / wavelength + time / period;
             float frontIndex = Mathf.Floor(phase);
             float f = phase - frontIndex;
@@ -268,18 +338,19 @@ namespace AbstractOcclusion.WebGpuWater
             float surge = SurfSurgeWeight(xi);
             float plunge = SurfPlungeWeight(xi);
 
-            float green = Mathf.Min(Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, 0.25f),
-                                    Mathf.Max(ctx.Greens, 1f));
+            float green = Mathf.Min(
+                Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, SurfGreenExponent),
+                Mathf.Max(ctx.Greens, SurfMinGreens));
             float height0 = ctx.SurfAmplitude * setAmp * green;
             float capH = SurfGamma(tanBeta) * d;
-            float overCap = height0 / Mathf.Max(capH, 1e-3f);
-            float cresting = SmoothStep(0.75f, 1.05f, overCap);
-            float broken = SmoothStep(1.05f, 1.5f, overCap) * (1f - surge);
+            float overCap = height0 / Mathf.Max(capH, SurfCapEpsilon);
+            float cresting = SmoothStep(SurfCrestingStart, SurfCrestingEnd, overCap);
+            float broken = SmoothStep(SurfBrokenStart, SurfBrokenEnd, overCap) * (1f - surge);
             float amp = Mathf.Min(height0, capH);
 
             float dAcross = (f - 0.5f) * wavelength;
             float lean = ctx.SurfLean * amp * cresting;
-            dAcross += lean * Mathf.Exp(-Mathf.Abs(dAcross) / (0.25f * wavelength));
+            dAcross += lean * Mathf.Exp(-Mathf.Abs(dAcross) / (SurfLeanReachFraction * wavelength));
             float faceLen = SurfFaceFraction * wavelength;
             float backLen = SurfBackFraction * wavelength;
             // Plunging face steepening - keep lockstep with SurfComputeFrontTerms in the HLSL.
@@ -287,10 +358,12 @@ namespace AbstractOcclusion.WebGpuWater
             float profLen = dAcross < 0f ? faceLen * faceSharpen : backLen;
             float sech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / profLen, SurfSechArgMax));
             float profile = sech * sech;
-            // Parity fix: the bore sech width is backLen * 1.4 in the shader; this mirror had
-            // drifted to * 2 (inline literals dodge the constants validator - keep them lockstep
-            // by hand). Bore amplitude relaxes onto the Dally-Dean-Dalrymple stable height.
-            float boreSech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / (backLen * 1.4f), SurfSechArgMax));
+            // Bore sech width = backLen * SurfBoreWidthFactor. This factor's unnamed twin once
+            // drifted (shader 1.4, mirror 2.0); it is now a named, validator-guarded pair, so any
+            // future drift is a console error instead of a silent buoyancy desync. Bore amplitude
+            // relaxes onto the Dally-Dean-Dalrymple stable height.
+            float boreSech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / (backLen * SurfBoreWidthFactor),
+                                                 SurfSechArgMax));
             float boreAmp = Mathf.Lerp(amp, SurfBoreStableGamma * d, broken);
             return Mathf.Lerp(amp * profile, boreAmp * boreSech, broken);
         }
@@ -310,14 +383,14 @@ namespace AbstractOcclusion.WebGpuWater
             slopeX = 0f;
             slopeZ = 0f;
             mask = 0f;
-            if (!ctx.SurfActive || shore.Influence <= 0.001f) return;
+            if (!ctx.SurfActive || shore.Influence <= SurfMinInfluence) return;
 
-            float band = Mathf.Max(ctx.SurfBandDepth, 0.25f);
+            float band = Mathf.Max(ctx.SurfBandDepth, SurfMinBandDepth);
             float develop = 1f - SmoothStep(SurfNearFade * band, band, Mathf.Max(shore.Depth, 0f));
-            float wet = SmoothStep(-0.05f, 0.1f, shore.Depth); // keep lockstep with the HLSL wet fade
+            float wet = SmoothStep(SurfWetFadeLo, SurfWetFadeHi, shore.Depth); // SURF_WET_FADE_*
             float exposure = SurfExposure(ctx, shore.DirX, shore.DirZ);
             mask = develop * wet * shore.Influence * exposure;
-            if (mask <= 0.001f) { mask = 0f; return; }
+            if (mask <= SurfMinInfluence) { mask = 0f; return; }
 
             float s = Mathf.Max(shore.SdfDist, 0f);
             float h0 = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
@@ -390,9 +463,11 @@ namespace AbstractOcclusion.WebGpuWater
                 float phaseOffset = Hash(fn + phaseSeed + 16f) * TwoPi;
 
                 // Shore transform (mirrors the shader): shoaling response drives refraction toward
-                // shore and the phase-compression share of this component.
-                float shoalRaw = Mathf.Clamp01(2f * Mathf.Max(shore.Depth, 0f)
-                                               / Mathf.Max(wavelength, 1e-3f));
+                // shore and the phase-compression share of this component. Same ramp constants as
+                // ShoalWeight (the WaterLargeWaves.hlsl twin still carries them inline).
+                float shoalRaw = Mathf.Clamp01(ShoreShoalWavelengthFactor
+                                               * Mathf.Max(shore.Depth, 0f)
+                                               / Mathf.Max(wavelength, ShoreWavelengthEpsilon));
                 float feel = (1f - shoalRaw) * shore.Influence;
                 if (feel > 0f && ctx.Refraction > 0f)
                 {
