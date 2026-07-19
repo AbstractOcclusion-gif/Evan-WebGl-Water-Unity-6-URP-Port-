@@ -44,6 +44,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterVolume.hlsl" // _SimCenter/_SimExtent (window frame) + LARGE_CAUSTIC_REFERENCE_DEPTH
             #include "WaterShared.hlsl" // IOR_*, SafeRefractedLightY (caustic light projection)
+            #include "WaterExclusion.hlsl" // dry-interior volumes: marched samples inside are air
             #include "WaterFog.hlsl"    // shared water fog + downwelling helpers/globals (view-fog tint, depth fade)
 
             float3 _LightDir;   // global, normalized direction toward the sun
@@ -160,11 +161,18 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     float t = (s + jitter) * dt;
                     float3 p = camWorld + rayDir * t;
                     float shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(p));
+                    // Carved presence: a dry volume between this sample and the sun blocks the
+                    // direct beam (analytic box shadow, refraction-aware, matching the fog's
+                    // in-scatter shadowing).
+                    shadow *= ExclusionSunVisibility(p, _LightDir, _UnderwaterSurfaceY);
                     // downwelling: less sun reaches deeper samples (shared depth-darken knob).
                     float depthFade = DepthFadeScalar(p.y, _UnderwaterSurfaceY, _GodRayDepthFade);
                     // surface-focused caustic brightens/flickers the shaft near the camera; neutral far out.
                     float caustic = wantCaustic ? LargeBodyCausticAt(p, refractedSun, causticRefPlaneY) : 0.0;
-                    accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
+                    // Dry-interior exclusion: samples inside an exclusion volume are air - skip their
+                    // scatter; the view-fog transmittance still advances along the ray.
+                    if (!InsideExclusion(p))
+                        accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
                     viewFog *= viewFogStep;
                 }
                 // Average over the samples so shaft brightness is independent of march length (a horizon

@@ -44,5 +44,34 @@ namespace AbstractOcclusion.WebGpuWater
             mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeBoundsSize);
             return mesh;
         }
+
+        // Unit cube spanning [-0.5, 0.5] per axis: the exclusion volume's water-wall mesh, drawn
+        // with the volume's box-to-world matrix. Positions only (8 verts / 12 tris) - the wall
+        // shader shades from world position and renders Cull Off, so normals/uvs/winding senses
+        // are irrelevant. Unit bounds: DrawMesh culls with the real box size via the matrix.
+        internal static Mesh BuildUnitCube()
+        {
+            const float Half = 0.5f;
+            var verts = new Vector3[8];
+            for (int i = 0; i < 8; i++)
+                verts[i] = new Vector3((i & 1) != 0 ? Half : -Half,
+                                       (i & 2) != 0 ? Half : -Half,
+                                       (i & 4) != 0 ? Half : -Half);
+            // Two triangles per face; vertex index bits are (x, y, z).
+            int[] tris =
+            {
+                0, 2, 1,  2, 3, 1, // -z
+                4, 5, 6,  5, 7, 6, // +z
+                0, 4, 2,  4, 6, 2, // -x
+                1, 3, 5,  3, 7, 5, // +x
+                0, 1, 4,  1, 5, 4, // -y
+                2, 6, 3,  6, 7, 3, // +y
+            };
+            var mesh = new Mesh { name = "WaterExclusionWallCube" };
+            mesh.vertices = verts;
+            mesh.triangles = tris;
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one);
+            return mesh;
+        }
     }
 }

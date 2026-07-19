@@ -11,6 +11,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
+    [ExecuteAlways] // edit-mode preview: the water walls draw while authoring, like the water itself
     public class WaterExclusionVolume : MonoBehaviour
     {
         // GPU pair: EXCLUSION_MAX_VOLUMES in Runtime/Shaders/WaterExclusion.hlsl.
@@ -44,6 +45,48 @@ namespace AbstractOcclusion.WebGpuWater
                  "surface is never rendered inside this box.")]
         public Vector3 size = Vector3.one;
 
+        [Tooltip("Draw the carve boundary as WALLS OF WATER (the fog's lit in-scatter colour, " +
+                 "depth-darkened): a bare volume then shows standing water at its edges instead " +
+                 "of the unlit void. Turn OFF for volumes covered by real geometry - a boat hull " +
+                 "or a room with windows - or the wall paints over their openings.")]
+        public bool drawWaterWalls = true;
+
+        [Tooltip("Scatter density of the water walls relative to the open fog. Slightly above 1 " +
+                 "makes the carve boundary read denser than the surrounding water (the Crest-style " +
+                 "carved presence); 1 blends seamlessly.")]
+        [Range(0.5f, 2f)] public float wallScatterBoost = 1.2f;
+
+        [Tooltip("Water-wall shader. Leave empty to resolve the packaged shader by name (works in " +
+                 "the editor; a BUILD needs it assigned here or in Always Included Shaders, or the " +
+                 "walls silently skip).")]
+        [SerializeField] Shader wallShader;
+
+        // ---- carve-boundary edge look (consumed by the fog's pane shading AND the wall) ------
+
+        [Tooltip("Colour the carve-boundary edges shade TOWARD. Black is pure occlusion (the " +
+                 "classic look); a deep water tint keeps the edges coloured instead of grey.")]
+        [ColorUsage(false)] public Color edgeColor = Color.black;
+
+        [Tooltip("Strength of the edge/corner occlusion on the carve boundary: 0 = no visible " +
+                 "edges, 1 = corners fully saturated toward Edge Color.")]
+        [Range(0f, 1f)] public float edgeIntensity = DefaultEdgeIntensity;
+
+        [Tooltip("How far the edge shading reaches in from the box edges (spread), as a fraction " +
+                 "of the box half-extent.")]
+        [Range(0.01f, 0.5f)] public float edgeSpread = DefaultEdgeSpread;
+
+        // The pre-knob hard-coded look: lerp(0.45, 1, edge) over a 0.12 half-extent band =
+        // black edges at intensity 0.55, spread 0.12. Named so the defaults stay honest.
+        const float DefaultEdgeIntensity = 0.55f;
+        const float DefaultEdgeSpread = 0.12f;
+
+        /// <summary>GPU encoding of the edge look: rgb = tint target, a = intensity.</summary>
+        internal Vector4 EdgeColorUniform =>
+            new Vector4(edgeColor.r, edgeColor.g, edgeColor.b, edgeIntensity);
+
+        /// <summary>GPU encoding of the edge shape: x = spread (yzw reserved).</summary>
+        internal Vector4 EdgeParamsUniform => new Vector4(edgeSpread, 0f, 0f, 0f);
+
         void OnEnable()
         {
             if (!_active.Contains(this)) _active.Add(this);
@@ -54,48 +97,116 @@ namespace AbstractOcclusion.WebGpuWater
             _active.Remove(this);
         }
 
-        /// <summary>World -> unit-box matrix for this volume: one matrix carries centre +
-        /// rotation + size, so the shader's inside test is abs(local) &lt;= 0.5 per axis.
-        /// Built from position/rotation/lossyScale (the BoxCollider approximation: shear
-        /// from non-uniformly scaled rotated parents is ignored).</summary>
-        internal Matrix4x4 WorldToBoxMatrix()
+        // ---- water walls (the drawn carve boundary) --------------------------------------
+        // One shared unit-cube mesh + material for every volume (per-volume state rides the
+        // MaterialPropertyBlock); DrawMesh enqueues into the normal render passes, so the walls
+        // write depth (fog and god rays occlude against them like any opaque geometry).
+        static Mesh _wallMesh;
+        static Material _wallMaterial;
+        MaterialPropertyBlock _wallProps;
+        static readonly int ID_WallScatterBoost = Shader.PropertyToID("_WallScatterBoost");
+        static readonly int ID_WallEdgeColor = Shader.PropertyToID("_WallEdgeColor");   // rgb tint, a = intensity
+        static readonly int ID_WallEdgeSpread = Shader.PropertyToID("_WallEdgeSpread");
+
+        // LateUpdate so the frame's transform motion (a floating room, physics) has settled
+        // before the draw matrix is captured - the same reason WaterMembership binds late.
+        void LateUpdate()
+        {
+            if (!drawWaterWalls) return;
+            // The wall colour reads the water globals (fog, scatter, sun); with no water body
+            // alive there is nothing meaningful to draw (and nothing to carve).
+            if (WaterVolume.Primary == null) return;
+            Material material = ResolveWallMaterial();
+            if (material == null) return;
+
+            if (_wallMesh == null) _wallMesh = WaterMeshBuilder.BuildUnitCube();
+            _wallProps ??= new MaterialPropertyBlock();
+            _wallProps.SetFloat(ID_WallScatterBoost, wallScatterBoost);
+            _wallProps.SetVector(ID_WallEdgeColor, EdgeColorUniform);
+            _wallProps.SetFloat(ID_WallEdgeSpread, edgeSpread);
+            Graphics.DrawMesh(_wallMesh, BoxToWorldMatrix(), material, gameObject.layer,
+                              null, 0, _wallProps);
+        }
+
+        // Prefer the serialized slot (a build must assign it - Shader.Find only reaches shaders
+        // that ship); fall back to the packaged name so existing scenes preview in the editor
+        // without re-wiring. Null -> the walls just don't draw (the carve itself is unaffected).
+        Material ResolveWallMaterial()
+        {
+            if (_wallMaterial != null) return _wallMaterial;
+            Shader shader = wallShader != null ? wallShader : Shader.Find(WaterShaderNames.WaterExclusionWall);
+            if (shader == null) return null;
+            // HideAndDontSave: an edit-mode preview must never serialize this into the scene.
+            _wallMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+            return _wallMaterial;
+        }
+
+        /// <summary>Unit-box -> world matrix: centre + rotation + size in one transform. Built
+        /// from position/rotation/lossyScale (the BoxCollider approximation: shear from
+        /// non-uniformly scaled rotated parents is ignored). Also the water-wall draw matrix.</summary>
+        internal Matrix4x4 BoxToWorldMatrix()
         {
             Vector3 edge = Vector3.Scale(size, transform.lossyScale);
             edge = new Vector3(Mathf.Max(Mathf.Abs(edge.x), MinEdgeLength),
                                Mathf.Max(Mathf.Abs(edge.y), MinEdgeLength),
                                Mathf.Max(Mathf.Abs(edge.z), MinEdgeLength));
-            return Matrix4x4.TRS(transform.position, transform.rotation, edge).inverse;
+            return Matrix4x4.TRS(transform.position, transform.rotation, edge);
         }
 
-        /// <summary>Fill <paramref name="target"/> (length MaxVolumes exactly) with the
-        /// world->box matrices of up to MaxVolumes active volumes and return the count used.
+        /// <summary>World -> unit-box matrix for this volume: the shader's inside test is
+        /// abs(local) &lt;= 0.5 per axis.</summary>
+        internal Matrix4x4 WorldToBoxMatrix() => BoxToWorldMatrix().inverse;
+
+        /// <summary>Fill the uniform buffers (each length MaxVolumes exactly) with up to
+        /// MaxVolumes active volumes and return the count used. <paramref name="matrices"/> is
+        /// required; <paramref name="edgeColors"/>/<paramref name="edgeParams"/> (the per-volume
+        /// edge-look uniforms) may be null for consumers that only need the boxes (foam compute).
         /// Over the limit, the volumes NEAREST <paramref name="referencePoint"/> (the target
         /// camera) win and the drop is logged once - never a silent cap. Allocation-free:
         /// nearest-selection runs in place over the small active list.</summary>
-        internal static int WriteMatrices(Matrix4x4[] target, Vector3 referencePoint)
+        internal static int WriteVolumeUniforms(Matrix4x4[] matrices, Vector4[] edgeColors,
+                                                Vector4[] edgeParams, Vector3 referencePoint)
         {
-            if (target == null || target.Length != MaxVolumes)
-                throw new System.ArgumentException(
-                    $"WriteMatrices needs a persistent buffer of exactly {MaxVolumes} matrices " +
-                    "(Unity locks a global array's size at its first set).", nameof(target));
+            ValidateBufferLength(matrices, nameof(matrices));
+            if (edgeColors != null) ValidateBufferLength(edgeColors, nameof(edgeColors));
+            if (edgeParams != null) ValidateBufferLength(edgeParams, nameof(edgeParams));
 
             int activeCount = _active.Count;
             if (activeCount <= MaxVolumes)
             {
                 _warnedOverLimit = false;
                 for (int i = 0; i < activeCount; i++)
-                    target[i] = _active[i].WorldToBoxMatrix();
+                    WriteSlot(matrices, edgeColors, edgeParams, i, _active[i]);
                 return activeCount;
             }
 
             WarnOverLimitOnce(activeCount);
-            SelectNearest(target, referencePoint);
+            SelectNearest(matrices, edgeColors, edgeParams, referencePoint);
             return MaxVolumes;
         }
 
-        // Selection-sort the MaxVolumes nearest volumes into the buffer without allocating:
+        static void ValidateBufferLength(System.Array buffer, string name)
+        {
+            if (buffer == null || buffer.Length != MaxVolumes)
+                throw new System.ArgumentException(
+                    $"WriteVolumeUniforms needs persistent buffers of exactly {MaxVolumes} " +
+                    "entries (Unity locks a global array's size at its first set).", name);
+        }
+
+        // One volume -> one uniform slot: matrix always, edge look only for consumers that
+        // bound the optional buffers. Keeps every writer path (in-limit + nearest) identical.
+        static void WriteSlot(Matrix4x4[] matrices, Vector4[] edgeColors, Vector4[] edgeParams,
+                              int slot, WaterExclusionVolume volume)
+        {
+            matrices[slot] = volume.WorldToBoxMatrix();
+            if (edgeColors != null) edgeColors[slot] = volume.EdgeColorUniform;
+            if (edgeParams != null) edgeParams[slot] = volume.EdgeParamsUniform;
+        }
+
+        // Selection-sort the MaxVolumes nearest volumes into the buffers without allocating:
         // the active list is tiny (a handful of rooms), so O(count * MaxVolumes) is nothing.
-        static void SelectNearest(Matrix4x4[] target, Vector3 referencePoint)
+        static void SelectNearest(Matrix4x4[] matrices, Vector4[] edgeColors, Vector4[] edgeParams,
+                                  Vector3 referencePoint)
         {
             for (int slot = 0; slot < MaxVolumes; slot++)
             {
@@ -110,7 +221,7 @@ namespace AbstractOcclusion.WebGpuWater
                     best = i;
                 }
                 _selected[slot] = best;
-                target[slot] = _active[best].WorldToBoxMatrix();
+                WriteSlot(matrices, edgeColors, edgeParams, slot, _active[best]);
             }
         }
 

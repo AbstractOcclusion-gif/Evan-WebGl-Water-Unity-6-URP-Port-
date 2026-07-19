@@ -25,6 +25,7 @@
 #pragma multi_compile _ OCEAN_CREST_FOAM
 
 #include "WaterShared.hlsl"     // OCEAN_FFT_* cascade layout (shared with generation/sampling)
+#include "WaterExclusion.hlsl"  // dry-interior volumes: particles inside are killed (uniforms set per dispatch)
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
 #include "WaterSurfWaves.hlsl"  // surf breaker fronts: plunging-lip spray source (uniforms set by
@@ -608,6 +609,24 @@ void Update(uint3 id : SV_DispatchThreadID)
     }
 
     if (particle.age >= particle.life) { particle.life = 0.0; Particles[slot] = particle; return; }
+
+    // Dry-interior exclusion: foam riding (or spray arcing through) a dry room / boat hull is
+    // killed - the surface it would sit on is discarded there, so a surviving sprite would
+    // float in the dry void. Covers spawn AND drift-in (a moving boat sweeps over its own
+    // wake foam). Gated on the volume count: scenes without exclusion volumes never pay the
+    // extra surface evaluation.
+    if (_ExclusionCount > 0.5)
+    {
+        // Stored y is a height offset ABOVE the local water surface; lift to true world Y.
+        float3 exclusionProbe = particle.worldPos;
+        exclusionProbe.y += SurfaceWorldY(particle.worldPos, simNorm);
+        if (InsideExclusion(exclusionProbe))
+        {
+            particle.life = 0.0;
+            Particles[slot] = particle;
+            return;
+        }
+    }
 
     if (particle.kind == KIND_SPRAY)
     {

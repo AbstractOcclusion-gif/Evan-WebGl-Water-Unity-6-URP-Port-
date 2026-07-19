@@ -488,6 +488,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 : hullSize - 2f * DryInteriorWallInset * Vector3.one;
             var volume = dry.AddComponent<WaterExclusionVolume>();
             volume.size = Vector3.Max(size, DryInteriorMinEdge * Vector3.one);
+            // The hull IS the boundary geometry (the content rule): water walls here would paint
+            // fog colour over the cockpit interior. Bare standalone volumes keep them on.
+            volume.drawWaterWalls = false;
         }
 
         // Instantiate the hull visual under the boat root (prefab-linked when the source is a

@@ -906,6 +906,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
+  jerlovWaterType: 5
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 7200000, guid: a72790f9172cdc8418a85c91acdb0a2d, type: 3}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
@@ -1013,8 +1014,8 @@ MonoBehaviour:
     ssrThickness: 0.2
     refractionDistortion: 0.05
   detailNormalSettings:
-    texture: {fileID: 2800000, guid: 07ff697babc958a4cb1ddcf8382f2101, type: 3}
-    strength: 1.5
+    texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
+    strength: 0.4
     tileMeters: 36.4
     scrollSpeed: 1.33
   _legacyReflectionMode: 1
@@ -1236,7 +1237,6 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 0}
-  jerlovWaterType: 5
 --- !u!1 &1734502736
 GameObject:
   m_ObjectHideFlags: 0

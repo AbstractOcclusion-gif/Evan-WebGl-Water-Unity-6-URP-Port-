@@ -58,6 +58,7 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterShared.hlsl" // IOR_*, IntersectCube, ProjectCausticUV
+            #include "WaterExclusion.hlsl" // dry-interior volumes: marched samples inside are air
             #include "WaterFog.hlsl"    // DepthFadeScalar, WaterPathLength, fog uniforms
 
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
@@ -192,8 +193,16 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                     // map is the legacy fallback (also carries non-object casters when no occluder ran).
                     float4 shadowCoord = TransformWorldToShadowCoord(pWorld);
                     float shadow = (_CausticOccluderActive > 0.5) ? causticSample.g : MainLightRealtimeShadow(shadowCoord);
+                    // Carved presence: a dry volume between this sample and the sun blocks the
+                    // direct beam (analytic box shadow, refraction-aware, matching the fog's
+                    // in-scatter shadowing).
+                    shadow *= ExclusionSunVisibility(pWorld, _LightDir, surfaceLevel);
 
-                    accum += caustic * shadow * (depthFade * viewFog);
+                    // Dry-interior exclusion: a marched sample inside an exclusion volume is AIR -
+                    // no shaft contribution there. The running fog/depth factors still advance with
+                    // the ray (the light path continues; only this sample's scatter is skipped).
+                    if (!InsideExclusion(pWorld))
+                        accum += caustic * shadow * (depthFade * viewFog);
                     depthFade *= depthFadeStep;
                     viewFog *= viewFogStep;
                 }

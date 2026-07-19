@@ -90,8 +90,10 @@ namespace AbstractOcclusion.WebGpuWater
             // swaps the shader's per-pixel wavy-waterline march for the closed-form flat waterline at
             // surfaceY (wave-aware at the camera's xz, so the line still rides the local swell).
             bool fogSimple = _underwaterFogMode == WaterQuality.UnderwaterMode.Simple;
+            // fogArmed mirrors UnderwaterFogActive to the GPU: the exclusion wall self-completes
+            // (reconstructs the fog behind its veil) ONLY when the fullscreen pass will not paint.
             Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
-                                        fogSimple ? 1f : 0f);
+                                        fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f);
         }
 
         // A little beyond the [-1,1] footprint so an edge-on view of a pond still triggers; the shader
@@ -109,6 +111,12 @@ namespace AbstractOcclusion.WebGpuWater
             if (!waterFog) { _wasCameraSubmerged = false; return false; } // one Water Fog toggle drives both looks
             Camera cam = targetCamera;
             if (cam == null) { _wasCameraSubmerged = false; return false; }
+
+            // NOTE: deliberately NO camera-inside-exclusion-volume early-out here. An eye in a dry
+            // room below the surface still needs the fog pass ARMED: the shader carves the dry span
+            // out of every ray (ExclusionRayLength), so the room reads dry while water seen through
+            // a window stays fogged - Crest's carved-volume behaviour. A CPU gate here was tried and
+            // reverted: it unarmed the whole fullscreen pass and killed ALL fog from inside the room.
 
             // Reference height for the submerge test. Oceans use the EYE, so the fullscreen ocean fog arms
             // when the eye actually goes under - testing the near-plane CORNERS armed it ~near-plane-extent

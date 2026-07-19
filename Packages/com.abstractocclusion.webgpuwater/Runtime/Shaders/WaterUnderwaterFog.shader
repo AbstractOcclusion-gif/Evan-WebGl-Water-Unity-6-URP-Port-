@@ -28,8 +28,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #include "WaterFog.hlsl"    // _WaterFogColor/_WaterExtinction/_WaterFogDensity, WaterPathLength, DownwellingAttenuation
         #include "WaterVolume.hlsl" // PoolToWorld / WorldToPool (+ the body's volume frame globals)
         #include "WaterShared.hlsl" // IntersectCube
-        #include "WaterWaves.hlsl"      // WaveHeight: wind-wave layer for the per-pixel waterline
-        #include "WaterLargeWaves.hlsl" // LargeBodyWaveHeight: open-water swell/FFT; needs _WaveTime (above)
+        #include "WaterExclusion.hlsl"  // dry-interior volumes: ExclusionRayLength carves them out of the fog
+        #include "WaterWaterline.hlsl"  // SurfaceHeightAtXZ / SurfaceSignedGap: the displaced wavy waterline (verbatim move)
 
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
@@ -39,14 +39,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // continuous colour crossing the waterline.
         float3 _LightDir;
         float3 _SunColor;
-        float _OceanWorldWaves;     // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
 
         // Per-pixel wavy-waterline crossing search (U2). The camera->scene ray meets the DISPLACED surface
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of
         // (rayY - SurfaceHeightAtXZ) with a constant-step coarse scan and refine by bisection. Constant
         // step/iteration counts keep this fullscreen pass cheap and allocation-free.
         #define UNDERWATER_CROSS_REFINE_ITERS 5
-        #define WAVE_METERS_MIN 1e-3 // matches WindWaveSampleXZ's guard in WaterSurface.shader
         // Crossing search: march the surface band with a FIXED WORLD STEP (constant, wave-scale resolution
         // so a crest is never skipped or aliased) up to a step cap; beyond the cap - the far horizon, where
         // waves are sub-pixel - fall back to the flat rest-plane waterline. Band = max(swell reach, surf
@@ -85,33 +83,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
         }
 
-        // Displaced world-space surface height at a WORLD xz: the single source of truth for the wavy
-        // waterline. Rest plane (via the volume transform, so extent.y + rotation are exact, matching
-        // TryGetAnalyticWaterline) + wind-wave layer + open-water swell/FFT. Pools: the swell is a no-op
-        // (_LargeBody = 0), so this reduces to the wind-wave surface over the flat pool top.
-        float SurfaceHeightAtXZ(float2 worldXZ)
-        {
-            // Map to pool xz at the rest plane; the surface shader samples the wind waves off this xz.
-            float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
-            float2 poolXZ = poolAtRest.xz;
-
-            // Oceans sample the wind waves in WORLD metres (extent-independent) to match WindWaveSampleXZ.
-            float2 windSampleXZ = (_OceanWorldWaves > 0.5) ? (worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN))
-                                                           : poolXZ;
-            // Wind-wave height is authored in pool units; lift it to world through the full transform,
-            // exactly as the vertex path does (PoolToWorld of the displaced pool point).
-            float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
-
-            // Open-water swell/FFT is authored in WORLD metres and layered on top (no-op for pools).
-            if (_LargeBody > 0.5) surfaceY += LargeBodyWaveHeight(worldXZ);
-            return surfaceY;
-        }
-
-        // Signed height of a world point above its local displaced surface (>0 in air, <=0 underwater).
-        float SurfaceSignedGap(float3 world)
-        {
-            return world.y - SurfaceHeightAtXZ(world.xz);
-        }
+        // SurfaceHeightAtXZ / SurfaceSignedGap moved VERBATIM to WaterWaterline.hlsl: the
+        // exclusion wall clips at the same displaced waterline this pass integrates against.
 
         // Refine a bracketed surface crossing [a(gapA), b(opposite sign)] to a world point on the surface.
         // 'gapA' is the signed gap at 'a' (passed in so it is not re-evaluated); bisection keeps the
@@ -134,12 +107,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // depth-darkening reference). The crossing follows crests/troughs, so the fog waterline is a real
         // meniscus: no fog over a trough, fog under a crest.
         void OceanWavyPath(float3 sceneWorld, float3 cam,
-                           out float pathLen, out float deepestY, out float surfaceRefY)
+                           out float pathLen, out float deepestY, out float surfaceRefY,
+                           out float3 wetStart)
         {
             float camSurf = SurfaceHeightAtXZ(cam.xz);
             float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
             bool camUnder = cam.y <= camSurf;
             bool sceneUnder = sceneWorld.y <= sceneSurf;
+            wetStart = cam; // start of the in-water span ALONG the ray (exclusion subtraction origin)
 
             // Whole segment on one side of the surface: no crossing to search for.
             if (camUnder && sceneUnder)
@@ -198,6 +173,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             pathLen = length(underEnd - hit);
             deepestY = min(hit.y, underEnd.y);
             surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
+            wetStart = camUnder ? cam : hit;                // wet span runs [start -> far end] along the ray
         }
 
         // Simple-mode ocean path (tier budget path): the closed-form in-water span against the FLAT
@@ -207,7 +183,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // No march, no per-pixel wave evaluation: a handful of ALU ops replaces up to
         // UNDERWATER_CROSS_MAX_STEPS surface evaluations per pixel.
         void OceanFlatPath(float3 sceneWorld, float3 cam,
-                           out float pathLen, out float deepestY, out float surfaceRefY)
+                           out float pathLen, out float deepestY, out float surfaceRefY,
+                           out float3 wetStart)
         {
             float level = _UnderwaterSurfaceY;
             pathLen = WaterPathLength(sceneWorld, cam, level);
@@ -215,6 +192,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // so the deepest submerged point is exact in every camera-above/below combination.
             deepestY = min(level, min(cam.y, sceneWorld.y));
             surfaceRefY = level;
+            // Wet-span start along the ray: the camera when submerged, else the flat-waterline
+            // crossing (closed form, mirroring WaterPathLength's clip against 'level').
+            wetStart = cam;
+            if (cam.y > level)
+            {
+                float3 ray = sceneWorld - cam;
+                float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4); // guard near-horizontal rays
+                wetStart = cam + ray * saturate((level - cam.y) / dySafe);
+            }
         }
 
         // Pull a pond segment's ENTRY down to the wavy surface when it starts in AIR: the pool box top is
@@ -231,7 +217,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // World-space length of the in-water part of the camera->scene ray, the deepest submerged point's
         // world Y (for downwelling), and the displaced surface height above it (the depth reference).
         // pathLen 0 = this pixel's ray never enters the water.
-        void UnderwaterSegment(float3 sceneWorld, out float pathLen, out float deepestY, out float surfaceRefY)
+        void UnderwaterSegment(float3 sceneWorld, out float pathLen, out float deepestY, out float surfaceRefY,
+                               out float3 wetStart)
         {
             float3 cam = _WorldSpaceCameraPos;
 
@@ -240,9 +227,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // Ocean: the below-surface span. _UnderwaterFogSimple is a uniform, so this branch is
                 // coherent across the screen - Simple tiers never pay for the wavy march.
                 if (_UnderwaterFogSimple > 0.5)
-                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY);
+                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
                 else
-                    OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY);
+                    OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
                 return;
             }
 
@@ -262,6 +249,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 pathLen = 0.0;
                 deepestY = _UnderwaterSurfaceY;
                 surfaceRefY = _UnderwaterSurfaceY;
+                wetStart = cam;
                 return;
             }
 
@@ -280,17 +268,66 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             surfaceRefY = (_UnderwaterFogSimple > 0.5)
                         ? _VolumeCenter.y                    // flat rest plane (matches the box top)
                         : SurfaceHeightAtXZ(enterWorld.xz);  // wavy surface above the entry, for downwelling
+            wetStart = enterWorld;
         }
 
-        // Per-channel path transmittance for this pixel; also returns the depth-darkening term.
-        float3 UnderwaterFog(float2 uv, out float3 depthAttenuation)
+        // The shadow-column terms (EXCLUSION_SHADOW_FLOOR, the analytic span sun visibility)
+        // live in WaterExclusion.hlsl: the exclusion wall's above-water fog reconstruction
+        // shares them, so both views of the carve shade identically.
+
+        // Per-channel path transmittance for this pixel; also returns the depth-darkening term
+        // and the sun visibility of the wet span past the exclusion volumes (1 = unshadowed).
+        float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility)
         {
             float3 sceneWorld = SceneWorldPos(uv);
             float pathLen;
             float deepestY;
             float surfaceRefY;
-            UnderwaterSegment(sceneWorld, pathLen, deepestY, surfaceRefY);
+            float3 wetStart;
+            UnderwaterSegment(sceneWorld, pathLen, deepestY, surfaceRefY, wetStart);
+            // Dry-interior exclusion: the part of the wet span that crosses an exclusion volume is
+            // AIR, so carve it out of the fog integral. Zero volumes = the loops never run. When
+            // the whole span is dry (camera in a submerged room looking at its own wall), the
+            // depth-darkening reference resets so the dry interior is not darkened as if it were
+            // under water.
+            float3 seg = sceneWorld - _WorldSpaceCameraPos;
+            float3 segDir = seg / max(length(seg), 1e-5);
+            float wetSpanLen = pathLen; // pre-carve span length (wetStart -> wet end, world metres)
+            pathLen = max(pathLen - ExclusionRayLength(wetStart, segDir, pathLen), 0.0);
+            if (pathLen <= 0.0)
+            {
+                deepestY = surfaceRefY;
+            }
+            else
+            {
+                // Depth darkening from the WET span only: y is linear along the ray, so the deepest
+                // wet point sits at the span's deep end, PULLED OUT of any dry volume containing it
+                // (down-rays) or PUSHED past it (up-rays, camera in a room). Without this, a dry
+                // room at the deep end darkened the lit water wall seen through its window. Only
+                // ever SHALLOWER than the raw endpoint min, hence the max().
+                float tDeep = (segDir.y <= 0.0)
+                            ? ExclusionPullToEntry(wetStart, segDir, wetSpanLen)
+                            : ExclusionPushToExit(wetStart, segDir, 0.0, wetSpanLen);
+                deepestY = max(deepestY, wetStart.y + segDir.y * tDeep);
+            }
+            // Carved presence: dry volumes block the DIRECT sun feeding this span's in-scatter
+            // (Crest's carved-in-fog shadow, analytic). Averaged over three span points so the
+            // shadow column steps softly. Zero volumes -> the visibility loops never run.
+            sunVisibility = 1.0;
+            if (_ExclusionCount > 0.5 && pathLen > 0.0)
+            {
+                sunVisibility = ExclusionSpanSunVisibility(wetStart, segDir, wetSpanLen, pathLen,
+                                                           _LightDir);
+            }
             depthAttenuation = DownwellingAttenuation(deepestY, surfaceRefY);
+            // Carve-boundary pane: edge occlusion + sun facet of the box face this ray looks
+            // through (Crest-style darkened zone edges, analytic). Folded into the term BOTH
+            // hardware passes multiply by, so the scene absorption and the in-scatter darken
+            // together - the walls cannot do this themselves, they draw before this pass.
+            if (_ExclusionCount > 0.5 && wetSpanLen > 0.0)
+            {
+                depthAttenuation *= ExclusionBoundaryPaneShade(wetStart, segDir, wetSpanLen, _LightDir);
+            }
             // Depth clarity: the SAME curve the surface shader uses above water (WaterDepthClarity).
             // Murkier water (shallower bed) shortens the fog reach, so below- and above-water clarity
             // stay consistent. Driven by the still-water column depth at the scene point; identity when
@@ -324,7 +361,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             half4 FragAbsorb(Varyings input) : SV_Target
             {
                 float3 depthAttenuation;
-                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation);
+                float sunVisibilityUnused; // absorption is sun-independent; only the in-scatter shadows
+                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibilityUnused);
                 return half4(pathTransmittance * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
@@ -344,14 +382,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             half4 FragInscatter(Varyings input) : SV_Target
             {
                 float3 depthAttenuation;
-                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation);
+                float sunVisibility;
+                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility);
                 // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog colour
                 // seen from below matches the water colour seen from above (continuous across the waterline).
                 // The view ray is surface->camera, reconstructed from the scene depth. WaterInscatterColor
                 // returns the flat _WaterFogColor when scattering is off, so this is a no-op until enabled.
                 float3 sceneWorld = SceneWorldPos(input.uv);
                 float3 viewDirWS = normalize(_WorldSpaceCameraPos - sceneWorld);
-                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0);
+                // Sun colour attenuated by the exclusion-volume sun visibility: only the DIRECT
+                // term darkens (WaterInscatterColor's ambient term ignores sunColor), so the
+                // carve shadow reads as a lit fog losing its beam, never as black.
+                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunVisibility, 0.0);
+                // Overall floor multiplier on top: with Volume Scatter OFF the flat fog colour
+                // ignores sunColor entirely, which made the carve shadow invisible on flat-fog
+                // bodies; this keeps a visible (never black) shadow column in both modes.
+                fogColor *= lerp(EXCLUSION_SHADOW_FLOOR, 1.0, sunVisibility);
                 float3 inscatter = fogColor * (1.0 - pathTransmittance);
                 return half4(inscatter * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
             }

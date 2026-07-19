@@ -89,6 +89,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Capacity = Shader.PropertyToID("_Capacity");
         static readonly int ID_FrameSeed = Shader.PropertyToID("_FrameSeed");
         static readonly int ID_DeltaTime = Shader.PropertyToID("_DeltaTime");
+        static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
+        static readonly int ID_ExclusionWorldToBox = Shader.PropertyToID("_ExclusionWorldToBox");
+        // Full-size persistent buffer (a matrix array's size locks at its first set); the
+        // selection logic itself lives in WaterExclusionVolume.WriteVolumeUniforms - one
+        // implementation (the edge-look buffers are null: the kill test only needs the boxes).
+        static readonly Matrix4x4[] _exclusionMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
         static readonly int ID_SpawnThreshold = Shader.PropertyToID("_SpawnThreshold");
         static readonly int ID_SpawnRate = Shader.PropertyToID("_SpawnRate");
         static readonly int ID_MaxSpawnPerFrame = Shader.PropertyToID("_MaxSpawnPerFrame");
@@ -404,6 +410,15 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetFloat(ID_FlowDrift, flowDrift);
             cs.SetVector(ID_WindDrift, WindDriftWorld());
             cs.SetFloat(ID_Drag, drag);
+
+            // Dry-interior exclusion volumes, bound EXPLICITLY like every other compute uniform
+            // (this codebase never relies on Shader.SetGlobal* reaching compute kernels). The
+            // Update kernel kills particles inside a volume; count 0 skips the test entirely.
+            int exclusionCount = WaterExclusionVolume.WriteVolumeUniforms(_exclusionMatrices,
+                null, null,
+                densityCamera != null ? densityCamera.transform.position : volume.VolumeCenter);
+            cs.SetFloat(ID_ExclusionCount, exclusionCount);
+            if (exclusionCount > 0) cs.SetMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
 
             // Camera-driven spawn quality (stochastic distance LOD + spray tile budget) and the
             // density projection. Without a camera both are disabled and spawning is unchanged.

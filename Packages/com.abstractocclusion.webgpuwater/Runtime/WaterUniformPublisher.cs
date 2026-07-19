@@ -102,6 +102,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_UnderwaterFogSimple = Shader.PropertyToID("_UnderwaterFogSimple");
+        static readonly int ID_UnderwaterFogArmed = Shader.PropertyToID("_UnderwaterFogArmed");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
         static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
         static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
@@ -133,12 +134,16 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_RefractionDistortion = Shader.PropertyToID("_RefractionDistortion");
         static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
         static readonly int ID_ExclusionWorldToBox = Shader.PropertyToID("_ExclusionWorldToBox");
+        static readonly int ID_ExclusionEdgeColor = Shader.PropertyToID("_ExclusionEdgeColor");
+        static readonly int ID_ExclusionEdgeParams = Shader.PropertyToID("_ExclusionEdgeParams");
 
-        // Persistent FULL-SIZE buffer for the exclusion matrices: Unity locks a global
-        // array's size at its FIRST set, so every publish sends MaxVolumes matrices and
+        // Persistent FULL-SIZE buffers for the exclusion uniforms: Unity locks a global
+        // array's size at its FIRST set, so every publish sends MaxVolumes entries and
         // _ExclusionCount clamps the shader loop. Static (the volumes are global state,
         // shared by every body's publisher) and reused every frame - no allocation.
         static readonly Matrix4x4[] _exclusionMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
+        static readonly Vector4[] _exclusionEdgeColors = new Vector4[WaterExclusionVolume.MaxVolumes];
+        static readonly Vector4[] _exclusionEdgeParams = new Vector4[WaterExclusionVolume.MaxVolumes];
 
         readonly WaterVolume _body;
         // Two sinks over the SAME derivations; cached to avoid per-frame allocation.
@@ -180,11 +185,17 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 reference = _body.targetCamera != null
                 ? _body.targetCamera.transform.position
                 : _body.VolumeCenter;
-            int count = WaterExclusionVolume.WriteMatrices(_exclusionMatrices, reference);
+            int count = WaterExclusionVolume.WriteVolumeUniforms(
+                _exclusionMatrices, _exclusionEdgeColors, _exclusionEdgeParams, reference);
             Shader.SetGlobalFloat(ID_ExclusionCount, count);
-            // With count 0 the shader loop never reads the array, so skipping the set is
-            // safe and keeps the zero-volume frame free of the array upload.
-            if (count > 0) Shader.SetGlobalMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
+            // With count 0 the shader loop never reads the arrays, so skipping the sets is
+            // safe and keeps the zero-volume frame free of the array uploads.
+            if (count > 0)
+            {
+                Shader.SetGlobalMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
+                Shader.SetGlobalVectorArray(ID_ExclusionEdgeColor, _exclusionEdgeColors);
+                Shader.SetGlobalVectorArray(ID_ExclusionEdgeParams, _exclusionEdgeParams);
+            }
         }
 
         // Reflection base cube for Reflect URP Probe: the scene skybox's cubemap if it exposes one, else
@@ -224,13 +235,18 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Camera-submerged flag + flat surface Y for the underwater fog pass. Global only
         /// (it is camera state, not a per-object uniform), so it lives outside WriteBodyUniforms.
         /// fogSimple 1 = the tier's Simple mode: the fog shader takes the closed-form flat-waterline
-        /// path (against surfaceY) instead of the per-pixel wavy-surface march.</summary>
-        internal void PublishUnderwater(float cameraUnderwater, float surfaceY, float unbounded, float fogSimple)
+        /// path (against surfaceY) instead of the per-pixel wavy-surface march.
+        /// fogArmed 1 = the fullscreen fog pass runs this frame (WaterVolume.UnderwaterFogActive):
+        /// the exclusion wall reads it to know whether the fog will paint behind its veil or the
+        /// wall must reconstruct the fog result itself (above-water ocean views).</summary>
+        internal void PublishUnderwater(float cameraUnderwater, float surfaceY, float unbounded,
+                                        float fogSimple, float fogArmed)
         {
             Shader.SetGlobalFloat(ID_CameraUnderwater, cameraUnderwater);
             Shader.SetGlobalFloat(ID_UnderwaterSurfaceY, surfaceY);
             Shader.SetGlobalFloat(ID_UnderwaterUnbounded, unbounded);
             Shader.SetGlobalFloat(ID_UnderwaterFogSimple, fogSimple);
+            Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
         }
 
         /// <summary>Push the body's placement-frame uniforms (volume + sim window) onto a
