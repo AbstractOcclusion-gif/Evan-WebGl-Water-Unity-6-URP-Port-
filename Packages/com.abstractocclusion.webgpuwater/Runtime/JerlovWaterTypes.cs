@@ -34,6 +34,9 @@ namespace AbstractOcclusion.WebGpuWater
         Coastal5C,
         Coastal7C,
         Coastal9C,
+        // Reproduces the pre-Jerlov constant-tint look for existing scenes. Best-effort, NOT
+        // byte-identical: the old constants brightened blue (>1), which physical absorption can't do.
+        Legacy,
     }
 
     /// <summary>
@@ -74,6 +77,10 @@ namespace AbstractOcclusion.WebGpuWater
             new JerlovPreset("Coastal 5C",     ExtColor(0.3035f, 0.0849f, 0.2280f), Body(0.1295f, 0.5584f, 0.3404f)),
             new JerlovPreset("Coastal 7C",     ExtColor(0.2790f, 0.1154f, 0.3611f), Body(0.2564f, 0.6742f, 0.3732f)),
             new JerlovPreset("Coastal 9C",     ExtColor(0.2865f, 0.1779f, 0.6630f), Body(0.3349f, 0.6065f, 0.2968f)),
+            // Legacy: extinction reproduces the OLD transmission exactly (old _WaterExtinction
+            // 0.45/0.15/0.08 x fogDensity 2); body reproduces the OLD above-water deep colour exactly
+            // (old _WaterFogColor 0.10/0.30/0.40 x the removed ABOVEWATER_COLOR 0.25/1.0/1.25).
+            new JerlovPreset("Legacy (classic look)", ExtColor(0.9000f, 0.3000f, 0.1600f), Body(0.0250f, 0.3000f, 0.5000f)),
         };
 
         /// <summary>Preset for a water type. Fails fast on an out-of-range enum value.</summary>
