@@ -36,11 +36,10 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         const float MatchTolerance = 1e-5f;
 
         const string LogPrefix = "[WaterWaveConstants] ";
-        const string MenuPath = "Window/AbstractOcclusion/WebGpuWater/Validate Wave Constants";
 
         // hlslDefine -> csharpConst. Every LBW_* #define in WaterLargeWaves.hlsl that has a
         // const counterpart in LargeWaveField.cs. SwellBaseAmplitude is intentionally absent:
-        // its shader side is a positional literal (1.0) in EvaluateLargeBodyWave, not a #define,
+        // its shader side is a positional literal (1.0) in EvaluateLargeBodyWaveShore, not a #define,
         // so there is nothing stable to parse. LbwHash's inline magic numbers are likewise
         // inline literals in both files, not consts, and are out of scope for this guard.
         static readonly (string Hlsl, string CSharp)[] LargeWavesConstantPairs =
@@ -119,7 +118,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             EditorApplication.delayCall += Validate;
         }
 
-        // Menu entry removed; still runs automatically on script reload (see the static ctor above).
+        // Runs automatically on script reload (see the static ctor above).
         static void Validate()
         {
             if (!TryReadPackageAsset(LargeWavesHlslAssetName, HlslExtension, out string largeWavesSource, out string readError) ||

@@ -181,11 +181,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 if (waterMask > 0.5) color *= DownwellingAttenuation(IN.positionWS.y, surfaceY);
 
                 // projected caustics where this point is below the surface AND inside footprint.
+                // The caustic UV and its screen gradients are computed OUTSIDE the branch and the
+                // sample uses SAMPLE_TEXTURE2D_GRAD: an implicit-derivative sample inside this
+                // per-fragment (non-uniform) branch is undefined in WGSL and breaks mip selection
+                // along the waterline on WebGPU (same contract as the pool-trace Grad clones).
+                float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
+                float2 cuv = ProjectCausticUV(poolPos, refractedLight);
+                float2 cuvDdx = ddx(cuv);
+                float2 cuvDdy = ddy(cuv);
                 if (waterMask > 0.5 && poolPos.y < simH)
                 {
-                    float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
-                    float2 cuv = ProjectCausticUV(poolPos, refractedLight);
-                    float4 causticSample = SAMPLE_TEXTURE2D(_CausticTex, sampler_CausticTex, cuv);
+                    float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, cuvDdx, cuvDdy);
                     float caustic = causticSample.r;
                     // Caustics soften with depth at their own independent rate (world depth,
                     // consistent with the downwelling term above).

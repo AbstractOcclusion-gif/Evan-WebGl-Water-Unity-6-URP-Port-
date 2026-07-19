@@ -18,7 +18,6 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_VolumeCenter = Shader.PropertyToID("_VolumeCenter");
         static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
         static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
-        static readonly int ID_OccluderActive = Shader.PropertyToID("_CausticOccluderActive");
 
         // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
         // outside the drawn caustic footprint read "lit", not black, now that green drives the
@@ -32,6 +31,12 @@ namespace AbstractOcclusion.WebGpuWater
         readonly CommandBuffer _cb;
 
         internal RenderTexture Texture => _target;
+
+        // True when this body's last caustic pass wrote at least one submerged-object silhouette into
+        // the RT's green channel. Published PER BODY by WaterUniformPublisher (a global here was
+        // last-writer-wins: with 2+ caustic bodies, one body's occluder state toggled the underwater
+        // shadow sourcing for every other body's floor).
+        internal bool OccluderActive { get; private set; }
 
         internal WaterCausticsPass(Shader causticsShader, Shader largeBodyCausticsShader,
                                    Shader occluderShader, int resolution)
@@ -87,7 +92,7 @@ namespace AbstractOcclusion.WebGpuWater
         void DrawOccluders(float waterRestY, Vector3 volumeCenter, Vector3 volumeExtent,
                            Quaternion volumeRotation, Vector3 lightDir)
         {
-            if (_occluderMaterial == null) { Shader.SetGlobalFloat(ID_OccluderActive, 0f); return; }
+            if (_occluderMaterial == null) { OccluderActive = false; return; }
 
             _occluderMaterial.SetVector(ID_LightDir, lightDir);
             _occluderMaterial.SetVector(ID_VolumeCenter, volumeCenter);
@@ -105,7 +110,7 @@ namespace AbstractOcclusion.WebGpuWater
                 drewAny = true;
             }
 
-            Shader.SetGlobalFloat(ID_OccluderActive, drewAny ? 1f : 0f);
+            OccluderActive = drewAny;
         }
 
         // Ocean version: project the near-field WINDOW sim into the caustic RT via the large-body
@@ -116,6 +121,7 @@ namespace AbstractOcclusion.WebGpuWater
                                       Vector3 windowCenter, Vector3 windowHalfExtent)
         {
             if (_largeBodyMaterial == null || windowMesh == null) return;
+            OccluderActive = false; // the large-body path draws no occluder silhouettes
             if (simTexture != null) _largeBodyMaterial.SetTexture(ID_Water, simTexture);
             _largeBodyMaterial.SetVector(ID_SimCenter, windowCenter);
             _largeBodyMaterial.SetVector(ID_SimExtent, windowHalfExtent);

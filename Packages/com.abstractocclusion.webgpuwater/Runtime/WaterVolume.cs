@@ -733,9 +733,18 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Per-body master animation speed (wave clock + ripple timestep). Clamped to [0, MaxTimeScale].</summary>
         public float TimeScale { get => timeScale; set => timeScale = Mathf.Clamp(value, 0f, MaxTimeScale); }
 
-        [Tooltip("Direction TOWARD the light. Auto-driven from 'sun' when one is assigned.")]
+        [Tooltip("Direction TOWARD the light. Used when no 'sun' is assigned (a sun overrides it).")]
         [SerializeField] internal Vector3 lightDir = new Vector3(2f, 2f, -1f);
         [SerializeField] internal int causticResolution = 1024;
+        // Tier override for the caustic RT resolution; 0 = no tier applied -> the authored
+        // causticResolution above (see ApplyQuality for why the serialized field is never written).
+        [System.NonSerialized] int _causticRes;
+        internal int EffectiveCausticResolution => _causticRes > 0 ? _causticRes : causticResolution;
+
+        // Direction TOWARD the light: the assigned sun wins, the serialized vector is the manual
+        // fallback. Derived (not written back to the field): the old per-frame write-back silently
+        // dirtied the authored value under [ExecuteAlways] in edit mode.
+        internal Vector3 EffectiveLightDir => sun != null ? -sun.transform.forward : lightDir;
 
         [Header("Object interaction")]
         [SerializeField] ObjectInteractionSettings objectInteractionSettings = new ObjectInteractionSettings();
@@ -1730,6 +1739,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal WaterWaveBank WaveBank => _waveBank;
         internal float WaveTime => _waveTime;
         internal RenderTexture CausticTexture => _caustics?.Texture;
+        // Per-body occluder state for _CausticOccluderActive (see WaterCausticsPass.OccluderActive).
+        internal bool CausticOccluderActive => _caustics != null && _caustics.OccluderActive;
         // Ocean FFT displacement cascade array (null on non-ocean bodies / before init) - for the debug view.
         internal RenderTexture OceanFftTexture => _oceanFft?.DisplacementTexture;
         // True only when this body is an unbounded ocean whose FFT pass is producing cascades. Drives the
@@ -2223,7 +2234,11 @@ namespace AbstractOcclusion.WebGpuWater
 
             WaterQuality.Tier tier = quality.Resolve();
             _simRes = tier.SimResolution;
-            causticResolution = tier.CausticResolution;
+            // Runtime field, NOT the serialized causticResolution: ApplyQuality also runs in edit
+            // mode (TryInitialize under [ExecuteAlways]), and writing the serialized field baked the
+            // device-probed tier value into authored scene data on save. Every other tier knob
+            // already uses a '_' runtime field; this one was the odd one out.
+            _causticRes = tier.CausticResolution;
             _godRaysAllowed = tier.GodRays;
             _richReflectionsAllowed = tier.RichReflections;
             // Delivered per-body through WriteBodyUniforms (property block), never by writing
@@ -2244,7 +2259,7 @@ namespace AbstractOcclusion.WebGpuWater
             // One line per enable so a build's console shows exactly which knobs landed -
             // tier mismatches (stale build cache, wrong asset, missing serialized fields)
             // are otherwise near-impossible to diagnose on a device.
-            Debug.Log($"WaterVolume '{name}': quality tier applied - sim {_simRes}, caustics {causticResolution}, " +
+            Debug.Log($"WaterVolume '{name}': quality tier applied - sim {_simRes}, caustics {EffectiveCausticResolution}, " +
                       $"mesh {(_meshDetail > 0 ? _meshDetail.ToString() : "authored")}, renderScale {_renderScale:0.##}, " +
                       $"realRefraction {_realRefractionAllowed}, godRays {_godRaysAllowed} ({_godRaySteps} steps), " +
                       $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}, " +
@@ -2391,7 +2406,7 @@ namespace AbstractOcclusion.WebGpuWater
                 if (_simulate) Step(dt);
             }
 
-            Publisher.PublishSharedGlobals(); // sun, sky, tiles, camera-independent shared clock
+            Publisher.PublishSharedGlobals(); // sun, ambient, tiles (the wave clock is per body)
             EnsureWaveBank();
             BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
             ShoreDepth.EnsureBakedAndPublish(); // Layer A: keep the seabed field + globals live
@@ -3256,7 +3271,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Render this body's own sim into its own caustic RT. The RT reaches the renderers
         // via the MPB; the primary also mirrors it to the _CausticTex global for objects.
         void RenderCaustics() => _caustics.Render(EffectiveWaterMesh, _water?.Texture, VolumeCenter.y,
-                                                  VolumeCenter, VolumeExtentSafe, VolumeRotation, lightDir.normalized);
+                                                  VolumeCenter, VolumeExtentSafe, VolumeRotation, EffectiveLightDir.normalized);
 
         // Project the ocean's near-field window sim into the caustic RT via the large-body (world-frame)
         // caustic, so the underwater god rays can sample real surface-focused shimmer near the camera.
@@ -3486,12 +3501,11 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 p = cam.transform.position;
             float y = VolumeCenter.y;
             if (!openWater) return y;
-            // Fog gate: advance the FFT height readback to the CURRENT wave time so the submerge/emerge
-            // transition isn't 1-2 frames late (the fog shader's per-pixel waterline is already current, and
-            // reads the same FFT surface - so the gate must too, not the analytic mirror). Falls back to the
-            // plain field / analytic sample when extrapolation isn't available (non-FFT body, first frames,
-            // or the camera outside the readback region).
-            if (OceanFftActive && _oceanFft.TrySampleHeightExtrapolated(p.x, p.z, _waveTime, out float fftHeight))
+            // Fog gate: use the latest FFT height readback (~1-2 frames stale; tolerable because the fog
+            // shader's per-pixel waterline is already current and reads the same FFT surface - the gate only
+            // arms the pass). Falls back to the plain field / analytic sample when the readback isn't
+            // available (non-FFT body, first frames, or the camera outside the readback region).
+            if (OceanFftActive && _oceanFft.TrySampleHeightLatest(p.x, p.z, out float fftHeight))
                 // Run the extrapolated (current-time) swell through the SAME shore/surf treatment the
                 // readback path (SampleLargeWaveField) and the GPU FFT branch (LargeBodyWaveHeight) use, so
                 // the submerge gate matches the rendered shore surface near shore: shoal attenuation +
@@ -3671,7 +3685,8 @@ namespace AbstractOcclusion.WebGpuWater
         int EffectiveWaveCount => Mathf.Min(waveCount, _maxWaveCount);
 
         // Wave arrays are per-body, mirrored to globals only by the primary (see WriteBodyUniforms).
-        // The wave CLOCK (_WaveTime) is genuinely shared and published in PublishSharedGlobals.
+        // The wave CLOCK (_WaveTime) is ALSO per body (TimeScale/pause are per-body controls), carried
+        // in the per-renderer blocks; the primary's global mirror is the camera-pass fallback.
 
         // With the link on, the depth colour tracks the fog extinction so a single dial drives
         // both; off, the depth colour is authored independently.

@@ -14,6 +14,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
         static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
         static readonly int ID_Caustic = Shader.PropertyToID("_CausticTex");
+        static readonly int ID_CausticOccluderActive = Shader.PropertyToID("_CausticOccluderActive");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
         static readonly int ID_Sky = Shader.PropertyToID("_Sky");
         static readonly int ID_Light = Shader.PropertyToID("_LightDir");
@@ -138,19 +139,22 @@ namespace AbstractOcclusion.WebGpuWater
             _body = body ?? throw new System.ArgumentNullException(nameof(body));
         }
 
-        // Genuinely shared across all bodies: the sun, the environment, and the wave clock.
+        // Genuinely shared across all bodies: the sun and the environment.
         internal void PublishSharedGlobals()
         {
-            if (_body.sun != null) _body.lightDir = -_body.sun.transform.forward;
-            Shader.SetGlobalVector(ID_Light, _body.lightDir.normalized);
+            Shader.SetGlobalVector(ID_Light, _body.EffectiveLightDir.normalized);
             Shader.SetGlobalColor(ID_SunColor, _body.sun != null ? _body.sun.color * _body.sun.intensity : Color.white);
             // Scene ambient feeds the volume-scatter in-scatter so shaded (away-from-sun) water isn't black.
             // Genuinely shared (scene lighting, not per body), so it rides with the sun here.
             Shader.SetGlobalColor(ID_ScatterAmbient, RenderSettings.ambientLight);
-            Shader.SetGlobalFloat(ID_WaveTime, _body.WaveTime);
             if (_body.tiles != null) Shader.SetGlobalTexture(ID_Tiles, _body.tiles);
             // NOTE: the reflection cube (_Sky) is published PER BODY in WriteBodyUniforms, not here -
             // a global would be stomped by the last body each frame when bodies use different skies.
+            // The wave clock (_WaveTime) moved to WriteBodyUniforms for the same reason: a shared global
+            // was last-writer-wins across bodies, so with 2+ bodies at different TimeScale (or one
+            // paused) every surface animated on whichever body updated last while CPU buoyancy used its
+            // own clock. Per-renderer blocks now carry each body's clock; the primary's global mirror
+            // (PublishBodyGlobals) remains the fallback for camera passes and membership-less objects.
         }
 
         // Reflection base cube for Reflect URP Probe: the scene skybox's cubemap if it exposes one, else
@@ -215,6 +219,11 @@ namespace AbstractOcclusion.WebGpuWater
         // both former paths (a null texture is skipped rather than unbound).
         void WriteBodyUniforms(IUniformSink sink)
         {
+            // Per-body wave clock: each body's renderers/objects animate on THEIR OWN clock (TimeScale,
+            // pause), matching CPU buoyancy/waterline. The primary's global mirror is the fallback for
+            // the fullscreen fog pass, the large-body caustic grid, and membership-less object shaders.
+            sink.SetFloat(ID_WaveTime, _body.WaveTime);
+
             WaterSimulation water = _body.Simulation;
             if (water != null)
             {
@@ -223,6 +232,9 @@ namespace AbstractOcclusion.WebGpuWater
                 if (water.FoamTexture != null) sink.SetTexture(ID_FoamMask, water.FoamTexture);
             }
             if (_body.CausticTexture != null) sink.SetTexture(ID_Caustic, _body.CausticTexture);
+            // Per body (a global was last-writer-wins with 2+ caustic bodies): 1 when THIS body's pass
+            // wrote submerged-object silhouettes into caustic.g this frame.
+            sink.SetFloat(ID_CausticOccluderActive, _body.CausticOccluderActive ? 1f : 0f);
 
             sink.SetVector(ID_VolumeCenter, _body.VolumeCenter);
             sink.SetVector(ID_VolumeExtent, _body.VolumeExtentSafe);

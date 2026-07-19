@@ -105,8 +105,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Main-light shadow keywords: this pass samples the shadow map BY HAND (it is CGPROGRAM, so
             // it can't include URP's Shadows.hlsl) to gate the analytic floor caustic. Needs "Transparent
             // Receive Shadows" ON in the active Renderer asset, else the keyword is never set (caustic
-            // stays lit, i.e. the old behaviour).
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            // stays lit, i.e. the old behaviour). _MAIN_LIGHT_SHADOWS_SCREEN is deliberately absent:
+            // WaterSurfaceShadow.hlsl only handles the shadow-map keywords, so the SCREEN variant would
+            // compile byte-identical to the no-keyword one (unknown keywords are ignored at set time).
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             // Reflection mode (planar / SSR / URP-probe base / real refraction) is UNIFORM-driven,
             // published per body every frame via the MaterialPropertyBlock (WaterUniformPublisher),
             // so it updates live in the editor and needs no shader variants.

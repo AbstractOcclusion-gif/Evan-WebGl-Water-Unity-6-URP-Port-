@@ -19,14 +19,6 @@ float3 ApplyWaterFog(float3 color, float dist)
     return lerp(_WaterFogColor.rgb, color, absorb);
 }
 
-// Depth-independent turbidity: pull a transmitted colour toward the fog colour by
-// _WaterOpacity, so water can be made non-transparent regardless of what's behind it.
-// Active whenever opacity > 0 (independent of the Beer-Lambert fog toggle).
-float3 ApplyWaterOpacity(float3 color)
-{
-    return lerp(color, _WaterFogColor.rgb, saturate(_WaterOpacity));
-}
-
 // ---- Underwater view tint (physical; replaces the old hardcoded UNDERWATER_* constants) ----
 // The colour the water casts on the reflected/refracted view AT the surface boundary, seen from
 // below. Derived from the SAME per-channel extinction that drives the fog, so it follows the
@@ -91,31 +83,14 @@ float3 WaterInscatterColor(float3 viewDirWS, float3 sunDir, float3 sunColor, flo
     return _ScatterColor.rgb * _ScatterIntensity * lighting;
 }
 
-// Blend a transmitted colour toward the water's in-scatter colour over 'dist' of water. Like
-// ApplyWaterFog but (a) toward a supplied lit in-scatter colour and (b) active when EITHER the fog or
-// the scattering feature is on - so turning on Volume Scattering alone still tints the transmitted
-// scene by depth (the whole point of a scattering volume). Transmittance stays on _WaterExtinction /
-// _WaterFogDensity, which are published every frame regardless of the toggles, so with both features
-// off this returns the colour unchanged - identical to the old ApplyWaterFog no-op.
-float3 ApplyWaterVolume(float3 color, float dist, float3 inscatter)
-{
-    if (_WaterFogEnabled < 0.5 && _ScatterEnabled < 0.5) return color;
-    float3 absorb = exp(-_WaterExtinction.rgb * (_WaterFogDensity * max(0.0, dist)));
-    return lerp(inscatter, color, absorb);
-}
-
-// Turbidity floor toward the water's in-scatter colour (the lit body colour when scattering is on,
-// else the flat fog colour, since 'inscatter' already carries that fallback). Mirrors ApplyWaterOpacity.
-float3 ApplyWaterOpacityTinted(float3 color, float3 inscatter)
-{
-    return lerp(color, inscatter, saturate(_WaterOpacity));
-}
-
 // ---- Depth clarity (auto transparency from the bed depth) ----------------
-// clarity in [0,1]: 1 = clear (identity - reproduces ApplyWaterVolume/ApplyWaterOpacityTinted
-// exactly), 0 = fully murky. A murky pixel gets denser fog (shorter reach) and higher turbidity,
-// so shallow/deep water reads as authored by WaterDepthClarity (below). Callers pass clarity = 1
-// wherever the feature is inactive, keeping every existing body byte-identical.
+// Blend a transmitted colour toward the water's in-scatter colour over 'dist' of water, active when
+// EITHER the fog or the scattering feature is on - so turning on Volume Scattering alone still tints
+// the transmitted scene by depth. Transmittance stays on _WaterExtinction / _WaterFogDensity, which
+// are published every frame regardless of the toggles, so with both features off the colour returns
+// unchanged. clarity in [0,1]: 1 = clear (identity), 0 = fully murky. A murky pixel gets denser fog
+// (shorter reach) and higher turbidity, so shallow/deep water reads as authored by WaterDepthClarity
+// (below). Callers pass clarity = 1 wherever the feature is inactive.
 #define CLARITY_FOG_DENSITY_MAX 4.0 // deepest murk multiplies the fog density by this at clarity 0
 float3 ApplyWaterVolumeClarity(float3 color, float dist, float3 inscatter, float clarity)
 {

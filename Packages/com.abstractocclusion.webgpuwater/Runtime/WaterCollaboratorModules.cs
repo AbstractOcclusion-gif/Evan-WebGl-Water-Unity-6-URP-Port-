@@ -63,7 +63,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         public void Initialize(WaterContext context)
             => Caustics = new WaterCausticsPass(_owner.causticsShader, _owner.largeBodyCausticsShader,
-                                                ResolveOccluderShader(_owner), _owner.causticResolution);
+                                                ResolveOccluderShader(_owner), _owner.EffectiveCausticResolution);
 
         // Optional refracted-light object-shadow shader. Prefer the serialized field (a build assigns it);
         // fall back to Shader.Find so an existing scene that predates the field still gets the fix in the

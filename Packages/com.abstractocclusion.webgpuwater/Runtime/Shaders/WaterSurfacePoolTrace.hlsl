@@ -24,45 +24,10 @@ float3 DeepWaterColor(float3 worldOrigin, float3 waterColor)
     return WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0) * waterColor;
 }
 
-// ---- WGSL derivative uniformity: gradient-fed clones of WaterCommon.hlsl's
-// GetWallShadeSplit / GetWallColorShadowed. GetSurfaceRayColor reaches the wall colour
-// inside a PER-FRAGMENT (non-uniform) ray branch, where the include's implicit-derivative
-// tex2D taps of _CausticTex / _Tiles are undefined in WGSL - and the include can't take
-// gradients without changing every other caller. The maths below is byte-identical to
-// the include; only the two taps become tex2Dgrad fed by the caller's hoisted
-// floor-point derivatives. ----
-float GetWallShadeSplitGrad(float3 p, float3 normal, float3 pDdx, float3 pDdy,
-                            out float causticTerm)
-{
-    causticTerm = 0.0;
-    float scale = 0.5;
-    scale /= max(length(p), POOL_AO_MIN_DIST);                                 // pool ambient occlusion
-
-    float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
-    float diffuse = max(0.0, dot(refractedLight, normal));
-    // Manual bilinear (not tex2D): WebGPU point-samples float32 textures, which turned
-    // the above/below-waterline cut into a blocky stair-step in builds.
-    float4 info = SampleWaterBilinear(p.xz * 0.5 + 0.5);
-    if (p.y < info.r)
-    {
-        // ProjectCausticUV is linear in p (refractedLight is uniform), so differencing it
-        // along the hoisted position derivatives yields the exact caustic-UV gradients.
-        float2 cuv = ProjectCausticUV(p, refractedLight);
-        float2 cuvDdx = ProjectCausticUV(p + pDdx, refractedLight) - cuv;
-        float2 cuvDdy = ProjectCausticUV(p + pDdy, refractedLight) - cuv;
-        float4 caustic = tex2Dgrad(_CausticTex, cuv, cuvDdx, cuvDdy);
-        causticTerm = diffuse * caustic.r * caustic.g;
-    }
-    else
-    {
-        // shadow for the rim of the pool
-        float2 t = IntersectCube(p, refractedLight, POOL_BOX_MIN, POOL_BOX_MAX);
-        diffuse *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (p.y + refractedLight.y * t.y - POOL_RIM_HEIGHT)));
-        scale += diffuse * 0.5;
-    }
-    return scale;
-}
-
+// WGSL derivative uniformity: GetSurfaceRayColor reaches the wall colour inside a PER-FRAGMENT
+// (non-uniform) ray branch, so every tap here uses explicit gradients fed by the caller's hoisted
+// floor-point derivatives. The caustic tap lives in WaterCommon's GetWallShadeSplit, which takes
+// the same hoisted derivatives (one shared implementation - no drift-prone clone).
 float3 GetWallColorShadowedGrad(float3 p, float causticShadow, float3 pDdx, float3 pDdy)
 {
     float2 uv; float3 normal, tangent, bitangent;
@@ -74,7 +39,7 @@ float3 GetWallColorShadowedGrad(float3 p, float causticShadow, float3 pDdx, floa
     else if (abs(p.z) > 0.999) { uvDdx = pDdx.yx * 0.5; uvDdy = pDdy.yx * 0.5; }
     else                       { uvDdx = pDdx.xz * 0.5; uvDdy = pDdy.xz * 0.5; }
     float causticTerm;
-    float scale = GetWallShadeSplitGrad(p, normal, pDdx, pDdy, causticTerm);
+    float scale = GetWallShadeSplit(p, normal, pDdx, pDdy, causticTerm);
     float shade = scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH * causticShadow;
     return tex2Dgrad(_Tiles, uv, uvDdx, uvDdy).rgb * shade;
 }
@@ -113,7 +78,7 @@ float3 GetSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor
         // Gate the floor caustic by the main-light shadow at the FLOOR's world position, so
         // a caster's shadow on the pool bottom kills the caustic there (like the geometry paths).
         // When the occluder pass is active the refracted object shadow is already baked into the
-        // caustic green channel (caustic.r * caustic.g in GetWallShadeSplitGrad), so don't also
+        // caustic green channel (caustic.r * caustic.g in GetWallShadeSplit), so don't also
         // apply the un-refracted shadow map on top - that would double-shadow the reflected floor.
         float causticShadow = (_CausticOccluderActive > 0.5) ? 1.0 : WaterMainLightShadow(PoolToWorld(floorPool));
         return GetWallColorShadowedGrad(floorPool, causticShadow, floorDdx, floorDdy) * waterColor;

@@ -46,13 +46,16 @@ namespace AbstractOcclusion.WebGpuWater.Demo
         // The fly-controls line is fixed text, kept here so it can never drift from FlyCamera's own
         // header comment when someone edits the Description field.
         const string CameraControlsText =
-            "Fly Camera - hold RIGHT mouse to look, WASD move, Q/E down/up, Shift sprint, wheel = speed.";
+            "Fly Camera - hold RIGHT mouse to look, WASD move, Q/E down/up, Shift sprint.";
         const float PanelPadding = 12f;
         const float TitleBodyGap = 6f;
         const float HintGap = 6f;
 
         bool _visible;
         Texture2D _backingTexture; // 1x1 white, tinted per-draw by GUI.color
+        // Styles cached across OnGUI events (OnGUI fires 2+ times/frame; building GUIStyles there
+        // allocates every event). Rebuilt when the inspector changes a style field (OnValidate).
+        GUIStyle _titleStyle, _bodyStyle, _hintStyle;
 
         void OnEnable()
         {
@@ -69,18 +72,42 @@ namespace AbstractOcclusion.WebGpuWater.Demo
             _backingTexture = null;
         }
 
+        void OnValidate() => _titleStyle = _bodyStyle = _hintStyle = null;
+
         void Update()
         {
-            if (Input.GetKeyDown(toggleKey)) _visible = !_visible;
+            if (TogglePressed()) _visible = !_visible;
+        }
+
+        // Toggle key on either input backend: the legacy API throws on Input-System-only projects.
+        // KeyCode names map onto InputSystem.Key names for the plain keys a toggle would use (F1..F12,
+        // Space, Tab, letters); an unmappable binding just disables the toggle instead of throwing.
+        bool TogglePressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var keyboard = UnityEngine.InputSystem.Keyboard.current;
+            if (keyboard == null) return false;
+            if (!System.Enum.TryParse(toggleKey.ToString(), true, out UnityEngine.InputSystem.Key key))
+                return false;
+            return keyboard[key].wasPressedThisFrame;
+#else
+            return Input.GetKeyDown(toggleKey);
+#endif
         }
 
         void OnGUI()
         {
             if (!_visible) return;
 
-            GUIStyle titleStyle = BuildLabelStyle(titleFontSize, FontStyle.Bold);
-            GUIStyle bodyStyle = BuildLabelStyle(bodyFontSize, FontStyle.Normal);
-            GUIStyle hintStyle = BuildLabelStyle(Mathf.Max(8, bodyFontSize - 2), FontStyle.Italic);
+            if (_titleStyle == null || _bodyStyle == null || _hintStyle == null)
+            {
+                _titleStyle = BuildLabelStyle(titleFontSize, FontStyle.Bold);
+                _bodyStyle = BuildLabelStyle(bodyFontSize, FontStyle.Normal);
+                _hintStyle = BuildLabelStyle(Mathf.Max(8, bodyFontSize - 2), FontStyle.Italic);
+            }
+            GUIStyle titleStyle = _titleStyle;
+            GUIStyle bodyStyle = _bodyStyle;
+            GUIStyle hintStyle = _hintStyle;
 
             string body = showCameraControls ? description + "\n\n" + CameraControlsText : description;
             string hint = $"[{toggleKey}] hide";

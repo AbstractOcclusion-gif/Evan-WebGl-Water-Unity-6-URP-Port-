@@ -131,12 +131,55 @@ namespace AbstractOcclusion.WebGpuWater
             return Mathf.Clamp01(1f - heightAboveSurface / Mathf.Max(depthScale, MinDivisor));
         }
 
-        // Old Input Manager (the demos use it). Guarded so a project missing the axis still loads.
+        // Throttle/steer axis, on either input backend. The Input System path reads WASD/arrows
+        // directly (like FlyCamera) so an Input-System-only project gets a working boat instead of
+        // an InvalidOperationException from the legacy API. The legacy path probes the axis ONCE
+        // (Awake) instead of exception-driven flow control every frame.
         static float ReadAxis(string axis)
         {
-            try { return Input.GetAxis(axis); }
-            catch (System.ArgumentException) { return 0f; }
+#if ENABLE_INPUT_SYSTEM
+            var k = UnityEngine.InputSystem.Keyboard.current;
+            if (k == null) return 0f;
+            float v = 0f;
+            if (axis == ThrottleAxis)
+            {
+                if (k.wKey.isPressed || k.upArrowKey.isPressed) v += 1f;
+                if (k.sKey.isPressed || k.downArrowKey.isPressed) v -= 1f;
+            }
+            else
+            {
+                if (k.dKey.isPressed || k.rightArrowKey.isPressed) v += 1f;
+                if (k.aKey.isPressed || k.leftArrowKey.isPressed) v -= 1f;
+            }
+            return v;
+#else
+            if (!_axesProbed) ProbeAxes();
+            if (!_axesValid) return 0f;
+            return Input.GetAxis(axis);
+#endif
         }
+
+#if !ENABLE_INPUT_SYSTEM
+        static bool _axesProbed, _axesValid;
+
+        // One-time guard so a project missing the default axes degrades to a parked boat with a
+        // single warning, instead of throwing per frame.
+        static void ProbeAxes()
+        {
+            _axesProbed = true;
+            try
+            {
+                Input.GetAxis(ThrottleAxis);
+                Input.GetAxis(SteerAxis);
+                _axesValid = true;
+            }
+            catch (System.ArgumentException)
+            {
+                _axesValid = false;
+                Debug.LogWarning($"BoatController: Input Manager axes '{ThrottleAxis}'/'{SteerAxis}' are missing; boat input disabled.");
+            }
+        }
+#endif
 
         void OnDrawGizmosSelected()
         {

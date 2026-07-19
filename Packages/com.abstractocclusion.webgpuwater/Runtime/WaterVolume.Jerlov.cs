@@ -12,8 +12,5 @@ namespace AbstractOcclusion.WebGpuWater
          Tooltip("Physical Jerlov water type. Use the \"Apply water colour\" button to write it into " +
                  "Fog Extinction and the body/scatter colour. Purely a stored reference on its own.")]
         JerlovWaterType jerlovWaterType = JerlovWaterType.OceanII;
-
-        /// <summary>The water type this body was last set to (reference only; applying it writes the colour fields).</summary>
-        internal JerlovWaterType JerlovType => jerlovWaterType;
     }
 }

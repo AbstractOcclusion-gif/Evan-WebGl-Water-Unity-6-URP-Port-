@@ -13,7 +13,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     // The water shaders + compute, loaded and validated once (see WaterBuildKit.TryLoadShaders).
     internal struct ShaderSet
     {
-        public Shader Water, Pool, Caustics, Obstacle, Receiver;
+        public Shader Water, Pool, Caustics, Obstacle;
         public ComputeShader Compute;
     }
 
@@ -75,7 +75,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string ShaderAnalyticPool = "AbstractOcclusion/WebGpuWater/AnalyticPool";
         internal const string ShaderCaustics = "AbstractOcclusion/WebGpuWater/Caustics";
         internal const string ShaderObstacle = "AbstractOcclusion/WebGpuWater/ObstacleDepth";
-        internal const string ShaderReceiver = "AbstractOcclusion/WebGpuWater/WaterReceiver";
         internal const string ShaderGodRays = "AbstractOcclusion/WebGpuWater/GodRays";
 
         // Material property names (keep in sync with the shader Properties blocks).
@@ -87,7 +86,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropGodRayColor = "_GodRayColor";
         internal const string PropFoamTex = "_FoamTex";
         internal const string PropFoamTexFrames = "_FoamTexFrames";
-        internal const string PropFoamNormalTex = "_FoamNormalTex";
         internal const string PropParticleTex = "_ParticleTex";
 
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
@@ -107,10 +105,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string DropletTexturePath = Gen + "/DropletPacked.png";
 
         // Foam pattern flipbook (frames laid out in a grid; the surface shader
-        // cross-fades frames over time so the foam churns internally) and its
-        // frame-matched relief normal map (raw-RGB encoded, imported linear).
+        // cross-fades frames over time so the foam churns internally). Relief is
+        // procedural (finite differences of the pattern), so no normal-map asset.
         const string FoamFlipbookPath = Gen + "/FoamFlipbook_4x4.png";
-        const string FoamNormalFlipbookPath = Gen + "/FoamFlipbookNormal_4x4.png";
         const int FoamFlipbookCols = 4;
         const int FoamFlipbookRows = 4;
 
@@ -373,7 +370,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // ---------------------------------------------------------------- scene rig
         // Reuse the scene's main camera if there is one (avoids two cameras rendering on top of each
-        // other), then attach the orbit + planar-reflection helpers.
+        // other), then attach the orbit helper.
         internal static Camera SetUpCamera(out OrbitCamera orbit)
         {
             var cam = Camera.main;
@@ -394,12 +391,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             orbit.pitch = DemoOrbitPitch;
             orbit.yaw = DemoOrbitYaw;
             orbit.distance = DemoOrbitDistance;
-
-            var planar = cam.GetComponent<PlanarReflection>();
-            if (planar == null) planar = cam.gameObject.AddComponent<PlanarReflection>();
-            planar.sourceCamera = cam;
-            planar.waterHeight = 0f;
-            planar.enableReflection = false;
+            // No PlanarReflection component here: per-body planar mirrors (WaterVolume.RenderPlanarMirror)
+            // supersede the global camera-attached reflection, so attaching it (disabled) was dead weight.
             return cam;
         }
 
@@ -728,7 +721,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 Pool = Shader.Find(ShaderAnalyticPool),
                 Caustics = Shader.Find(ShaderCaustics),
                 Obstacle = Shader.Find(ShaderObstacle),
-                Receiver = Shader.Find(ShaderReceiver),
                 Compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(SimComputePath)
             };
 

@@ -40,7 +40,15 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _bakeAttempted = true;
             Terrain terrain = _body.bedTerrain != null ? _body.bedTerrain : Terrain.activeTerrain;
-            if (terrain == null) { _baked = false; return; }
+            if (terrain == null)
+            {
+                // Loud once, not silent: Use Bed Depth is ON but there is nothing to bake from, and
+                // the _bakeAttempted gate would otherwise hide the no-op until a disable/enable.
+                Debug.LogWarning($"WaterVolume '{_body.name}': Use Bed Depth is on but no Terrain is " +
+                                 "assigned (and there is no active terrain) - bed-depth shading disabled.", _body);
+                _baked = false;
+                return;
+            }
 
             int res = Mathf.Clamp(_body.bedResolution, MinResolution, MaxResolution);
             EnsureBedTexture(res);

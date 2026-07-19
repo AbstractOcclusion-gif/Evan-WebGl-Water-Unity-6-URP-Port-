@@ -139,7 +139,15 @@ namespace AbstractOcclusion.WebGpuWater
             _sdfBaked = false;
 
             Terrain terrain = _body.bedTerrain != null ? _body.bedTerrain : Terrain.activeTerrain;
-            if (terrain == null || terrain.terrainData == null) return;
+            if (terrain == null || terrain.terrainData == null)
+            {
+                // Loud once, not silent: Use Bed Depth is ON but there is no terrain to bake the
+                // shore field from, and _bakeAttempted would otherwise hide the no-op (no shoal,
+                // no surf, no swash) until a disable/enable.
+                Debug.LogWarning($"WaterVolume '{_body.name}': Use Bed Depth is on but no Terrain " +
+                                 "(with TerrainData) is available - shore depth field disabled.", _body);
+                return;
+            }
 
             Vector3 origin = terrain.transform.position;
             Vector3 size = terrain.terrainData.size;

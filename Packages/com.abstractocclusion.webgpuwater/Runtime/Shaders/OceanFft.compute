@@ -7,7 +7,8 @@
 //   FftHorizontal     - inverse FFT along each row (in place on the spectra), groupshared butterfly.
 //   FftVertical       - inverse FFT along each column, then (-1)^(x+y) fftshift + per-cascade height
 //                       scale, combining the 3 signals into the spatial displacement cascade.
-//   VisualizePreview  - TEMP: remap displacement to a readable grey/colour image for the debug view.
+//   VisualizePreview  - remap displacement to a readable grey/colour image for the debug view
+//                       (dispatched by C# only in editor/development builds).
 //
 // The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grid is fixed at
 // FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
@@ -33,11 +34,11 @@ RWTexture2DArray<uint> OceanSpecZ;         // horizontal z spectrum
 RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
 // CHANNEL CONTRACT - OceanNormal repurposes two lanes; every consumer must honour this:
 //   .xz = surface normal tilt          (OceanFftNormalTilt, WaterLargeWaves.hlsl)
-//   .y  = crest pinch saturate(1 - J)  (OceanFftJacobian -> SSS crest glow) - NOT the normal's up-component,
+//   .y  = crest pinch saturate(1 - J)  (OceanFftJacobianShore -> SSS crest glow) - NOT the normal's up-component,
 //         which no consumer reads; reconstruct up as sqrt(1 - dot(xz, xz)) if ever needed.
 //   .w  = accumulated whitecap foam    (OceanFftFoam -> surface shading + particle spawns)
 RWTexture2DArray<float4> OceanNormal;
-RWTexture2DArray<float4> OceanPreview;     // TEMP: remapped displacement for the debug view
+RWTexture2DArray<float4> OceanPreview;     // remapped displacement for the debug view (editor/dev only)
 Texture2D<float4>        OceanButterfly;   // (twiddle.x, twiddle.y, indexA, indexB) per (stage, element)
 
 uint   OceanFftResolution;
@@ -52,7 +53,7 @@ float  OceanSwellWavelength; // metres, peak wavelength of the long-period swell
 float  OceanSwellHeight;     // metres, swell amplitude knob (remote swell, independent of wind speed)
 float  OceanFftTime;
 uint   OceanSpectrumSeed;
-float  OceanPreviewGain;     // TEMP: display gain for VisualizePreview
+float  OceanPreviewGain;     // display gain for VisualizePreview (editor/dev only)
 
 // --- Ocean whitecap foam: temporal Jacobian accumulation (ComputeNormal) ---
 Texture2DArray<float>   OceanFoamPrev;   // previous-frame accumulated foam (read-only SRV)

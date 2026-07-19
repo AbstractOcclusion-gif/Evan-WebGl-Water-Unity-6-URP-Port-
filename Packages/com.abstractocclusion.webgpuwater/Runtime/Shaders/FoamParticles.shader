@@ -190,15 +190,26 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 }
                 else
                 {
-                    // in the surface plane: seed yaw, stretched along the drift direction
+                    // in the surface plane: seed yaw, stretched along the drift direction.
+                    // Both normalizes are NaN-guarded (DEGENERATE_DIR_EPSILON, WaterShared.hlsl):
+                    // cross degenerates when the surface normal reaches +/-Z, and the projected
+                    // velocity cancels when the drift is parallel to the normal (extreme wave
+                    // tilt) - either NaN would spread to the whole billboard.
                     float yaw = particle.seed * PARTICLE_TWO_PI;
-                    float3 flat0 = normalize(cross(surfaceNormal, float3(0, 0, 1)));
+                    float3 rawFlat = cross(surfaceNormal, float3(0, 0, 1));
+                    if (dot(rawFlat, rawFlat) < DEGENERATE_DIR_EPSILON)
+                        rawFlat = cross(surfaceNormal, float3(1, 0, 0));
+                    float3 flat0 = normalize(rawFlat);
                     float3 flat1 = cross(surfaceNormal, flat0);
                     axisX = flat0 * cos(yaw) + flat1 * sin(yaw);
                     if (speed > STRETCH_MIN_SPEED)
                     {
-                        axisX = normalize(particle.velocity - surfaceNormal * dot(particle.velocity, surfaceNormal));
-                        stretch = 1.0 + min(STRETCH_MAX, speed * _VelocityStretch);
+                        float3 planar = particle.velocity - surfaceNormal * dot(particle.velocity, surfaceNormal);
+                        if (dot(planar, planar) >= DEGENERATE_DIR_EPSILON)
+                        {
+                            axisX = normalize(planar);
+                            stretch = 1.0 + min(STRETCH_MAX, speed * _VelocityStretch);
+                        }
                     }
                     axisY = cross(surfaceNormal, axisX);
                 }

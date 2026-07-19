@@ -85,8 +85,8 @@ float4 SampleWaterBicubic(float2 uv)
 }
 
 // Pick the pool face a POOL-space point lies on: the tile UV, the flat face normal, and a
-// tangent frame that matches the UV axes (for optional normal mapping). Shared by GetWallColor
-// (the analytic look) and the AnalyticPool geometry pass (which supplies its own texture/normal).
+// tangent frame that matches the UV axes (for optional normal mapping). Shared by the pool-trace
+// Grad clone and the AnalyticPool geometry pass (which supplies its own texture/normal).
 void WallSurface(float3 p, out float2 uv, out float3 normal, out float3 tangent, out float3 bitangent)
 {
     if (abs(p.x) > 0.999)
@@ -114,19 +114,21 @@ void WallSurface(float3 p, out float2 uv, out float3 normal, out float3 tangent,
 
 // The pool wall SHADING scalar (no albedo): pool ambient occlusion, refracted-sun diffuse for
 // the supplied normal, projected caustics below the waterline and the rim shadow above it. Split
-// out so the AnalyticPool geometry pass can reuse it with a normal-mapped normal and its own albedo,
-// while GetWallColor keeps the original analytic behaviour byte-for-byte.
+// out so the AnalyticPool geometry pass can reuse it with a normal-mapped normal and its own albedo.
 
-// Strength the projected caustics are baked at in the legacy analytic path (GetWallColor). AnalyticPool
-// overrides this with its own material Caustic Strength; keeping the legacy value here as a named
-// constant preserves GetWallColor's result exactly.
+// Strength the projected caustics are baked at in the legacy analytic path (now only the Grad clone
+// in WaterSurfacePoolTrace.hlsl). AnalyticPool overrides this with its own material Caustic Strength.
 #define WALL_CAUSTIC_LEGACY_STRENGTH 2.0
 
 // Base wall shade (pool AO + refracted diffuse + above-water rim shadow) WITHOUT caustics, plus the
 // separated caustic term via 'causticTerm' (0 above the waterline). A geometry pass can apply its
-// own strength/tint to the caustic like WaterReceiver, while GetWallShade below re-bakes it at the
-// legacy strength so the analytic GetWallColor path is unchanged.
-float GetWallShadeSplit(float3 p, float3 normal, out float causticTerm)
+// own strength/tint to the caustic like WaterReceiver.
+// pDdx/pDdy are the caller's screen derivatives of p, hoisted in UNIFORM control flow: the caustic
+// tap below sits inside a per-fragment waterline branch, where an implicit-derivative tex2D is
+// undefined in WGSL (broken mip selection along the waterline on WebGPU). ProjectCausticUV is
+// linear in p (refractedLight is uniform), so differencing it along the hoisted derivatives yields
+// the exact caustic-UV gradients for tex2Dgrad.
+float GetWallShadeSplit(float3 p, float3 normal, float3 pDdx, float3 pDdy, out float causticTerm)
 {
     causticTerm = 0.0;
     float scale = 0.5;
@@ -139,7 +141,10 @@ float GetWallShadeSplit(float3 p, float3 normal, out float causticTerm)
     float4 info = SampleWaterBilinear(p.xz * 0.5 + 0.5);
     if (p.y < info.r)
     {
-        float4 caustic = tex2D(_CausticTex, ProjectCausticUV(p, refractedLight));
+        float2 cuv = ProjectCausticUV(p, refractedLight);
+        float2 cuvDdx = ProjectCausticUV(p + pDdx, refractedLight) - cuv;
+        float2 cuvDdy = ProjectCausticUV(p + pDdy, refractedLight) - cuv;
+        float4 caustic = tex2Dgrad(_CausticTex, cuv, cuvDdx, cuvDdy);
         // Caller scales this (diffuse * focus * rim-occluder) by its own caustic strength.
         causticTerm = diffuse * caustic.r * caustic.g;
     }
@@ -152,31 +157,5 @@ float GetWallShadeSplit(float3 p, float3 normal, out float causticTerm)
     }
     return scale;
 }
-
-// Full analytic wall shade with caustics baked at the legacy strength. Kept so GetWallColor (and
-// its WaterSurface underwater-reflection use) render exactly as before.
-float GetWallShade(float3 p, float3 normal)
-{
-    float causticTerm;
-    float scale = GetWallShadeSplit(p, normal, causticTerm);
-    return scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH;
-}
-
-// Analytic wall colour with the projected caustic gated by an externally supplied main-light shadow
-// term (0 = fully shadowed -> no caustic, 1 = lit -> legacy look). The caller (WaterSurface) samples
-// the shadow at the floor's world position; a caustic is refracted sun, so it must vanish under a
-// caster like the geometry paths (AnalyticPool / WaterReceiver) already do.
-float3 GetWallColorShadowed(float3 p, float causticShadow)
-{
-    float2 uv; float3 normal, tangent, bitangent;
-    WallSurface(p, uv, normal, tangent, bitangent);
-    float causticTerm;
-    float scale = GetWallShadeSplit(p, normal, causticTerm);
-    float shade = scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH * causticShadow;
-    return tex2D(_Tiles, uv).rgb * shade;
-}
-
-// Unshadowed analytic wall colour (causticShadow = 1): byte-identical to the legacy path.
-float3 GetWallColor(float3 p) { return GetWallColorShadowed(p, 1.0); }
 
 #endif // WEBGL_WATER_COMMON_INCLUDED

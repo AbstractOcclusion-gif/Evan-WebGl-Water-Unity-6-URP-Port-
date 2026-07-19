@@ -39,8 +39,8 @@ namespace AbstractOcclusion.WebGpuWater
         // same crossing becomes a smooth 1/16-step coverage ramp.
         const int SupersampleFactor = 4;
 
-        // Footprint pass in ObstacleDepth.shader. (Pass 1, the temporal-EMA blit, is disabled -
-        // it doesn't run on this URP/WebGPU backend; see Render's plain-copy comment.)
+        // Footprint pass in ObstacleDepth.shader (its only pass; temporal smoothing is the
+        // caller's ObstacleSmooth compute kernel - see Render's plain-copy comment).
         const int PassFootprint = 0;
 
         readonly Material _mat;

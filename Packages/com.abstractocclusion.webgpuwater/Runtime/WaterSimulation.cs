@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    public class WaterSimulation
+    public class WaterSimulation : System.IDisposable
     {
         // The compute shader dispatches in 8x8 thread groups, so the grid must be a positive
         // multiple of this. Must match [numthreads(...)] in WaterSim.compute.
@@ -126,6 +126,16 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>The current foam amount texture (R channel).</summary>
         public RenderTexture FoamTexture => _foamA;
 
+        // Every kernel the sim dispatches, validated up front (see the constructor guard): a wrong
+        // or stale compute asset should fail with ONE clear message naming the missing kernel, not
+        // an opaque ArgumentException mid-construction (mirrors WaterOceanFft.HasAllKernels).
+        static readonly string[] RequiredKernels =
+        {
+            KernelDrop, KernelSphereInteract, KernelUpdate, KernelNormal, KernelObstacle,
+            KernelObstacleSmooth, KernelFoam, KernelReduceMean, KernelReduceMeanFinal,
+            KernelConserve, KernelScroll, KernelScrollFoam
+        };
+
         public WaterSimulation(ComputeShader cs, int resolution)
         {
             if (cs == null) throw new System.ArgumentNullException(nameof(cs));
@@ -133,6 +143,11 @@ namespace AbstractOcclusion.WebGpuWater
                 throw new System.ArgumentException(
                     $"WaterSimulation resolution must be a positive multiple of {ThreadGroupSize}, got {resolution}.",
                     nameof(resolution));
+            foreach (string kernel in RequiredKernels)
+                if (!cs.HasKernel(kernel))
+                    throw new System.ArgumentException(
+                        $"Compute shader '{cs.name}' is missing kernel '{kernel}' - assign the WaterSim compute.",
+                        nameof(cs));
 
             Resolution = resolution;
             _delta = new Vector4(1f / Resolution, 1f / Resolution, 0f, 0f);

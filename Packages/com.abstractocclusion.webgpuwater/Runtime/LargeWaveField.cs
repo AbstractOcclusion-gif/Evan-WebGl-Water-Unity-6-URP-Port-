@@ -242,19 +242,6 @@ namespace AbstractOcclusion.WebGpuWater
         static float SurfGamma(float tanBeta)
             => Mathf.Clamp(SurfGammaBase + SurfGammaSlopeGain * tanBeta, SurfGammaBase, SurfGammaMax);
 
-        /// <summary>Break-criterion ratio H/(gamma*depth) for a MEAN set wave (setAmp = 1) at a
-        /// column depth + beach slope: the break LINE is where this crosses 1. Composed from the
-        /// same mirrored terms the height math uses, so it can never drift from where the shader
-        /// actually breaks. Closed-form from the CPU shore arrays - no readback.</summary>
-        internal static float SurfBreakOverCap(in ShoreWaveContext ctx, float depth, float slopeTan)
-        {
-            float d = Mathf.Max(depth, SurfMinDepth);
-            float green = Mathf.Min(Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, 0.25f),
-                                    Mathf.Max(ctx.Greens, 1f));
-            float capH = SurfGamma(slopeTan) * d;
-            return (ctx.SurfAmplitude * green) / Mathf.Max(capH, 1e-3f);
-        }
-
         // Mirrors SurfFrontHeight() in WaterSurfWaves.hlsl (height only - buoyancy needs no foam).
         static float SurfFrontHeight(in ShoreWaveContext ctx, float x, float z,
                                      float sWarp, float depth, float tanBeta, float time)
@@ -477,7 +464,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>
         /// Wave (height, dHeight/dx, dHeight/dz) in metres at world (x, z). Mirrors
-        /// EvaluateLargeBodyWave() in WaterLargeWaves.hlsl. <paramref name="time"/> is the body's
+        /// EvaluateLargeBodyWaveShore() in WaterLargeWaves.hlsl. <paramref name="time"/> is the body's
         /// WaveTime. Height drives buoyancy depth; the slope drives wave-carried drift.
         /// </summary>
         internal static Vector3 Evaluate(float worldX, float worldZ, float time, float amplitudeScale,
@@ -489,8 +476,8 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>
-        /// Horizontal Gerstner offset (metres) at a SOURCE (x, z), choppiness baked in. Mirrors
-        /// LargeBodyWaveDisplacement() in WaterLargeWaves.hlsl. Zero when <paramref name="choppiness"/>
+        /// Horizontal Gerstner offset (metres) at a SOURCE (x, z), choppiness baked in. Mirrors the
+        /// .disp term of EvaluateLargeBodyWaveShore() in WaterLargeWaves.hlsl. Zero when <paramref name="choppiness"/>
         /// is 0, so the field collapses to the pure vertical swell.
         /// </summary>
         static Vector2 Displacement(float sourceX, float sourceZ, float time, float amplitudeScale,
@@ -537,13 +524,6 @@ namespace AbstractOcclusion.WebGpuWater
             return Evaluate(source.x, source.y, time, amplitudeScale, windHeadingRadians,
                             swellWavelength, swellHeight, ctx);
         }
-
-        /// <summary>Wave height (metres) at a QUERY world (x, z), chop-inverted. See EvaluateAtQuery.</summary>
-        internal static float HeightAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
-            in ShoreWaveContext ctx)
-            => EvaluateAtQuery(worldX, worldZ, time, amplitudeScale, windHeadingRadians,
-                               swellWavelength, swellHeight, choppiness, ctx).x;
 
         /// <summary>
         /// Vertical surface velocity d(height)/dt (m/s) at a QUERY world (x, z), chop-inverted: the swell's

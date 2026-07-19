@@ -43,10 +43,9 @@
 //   pathological grazing. 1e-5 remains the right div-by-zero guard there.
 #define GGX_NDF_EPSILON             1e-9
 #define GGX_VISIBILITY_EPSILON      1e-5
-// Squared-length floor under which a direction has cancelled to ~zero and
-// normalize() would return NaN (0/0). Used by the aniso-tap and half-vector
-// guards below; well under any visually meaningful vector (length < 1e-4).
-#define DEGENERATE_DIR_EPSILON      1e-8
+// DEGENERATE_DIR_EPSILON (the normalize-NaN floor used by the aniso-tap and
+// half-vector guards below) lives in WaterShared.hlsl, shared with the foam
+// tangent-frame guard.
 // Anisotropic (vertically stretched) sky reflection: wave slopes tilt mostly about
 // horizontal axes, so a rough water mirror smears what it reflects VERTICALLY - the
 // classic elongated ocean reflection (KWS's ReflectionPreFiltering does this as an

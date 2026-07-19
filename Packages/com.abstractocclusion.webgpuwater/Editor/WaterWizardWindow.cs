@@ -193,8 +193,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (_kind != WaterKind.OpenWaterOcean)
                 return;
 
-            EditorGUILayout.HelpBox("Open water is experimental: analytic large waves by default; the horizon " +
-                                    "clipmap needs the WEBGPUWATER_LARGE_BODY define.", MessageType.Info);
+            EditorGUILayout.HelpBox("Open water is experimental: analytic large waves by default; enable " +
+                                    "Unbounded below for the camera-following horizon clipmap.", MessageType.Info);
             EditorGUI.indentLevel++;
             _unboundedOcean = EditorGUILayout.Toggle(
                 new GUIContent("Unbounded (to horizon)", "Extend the surface to the horizon with a camera-following clipmap."),

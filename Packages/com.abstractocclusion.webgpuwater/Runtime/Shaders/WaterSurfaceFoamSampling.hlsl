@@ -349,9 +349,15 @@ float2 SampleOceanWhitecapTilt(float2 worldXZ, float2 worldDdx, float2 worldDdy)
 // Tilt the shading normal by a foam relief tilt (xy = xz slope) in the surface's
 // local tangent frame. ONE shared frame construction for every foam layer (ocean
 // whitecap, pond foam, surf whitewash), so their relief shading can never diverge.
+// NaN guard: a normal pushed near +/-Z (the large-body tilt path can) makes
+// cross(normal, Z) degenerate and normalize() NaNs every foam layer's shading;
+// fall back to the X axis there (DEGENERATE_DIR_EPSILON from WaterShared.hlsl).
 float3 ApplyFoamTiltToNormal(float3 normal, float2 tilt)
 {
-    float3 tangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+    float3 rawTangent = cross(normal, float3(0.0, 0.0, 1.0));
+    if (dot(rawTangent, rawTangent) < DEGENERATE_DIR_EPSILON)
+        rawTangent = cross(normal, float3(1.0, 0.0, 0.0));
+    float3 tangent = normalize(rawTangent);
     float3 bitangent = cross(normal, tangent);
     return normalize(normal + tangent * tilt.x + bitangent * tilt.y);
 }

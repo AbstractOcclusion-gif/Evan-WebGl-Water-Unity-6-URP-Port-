@@ -191,16 +191,6 @@ LargeBodyWaveField EvaluateLargeBodyWaveShore(float2 worldXZ, float minWavelengt
     return f;
 }
 
-// Back-compat wrapper: sample the shore + surf here. Prefer the Shore variant when the caller
-// already has the samples.
-LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
-{
-    ShoreData shore = ShoreSample(worldXZ);
-    SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.slopeTan, shore.influence, _SurfBeatTime);
-    return EvaluateLargeBodyWaveShore(worldXZ, minWavelength, shore, surf);
-}
-
 // --- FFT-cascade lookup (step 2) ------------------------------------------------------------------
 // The WaterOceanFft pass publishes these globals for ocean bodies. When _OceanFftActive is 0 (pools,
 // bounded bodies, or an unsupported device) the functions below fall back to the analytic generator
@@ -244,12 +234,6 @@ float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
              * _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
     }
     return sum;
-}
-
-// Back-compat: samples the shore field itself (kept for any caller without a sample in hand).
-float3 OceanFftDisplacement(float2 worldXZ)
-{
-    return OceanFftDisplacementShore(worldXZ, ShoreSample(worldXZ));
 }
 
 // Sum the surface-normal tilt (xz of the per-cascade world normal) across the active cascades. This is
@@ -335,11 +319,6 @@ float OceanFftJacobianShore(float2 worldXZ, ShoreData shore)
     return saturate(pinch);
 }
 
-float OceanFftJacobian(float2 worldXZ)
-{
-    return OceanFftJacobianShore(worldXZ, ShoreSample(worldXZ));
-}
-
 // Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera
 // (the clipmap triangles get bigger). 0 when band-limiting is off (bounded bodies, _LargeWaveDetailSlope = 0).
 float LargeBodyWaveMinWavelength(float2 worldXZ)
@@ -362,19 +341,6 @@ float LargeBodyWaveHeight(float2 worldXZ)
     return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).height;
 }
 
-// Horizontal Gerstner offset (metres) for the vertex xz displacement, choppiness baked in. Zero when
-// _LargeWaveChoppiness = 0, so the surface reduces to the pure vertical swell (unchanged).
-float2 LargeBodyWaveDisplacement(float2 worldXZ)
-{
-    ShoreData shore = ShoreSample(worldXZ);
-    SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
-                                            shore.slopeTan, shore.influence, _SurfBeatTime);
-    if (_OceanFftActive > 0.5)
-        return OceanFftDisplacementShore(worldXZ, shore).xz
-               * (_LargeWaveChoppiness * _LargeWaveAmplitude * SurfAmbientWeight(surf.mask));
-    return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).disp
-           * _LargeWaveChoppiness;
-}
 
 // Height + horizontal chop from ONE field evaluation - the vertex's hot path. The separate
 // LargeBodyWaveHeight/Displacement wrappers each re-sample the shore, re-evaluate the surf fronts

@@ -93,8 +93,8 @@ LightmapSettings:
     m_ExportTrainingData: 0
     m_TrainingDataDestination: TrainingData
     m_LightProbeSampleCountMultiplier: 4
-  m_LightingDataAsset: {fileID: 20201, guid: 0000000000000000f000000000000000, type: 0}
-  m_LightingSettings: {fileID: 0}
+  m_LightingDataAsset: {fileID: 112000000, guid: 93571b53bcb61f541a3fbf7f7a5c8539, type: 2}
+  m_LightingSettings: {fileID: 4890085278179872738, guid: 3fce83765da33f34bb893bf583bab7ad, type: 2}
 --- !u!196 &4
 NavMeshSettings:
   serializedVersion: 2
@@ -752,13 +752,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.8019842, z: 0, w: 0.59734535}
+  m_LocalRotation: {x: 0, y: 0.8535508, z: 0, w: 0.52100974}
   m_LocalPosition: {x: 0, y: 4.61, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 106.64, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 117.2, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -814,7 +814,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!215 &1318482035
 ReflectionProbe:
   m_ObjectHideFlags: 0
@@ -917,7 +917,7 @@ MonoBehaviour:
   targetCamera: {fileID: 961739752}
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
-  sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
+  sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
   rippleQuality: 0
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
@@ -939,8 +939,8 @@ MonoBehaviour:
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
-    horizonHazeColor: {r: 0.3019608, g: 0.3372549, b: 0.32156864, a: 1}
-    horizonHazeDensity: 0.001
+    horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
+    horizonHazeDensity: 0.01
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -1036,9 +1036,9 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0.19900046, g: 0.4264151, b: 0.16976145, a: 1}
-    fogExtinction: {r: 0.2865, g: 0.1779, b: 0.663, a: 1}
-    fogDensity: 0.01
+    fogColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
+    fogExtinction: {r: 0.8125, g: 0.0667, b: 0.1043, a: 1}
+    fogDensity: 1
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -1046,13 +1046,13 @@ MonoBehaviour:
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
   volumeScatterSettings:
-    volumeScatter: 0
-    scatterColor: {r: 0.3349, g: 0.6065, b: 0.2968, a: 1}
-    scatterIntensity: 1
-    scatterAnisotropy: 0.51
+    volumeScatter: 1
+    scatterColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
+    scatterIntensity: 1.54
+    scatterAnisotropy: 0.1
     scatterAmbientTerm: 0.96
     scatterSunTerm: 1.06
-    crestScatter: 0
+    crestScatter: 1
     sssIntensity: 3.54
     sssSunFalloff: 2
     sssPinchMin: 0.1
@@ -1237,7 +1237,7 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 0}
-  jerlovWaterType: 9
+  jerlovWaterType: 5
 --- !u!1 &1734502736
 GameObject:
   m_ObjectHideFlags: 0
