@@ -387,6 +387,11 @@ namespace AbstractOcclusion.WebGpuWater
             WaterSimulation.ShoreFoamState shoreFoam = volume.BuildShoreFoamState();
             shoreFoam.BindTo(cs, _kSpawn);
             shoreFoam.BindTo(cs, _kRasterizeDensity);
+            // The Update kernel ALSO evaluates the surf front (the foam "glue", SurfSampleAt), so it
+            // needs the same shore/surf textures bound - BindTo always binds a black fallback when there
+            // is no shore layer - or the backend errors "_ShoreDepthTexSim not set" on a body that has
+            // foam but no coast (e.g. the open ocean with the surf layer off).
+            shoreFoam.BindTo(cs, _kUpdate);
 
             cs.SetFloat(ID_Size, volume.SimResolution);
             cs.SetInt(ID_Capacity, _capacityPow2);
@@ -498,7 +503,16 @@ namespace AbstractOcclusion.WebGpuWater
             // The whitecap-gated crest roll reads the cascade array in Update too (the
             // OCEAN_CREST_FOAM variant only; the keyword state above already matches).
             if (oceanCrest)
+            {
                 cs.SetTexture(_kUpdate, ID_OceanFftNormal, volume.OceanFftNormalTexture);
+                // Update ALSO places crest foam on the FFT swell (the height/roll glue), so it reads the
+                // spatial cascade + amplitude too - not just the normal. Binding only the normal left
+                // _OceanFftSpatial unset -> "property not set" hard error on WebGPU. Amplitude is a global
+                // float (0 if unset), set here so Update reads the real swell height rather than
+                // RasterizeDensity's later value. Mirrors the RasterizeDensity binds below.
+                cs.SetTexture(_kUpdate, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
+                cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+            }
             cs.Dispatch(_kUpdate, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
 
             // ---- Screen-space density splat (KWS): buffers + uniforms are prepared here, but

@@ -41,6 +41,12 @@ namespace AbstractOcclusion.WebGpuWater
                  "it doesn't fire one huge splash. Normal motion is far below this.")]
         [Min(0f)] [SerializeField] float maxStepDistance = 5f;
 
+        [Tooltip("Boat SPEED (world units/sec) below which the wake fades out. The dipole ADDS velocity " +
+                 "every frame, so a boat slowing to a creep dwells over the same water and its pushes pile " +
+                 "into one oversized bow wave (then relax once it fully stops). Full wake at/above this " +
+                 "speed, tapering to nothing at a standstill. 0 = no fade (old behaviour).")]
+        [Min(0f)] [SerializeField] float wakeFadeSpeed = 0.5f;
+
         Collider _collider;
         Renderer _renderer;
         Vector3 _prevCenter;
@@ -74,9 +80,19 @@ namespace AbstractOcclusion.WebGpuWater
             if (stepSqr < MinStepDistance * MinStepDistance) return;      // effectively still
             if (stepSqr > maxStepDistance * maxStepDistance) return;      // teleport guard
 
+            // Low-speed wake fade: the velocity dipole ADDS to the sim each frame, so a boat that slows to
+            // a creep dwells over the same cells and those pushes accumulate (toward a ~1/(1-damping) steady
+            // state) into one giant bow wave, which relaxes once it fully stops. Taper the injected strength
+            // out below wakeFadeSpeed so a slowing boat sheds its wake smoothly instead of piling it.
+            // Frame-rate independent: speed is world units / second.
+            float dt = Time.deltaTime;
+            float speed = dt > 1e-5f ? step.magnitude / dt : 0f;
+            float speedRamp = wakeFadeSpeed > 1e-5f ? Mathf.SmoothStep(0f, 1f, speed / wakeFadeSpeed) : 1f;
+            if (speedRamp <= 0f) return;
+
             // The facade applies the submersion weight (an airborne or deeply-sunk sphere makes no wake),
             // so we always forward and let it gate.
-            WaterVolume.TrySphereInteractionAt(center, step, EffectiveRadius(), strength);
+            WaterVolume.TrySphereInteractionAt(center, step, EffectiveRadius(), strength * speedRamp);
         }
 
         Vector3 CenterWorld() => transform.TransformPoint(centerOffset);

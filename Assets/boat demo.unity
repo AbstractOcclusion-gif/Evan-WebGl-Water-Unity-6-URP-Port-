@@ -159,7 +159,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 22235973}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
   m_Name: 
@@ -666,7 +666,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &334840193
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -690,7 +690,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 334840192}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
@@ -1337,7 +1337,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0c2f11fcb19c4fd478b030ada99be5fb, type: 3}
   m_Name: 
@@ -1421,6 +1421,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1579798798}
   - component: {fileID: 1579798799}
+  - component: {fileID: 1579798800}
   m_Layer: 0
   m_Name: Frame (WaterVolume)
   m_TagString: Untagged
@@ -1455,6 +1456,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
+  chunkFootprint: 0
+  chunkDensityBoost: 1
+  chunkRefraction: 0.5
+  chunkReflectivity: 0.6
+  chunkMeniscus: 0.5
+  chunkMesh: {fileID: 0}
+  chunkFillLevel: 0.5
+  discSurface: 0
   jerlovWaterType: 5
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 7200000, guid: a72790f9172cdc8418a85c91acdb0a2d, type: 3}
@@ -1484,6 +1493,7 @@ MonoBehaviour:
     swellHeight: 0.1
     swellWavelength: 80
     unboundedOcean: 1
+    edgeFeatherMeters: 10
     clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
@@ -1745,6 +1755,11 @@ MonoBehaviour:
     foamAdvect: 1.48
     foamFromSpeed: 20
     foamFromCurvature: 94.5
+    foamBreakStrength: 0
+    foamBreakRange: 1.5
+    foamCrestBias: 0
+    foamWakeStrength: 0
+    foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
     foamPatternSize: 2
     foamStrength: 1.181
@@ -1772,6 +1787,7 @@ MonoBehaviour:
     stepsPerFrame: 1
     rippleStrength: 0.01
     rippleRadius: 0.03
+    rippleChoppiness: 0.56
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -1786,6 +1802,41 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 0}
+--- !u!114 &1579798800
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1579798797}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
+  volume: {fileID: 1579798799}
+  particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
+  particleMaterial: {fileID: 2100000, guid: c34d3c0e82d04aa488bddacf13b88f15, type: 2}
+  renderMode: 0
+  densityMaterial: {fileID: 2100000, guid: cc801976c649049469e4d607163ec5fa, type: 2}
+  profile: {fileID: 11400000, guid: 69520b33cdc5fe745a469f4d9846b6f7, type: 2}
+  capacity: 4096
+  spawnThreshold: 0.25
+  spawnRate: 30
+  maxSpawnPerFrame: 256
+  sprayChance: 0.15
+  sprayLaunchSpeed: 0.6
+  lifeRange: {x: 1.5, y: 4}
+  sizeRange: {x: 0.02, y: 0.06}
+  sizeHeroPower: 1
+  spawnMaxDistance: 120
+  gravity: 4
+  flowDrift: 0.25
+  windDriftSpeed: 0.02
+  drag: 2
+  crestRollSpeed: 0.6
+  flipbookGrid: {x: 2, y: 2}
+  flipbookFps: 0
 --- !u!1 &1734502736
 GameObject:
   m_ObjectHideFlags: 0

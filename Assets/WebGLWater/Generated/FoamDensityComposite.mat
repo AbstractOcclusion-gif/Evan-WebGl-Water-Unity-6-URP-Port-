@@ -31,8 +31,8 @@ Material:
     m_Floats:
     - _BreakupStrength: 0.193
     - _BreakupTiling: 2
-    - _DensityHighGain: 0.629
-    - _DensityLowGain: 0.88
+    - _DensityHighGain: 0.926
+    - _DensityLowGain: 0.23
     - _ParticleOpacity: 1
     m_Colors:
     - _Tint: {r: 1, g: 1, b: 1, a: 1}

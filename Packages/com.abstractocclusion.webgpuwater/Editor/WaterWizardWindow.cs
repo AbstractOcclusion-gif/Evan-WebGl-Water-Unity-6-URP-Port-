@@ -129,6 +129,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [SerializeField] bool _objectsExpanded = true;
         [SerializeField] bool _boatExpanded = true;
         [SerializeField] bool _utilitiesExpanded;
+        [SerializeField] bool _splashExpanded;
 
         const float DefaultFloaterSize = 0.4f; // metres - reads clearly on the default 2x1x2 body
 
@@ -147,6 +148,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _createExpanded = WaterEditorUI.Section("Create Water", _createExpanded, DrawCreateSection);
             _objectsExpanded = WaterEditorUI.Section("Floating Objects", _objectsExpanded, DrawFloatingObjectsSection);
             _boatExpanded = WaterEditorUI.Section("Boat", _boatExpanded, DrawBoatSection);
+            _splashExpanded = WaterEditorUI.Section("Splash & Crown", _splashExpanded, DrawSplashSection);
             _utilitiesExpanded = WaterEditorUI.Section("Utilities", _utilitiesExpanded, DrawUtilitiesSection);
             WaterEditorUI.DrawFooter();
             EditorGUILayout.EndScrollView();
@@ -686,6 +688,96 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (GUILayout.Button(new GUIContent("Add Water Body (secondary)",
                 "Add a second, independent water body next to the primary one.")))
                 WaterSceneBuilder.AddSecondaryBody();
+        }
+
+        // ---- splash & crown section ------------------------------------------
+        // Retrofit splashes onto existing scenes: the shared emitter (drift droplets + flipbook crown)
+        // on a water BODY, and the WaterSplash trigger on selected OBJECTS. Create Water already rigs
+        // both when the Splash toggle is on; these buttons add them after the fact to any body/object.
+        void DrawSplashSection()
+        {
+            WaterEditorUI.SubHeading("Water Body");
+            EditorGUILayout.HelpBox("Wires the shared splash emitter (drift droplets + flipbook crown) " +
+                "onto the selected water body so props punching the surface splash. Reuses the scene's " +
+                "existing emitter if there is one.", MessageType.None);
+            WaterVolume body = SelectedBody();
+            using (new EditorGUI.DisabledScope(body == null))
+            {
+                if (GUILayout.Button(new GUIContent(
+                    body != null ? $"Add Splashes To \"{body.name}\"" : "Add Splashes To Water Body",
+                    "Create/reuse the shared WaterSplashEmitter and assign it to the selected water body."),
+                    GUILayout.Height(24f)))
+                    AddSplashesToBody(body);
+            }
+            if (body == null)
+                EditorGUILayout.HelpBox("Select a water body (or create water first).", MessageType.Info);
+
+            EditorGUILayout.Space();
+            WaterEditorUI.SubHeading("Object");
+            EditorGUILayout.HelpBox("Adds a WaterSplash trigger to the selected object(s) so they splash " +
+                "on surface impact. A Rigidbody is required (added if missing), and a box collider is added " +
+                "when the object has none; the emitter is auto-found at runtime.", MessageType.None);
+            int selCount = Selection.gameObjects.Length;
+            using (new EditorGUI.DisabledScope(selCount == 0))
+            {
+                if (GUILayout.Button(new GUIContent(
+                    selCount > 1 ? $"Add Splash To {selCount} Objects" : "Add Splash To Selected Object",
+                    "Attach WaterSplash (+ Rigidbody / collider as needed) to the selection."),
+                    GUILayout.Height(24f)))
+                    AddSplashToSelectedObjects();
+            }
+            if (selCount == 0)
+                EditorGUILayout.HelpBox("Select one or more scene objects.", MessageType.Info);
+        }
+
+        // The water body a splash action targets: the selection's own body if it sits on/under one,
+        // else the first body in the scene. Null only when the scene has no water at all.
+        static WaterVolume SelectedBody()
+        {
+            if (Selection.activeGameObject != null)
+            {
+                WaterVolume onSelection = Selection.activeGameObject.GetComponentInParent<WaterVolume>();
+                if (onSelection != null) return onSelection;
+            }
+            return Object.FindFirstObjectByType<WaterVolume>();
+        }
+
+        void AddSplashesToBody(WaterVolume body)
+        {
+            if (body == null) return;
+            Undo.SetCurrentGroupName("Add Water Splashes");
+            int undoGroup = Undo.GetCurrentGroup();
+            // Reuse an existing emitter (the body's own, or any in the scene - splashes are shared) so a
+            // scene never accumulates duplicate emitters; create one only when there is none.
+            WaterSplashEmitter emitter = body.splashEmitter != null
+                ? body.splashEmitter
+                : Object.FindFirstObjectByType<WaterSplashEmitter>();
+            if (emitter == null) emitter = CreateSplashEmitter(body.transform);
+            Undo.RecordObject(body, "Add Water Splashes");
+            body.splashEmitter = emitter;
+            Selection.activeObject = emitter.gameObject;
+            Undo.CollapseUndoOperations(undoGroup);
+            Debug.Log($"[WebGL Water] Splashes enabled on '{body.name}' (shared emitter '{emitter.name}').");
+        }
+
+        void AddSplashToSelectedObjects()
+        {
+            GameObject[] selection = Selection.gameObjects;
+            if (selection.Length == 0) return;
+            Undo.SetCurrentGroupName("Add Object Splash");
+            int undoGroup = Undo.GetCurrentGroup();
+            int count = 0;
+            foreach (GameObject go in selection)
+            {
+                if (go == null) continue;
+                // WaterSplash reads a collider's bounds to detect the surface punch; give it one if the
+                // object has none. RequireComponent(Rigidbody) adds the body; the emitter is auto-found.
+                if (go.GetComponent<Collider>() == null) Undo.AddComponent<BoxCollider>(go);
+                EnsureComponentUndoable<WaterSplash>(go);
+                count++;
+            }
+            Undo.CollapseUndoOperations(undoGroup);
+            Debug.Log($"[WebGL Water] Added a splash trigger to {count} object(s).");
         }
     }
 }
