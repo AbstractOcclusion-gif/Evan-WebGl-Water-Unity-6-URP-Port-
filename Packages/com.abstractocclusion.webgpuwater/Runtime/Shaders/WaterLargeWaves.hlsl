@@ -14,6 +14,9 @@
 #define WEBGPUWATER_LARGE_WAVES_INCLUDED
 
 #include "WaterShared.hlsl" // OCEAN_FFT_* cascade layout (shared with the computes)
+// Footprint frame for the bounded-body edge feather (LbwEdgeWeight). Include-guarded, so consumers
+// that already pulled WaterVolume.hlsl themselves (all of them today) see it exactly once.
+#include "WaterVolume.hlsl"
 // Layer B shoaling reads the world-frame seabed depth field (Layer A) to attenuate waves near shore.
 #include "WaterShore.hlsl"
 // Surf breaker wavefronts (Layer C-analytic): shore-parallel fronts driven by the SDF + depth,
@@ -32,6 +35,27 @@ float _LargeWaveDetailSlope; // band-limit: the shortest wavelength the mesh can
                              // metres per metre of camera distance. 0 = no band-limit (full spectrum).
 float _LargeSwellWavelength;  // metres, longest LONG-PERIOD swell component (rolling horizon swell)
 float _LargeSwellHeight;      // metres, amplitude of the longest swell component; 0 = no long swell
+float _LargeWaveEdgeFeather;  // metres of edge feather on a BOUNDED body: the wave field fades to the
+                              // rest level over this band inside the footprint border, so the surface
+                              // never ends mid-wave as a standing wall of water. 0 = off (pools publish
+                              // 0 via _LargeBody anyway; the publisher forces 0 for unbounded oceans,
+                              // whose clipmap has no border to guard).
+
+// Edge-guard weight for the whole open-water wave field: 1 in the body's interior, falling to 0 at
+// the footprint border (|pool.xz| = 1). Metres-true on rectangular footprints (each axis' pool
+// distance is scaled back by its own extent) and rotation-correct via the shared volume frame.
+// Every public composition point below multiplies by this ONE weight - height, chop, normal tilt
+// and whitecap foam all flatten together, and the CPU mirror applies the same weight at its own
+// composition points (WaterVolume.SampleLargeWaveField et al) so buoyancy agrees with the render.
+float LbwEdgeWeight(float2 worldXZ)
+{
+    if (_LargeWaveEdgeFeather <= 0.0) return 1.0;
+    float3 pool = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
+    float3 extent = VolumeExtentSafe();
+    float borderMeters = min((1.0 - abs(pool.x)) * extent.x,
+                             (1.0 - abs(pool.z)) * extent.z);
+    return smoothstep(0.0, _LargeWaveEdgeFeather, borderMeters);
+}
 
 // --- Placeholder spectrum constants (world units). Tuned for a light-breeze lake/ocean; these
 //     become FFT spectrum inputs (wind speed / fetch) in step 2. ---
@@ -261,7 +285,9 @@ float2 OceanFftNormalTiltShore(float2 worldXZ, ShoreData shore)
 
 float2 OceanFftNormalTilt(float2 worldXZ)
 {
-    return OceanFftNormalTiltShore(worldXZ, ShoreSample(worldXZ));
+    // Edge guard: standalone callers (the foam-particle render glue) must see the same flattened
+    // border the surface renders; ApplyLargeBodyWaveNormalFoamShore weights its own tilt instead.
+    return OceanFftNormalTiltShore(worldXZ, ShoreSample(worldXZ)) * LbwEdgeWeight(worldXZ);
 }
 
 // Sum the accumulated whitecap foam (.w of the per-cascade normal target) across the active cascades,
@@ -288,7 +314,9 @@ float OceanFftFoam(float2 worldXZ)
         foam += (active * fade * OceanCascadeShoalWeight(c, shore))
               * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
     }
-    return saturate(foam);
+    // Edge guard: no whitecaps on the flattened border band (foam over visibly calm water reads
+    // as detached from the waves - the "patches corresponding to nothing" rule).
+    return saturate(foam) * LbwEdgeWeight(worldXZ);
 }
 
 // Sample the TRUE wave-crest "pinch" - the raw displacement-Jacobian fold, saturate(1 - J), written to
@@ -333,10 +361,14 @@ float LargeBodyWaveHeight(float2 worldXZ)
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
                                             shore.slopeTan, shore.influence, _SurfBeatTime);
+    // Edge guard scales the WHOLE composite (surf fronts included): a breaker cresting exactly on
+    // the border would rebuild the wall the feather exists to remove.
+    float edge = LbwEdgeWeight(worldXZ);
     if (_OceanFftActive > 0.5)
-        return OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
-               * SurfAmbientWeight(surf.mask) + surf.height;
-    return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).height;
+        return (OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
+                * SurfAmbientWeight(surf.mask) + surf.height) * edge;
+    return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).height
+           * edge;
 }
 
 
@@ -349,18 +381,21 @@ float LargeBodyWaveHeight(float2 worldXZ)
 void LargeBodyWaveHeightDispShore(float2 worldXZ, ShoreData shore, SurfWaveSample surf,
                                   out float height, out float2 disp)
 {
+    // Edge guard on height AND chop: unfeathered horizontal displacement would push border
+    // vertices past the footprint even after the height flattens.
+    float edge = LbwEdgeWeight(worldXZ);
     if (_OceanFftActive > 0.5)
     {
         float3 fft = OceanFftDisplacementShore(worldXZ, shore);
         float ambient = SurfAmbientWeight(surf.mask);
-        height = fft.y * _LargeWaveAmplitude * ambient + surf.height;
-        disp = fft.xz * (_LargeWaveChoppiness * _LargeWaveAmplitude * ambient);
+        height = (fft.y * _LargeWaveAmplitude * ambient + surf.height) * edge;
+        disp = fft.xz * (_LargeWaveChoppiness * _LargeWaveAmplitude * ambient * edge);
         return;
     }
     LargeBodyWaveField f = EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ),
                                                       shore, surf);
-    height = f.height;
-    disp = f.disp * _LargeWaveChoppiness;
+    height = f.height * edge;
+    disp = f.disp * (_LargeWaveChoppiness * edge);
 }
 
 // Tilt a WORLD-space surface normal by the open-water wave shape at its SOURCE xz (the undisplaced
@@ -396,6 +431,9 @@ float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, fl
                                          ShoreData shore, SurfWaveSample surf)
 {
     float foamGate = LbwGeometryFoamGate(shore);
+    // Edge guard: the border band renders a flattened surface, so its normal tilt and its
+    // breaker foam must flatten with it (same weight the height/chop composition used).
+    float edge = LbwEdgeWeight(sourceXZ);
 
     // FFT path: the cascade normals already encode the surface tilt; blend their xz and lean the base
     // normal by it. Shore-attenuated + ambient-faded like the height, plus the surf fronts' own
@@ -403,8 +441,8 @@ float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, fl
     // Geometry foam = the cascades' TRUE Jacobian pinch + the front layer's own face steepness.
     if (_OceanFftActive > 0.5)
     {
-        float2 fftTilt = OceanFftNormalTiltShore(sourceXZ, shore) * SurfAmbientWeight(surf.mask)
-                       - surf.slopeXZ;
+        float2 fftTilt = (OceanFftNormalTiltShore(sourceXZ, shore) * SurfAmbientWeight(surf.mask)
+                       - surf.slopeXZ) * edge;
         float geomFoam = 0.0;
         if (foamGate > 0.0)
         {
@@ -413,7 +451,7 @@ float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, fl
             float pinch = OceanFftJacobianShore(sourceXZ, shore)
                         * (LBW_PINCH_GAIN * SurfAmbientWeight(surf.mask));
             float steep = smoothstep(LBW_BREAK_SLOPE_MIN, LBW_BREAK_SLOPE_MAX, length(fftTilt));
-            geomFoam = saturate(max(pinch, steep)) * foamGate;
+            geomFoam = saturate(max(pinch, steep)) * foamGate * edge;
         }
         return float4(normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength), geomFoam);
     }
@@ -429,7 +467,7 @@ float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, fl
     float3 tangentX = float3(1.0 + q * dDxdx, f.slope.x, q * dDxdz);
     float3 tangentZ = float3(q * dDxdz, f.slope.y, 1.0 + q * dDzdz);
     float3 n = cross(tangentZ, tangentX);
-    float2 tilt = n.xz / max(n.y, LBW_NORMAL_MIN_Y);
+    float2 tilt = (n.xz / max(n.y, LBW_NORMAL_MIN_Y)) * edge;
 
     float geomFoamA = 0.0;
     if (foamGate > 0.0)
@@ -439,7 +477,7 @@ float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, fl
         float jac = (1.0 + q * dDxdx) * (1.0 + q * dDzdz) - (q * dDxdz) * (q * dDxdz);
         float pinch = saturate(1.0 - jac) * LBW_PINCH_GAIN;
         float steep = smoothstep(LBW_BREAK_SLOPE_MIN, LBW_BREAK_SLOPE_MAX, length(f.slope));
-        geomFoamA = saturate(max(pinch, steep)) * foamGate;
+        geomFoamA = saturate(max(pinch, steep)) * foamGate * edge;
     }
     return float4(normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength), geomFoamA);
 }

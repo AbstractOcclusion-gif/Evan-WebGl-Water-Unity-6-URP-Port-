@@ -945,14 +945,18 @@ namespace AbstractOcclusion.WebGpuWater
         // own gated fallback in WaterLargeWaves.hlsl.
         Vector3 SampleLargeWaveField(float worldX, float worldZ)
         {
+            // Edge guard on height AND slope, mirroring the shader's composition points: near the
+            // footprint border the rendered surface feathers flat, so buoyancy must too.
+            float edge = LargeWaveEdgeWeight(worldX, worldZ);
             // The FFT readback bakes the RAW cascades; the shader's FFT branch additionally shoals
             // them by depth, fades them under the surf fronts and adds the fronts on top - so the
             // readback sample gets the same treatment (mirror of LargeBodyWaveHeight's FFT path).
             if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft))
                 return LargeWaveField.ApplyShoreToFftSample(fft, worldX, worldZ, _waveTime,
-                    SwellWavelength, ShoreWaveCtx);
+                    SwellWavelength, ShoreWaveCtx) * edge;
             return LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
-                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ShoreWaveCtx);
+                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ShoreWaveCtx)
+                * edge;
         }
 
         // Static-reflection tuning (fixed for v1; promote to per-body settings if scene tuning is needed).
@@ -1071,6 +1075,10 @@ namespace AbstractOcclusion.WebGpuWater
 
             _water.UpdateNormals();
 
+            // Wake foam (move #3): push the stamp gain to the sim so the next interactor dispatches
+            // deposit foam at the hull. Zeroed when foam is off, so interactions stay copy-through.
+            _water.SetWakeFoam(foam ? foamWakeStrength : 0f, foamWakeRadiusScale);
+
             if (foam)
             {
                 // Bi-exponential contract: thin residual lace must SURVIVE LONGER than
@@ -1086,13 +1094,16 @@ namespace AbstractOcclusion.WebGpuWater
                 // by 1/ratio restores the activity magnitude the knobs and threshold were
                 // authored against. Identity at ratio 1 (small bodies unchanged).
                 float foamActivityScale = 1f / Mathf.Max(_simDensityRatio, 0.05f);
-                // Min wave height is authored in WORLD metres; the sim's heights are pool units.
+                // Min wave height AND the shallow-breaking range are authored in WORLD metres; the
+                // sim's heights and bed column depths are pool units, so both divide by the extent.
                 PushShoreFoam(_water);    // surf-front whitewash source (inert without the surf layer)
                 _water.StepFoam(foamGenRate, foamGenThreshold,
                                 foamMinWaveHeight / VolumeExtentSafe.y, foamDecay,
                                 residualSurvival, foamSpread, foamFromSpeed * foamActivityScale,
                                 foamFromCurvature * foamActivityScale, foamAdvect,
-                                _foamTimeDebt, foamDecayRate);
+                                _foamTimeDebt, foamDecayRate,
+                                foamBreakStrength, foamBreakRange / VolumeExtentSafe.y,
+                                foamCrestBias);
                 _foamTimeDebt = 0f;
             }
         }
@@ -1261,6 +1272,22 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 e = VolumeExtentSafe;
             Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - VolumeCenter);
             return new Vector3(local.x / e.x, local.y / e.y, local.z / e.z);
+        }
+
+        // CPU mirror of LbwEdgeWeight() in WaterLargeWaves.hlsl: the bounded-body edge guard that
+        // feathers the whole open-water wave field to rest toward the footprint border. Every CPU
+        // consumer of the wave field (buoyancy sample, fog gate, query velocity) multiplies by this
+        // at the same composition points the shader does, so floaters and gates keep matching the
+        // flattened border the surface actually renders.
+        internal float LargeWaveEdgeWeight(float worldX, float worldZ)
+        {
+            float feather = LargeWaveEdgeFeatherEffective;
+            if (feather <= 0f) return 1f;
+            Vector3 pool = WorldToPool(new Vector3(worldX, VolumeCenter.y, worldZ));
+            Vector3 extent = VolumeExtentSafe;
+            float borderMeters = Mathf.Min((1f - Mathf.Abs(pool.x)) * extent.x,
+                                           (1f - Mathf.Abs(pool.z)) * extent.z);
+            return Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(borderMeters / feather));
         }
 
         // Underwater-fog gate + per-body planar mirror -> WaterVolume.Underwater.cs.

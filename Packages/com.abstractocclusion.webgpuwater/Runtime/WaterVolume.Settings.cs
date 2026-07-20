@@ -112,6 +112,11 @@ namespace AbstractOcclusion.WebGpuWater
                      "footprint plane, unchanged. Drawing water past the shore would be wrong for a lake, so " +
                      "this is opt-in.")]
             public bool unboundedOcean = false;
+            [Tooltip("BOUNDED open water only: metres over which the whole wave field (swell, chop, FFT, " +
+                     "surf, whitecaps) feathers to the rest level toward the footprint border, so the " +
+                     "surface never ends mid-wave as a standing wall of water. Ignored on an Unbounded " +
+                     "ocean (its clipmap has no border). 0 = off.")]
+            [Range(0f, EdgeFeatherMetersMax)] public float edgeFeatherMeters = DefaultEdgeFeatherMeters;
 
             [Header("Ocean clipmap (unbounded open water)")]
             [Tooltip("Cells per side of each geometry-clipmap LOD level (even). Higher = finer far-field " +
@@ -201,6 +206,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float swellHeight => ocean.swellHeight;
         internal float swellWavelength => ocean.swellWavelength;
         internal bool unboundedOcean => ocean.unboundedOcean;
+        internal float edgeFeatherMeters => ocean.edgeFeatherMeters;
         internal int clipmapGridResolution => ocean.clipmapGridResolution;
         internal float clipmapOuterRadius => ocean.clipmapOuterRadius;
         internal float oceanDetailFalloff => ocean.oceanDetailFalloff;
@@ -258,6 +264,10 @@ namespace AbstractOcclusion.WebGpuWater
         // Crest's _Chop range; beyond this the Gerstner surface self-intersects (pinch-through) and the
         // buoyancy inversion stops converging, so the knob is clamped here.
         const float LargeWaveChoppinessMax = 2f;
+        // Edge guard defaults: 10 m rides out the default swell without visibly shrinking a lake;
+        // the slider cap keeps the feather from eating a small bounded body whole.
+        const float DefaultEdgeFeatherMeters = 10f;
+        const float EdgeFeatherMetersMax = 50f;
         // Ocean whitecap foam defaults - subtle + wind-gated so the current look is unchanged until dialed.
         const float DefaultOceanFoamWindThreshold = 4f; // KWS FOAM_MIN_WIND: no whitecaps below ~4 m/s
         const float DefaultOceanFoamCoverage = 1f;      // fold threshold; 1 == the original saturate(1 - jacobian)
@@ -280,6 +290,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
         internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
         internal float LargeWaveChoppiness => largeWaveChoppiness;
+        // Edge guard is a BOUNDED-body concept: an unbounded ocean's clipmap has no footprint border,
+        // so the feather is forced off there (and pools never read it - _LargeBody gates the field).
+        internal float LargeWaveEdgeFeatherEffective => (openWater && !unboundedOcean) ? edgeFeatherMeters : 0f;
         internal float SwellHeight => swellHeight;
         internal float SwellWavelength => swellWavelength;
         internal float OceanFoamWindThreshold => oceanFoamWindThreshold;
@@ -1484,6 +1497,28 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 20f)] public float foamFromSpeed = 6f;
             [Tooltip("How strongly surface curvature (crests, chop, sharp folds) generates foam.")]
             [Range(0f, 100f)] public float foamFromCurvature = 30f;
+            [Tooltip("Shallow-water breaking boost: where a baked bed (shore/beach/shelf) makes the " +
+                     "water shallow, waves shoal and break sooner, so foam generation is boosted there " +
+                     "- foam gathers over shelves and on the approach to shore (the selective, " +
+                     "over-the-shelf whitecapping Crest/KWS gate on the Froude number). 0 = off " +
+                     "(deep-water foam unchanged); needs a body with a baked bed. Never suppresses foam.")]
+            [Range(0f, 1f)] public float foamBreakStrength = 0f;
+            [Tooltip("WORLD depth (metres) below which the breaking boost above applies - the column " +
+                     "depth over which 'shallow' ramps to 'deep'. Only used when Break Strength > 0 and " +
+                     "the body has a baked bed.")]
+            [Range(0.1f, 8f)] public float foamBreakRange = 1.5f;
+            [Tooltip("Crest-selective foam: 0 = foam forms wherever the surface is agitated (crests AND " +
+                     "the equally-tall troughs a fast wake/chop leaves); 1 = foam forms only on wave " +
+                     "CRESTS (rise above the local average), the KWS/Crest whitecap rule. Raise to stop " +
+                     "foam filling troughs and read as proper whitecaps.")]
+            [Range(0f, 1f)] public float foamCrestBias = 0f;
+            [Tooltip("Wake foam: how strongly a moving interactor (boat/sphere) stamps foam at the hull, " +
+                     "which then advects and decays into the trail. 0 = off (wake foam comes only from " +
+                     "the emergent churn, which reads thin). This is the crisp bow/stern foam.")]
+            [Range(0f, 2f)] public float foamWakeStrength = 0f;
+            [Tooltip("Wake foam stamp radius as a multiple of the interactor radius - how far past the " +
+                     "hull the deposited foam reaches before it advects into the trail.")]
+            [Range(0.5f, 4f)] public float foamWakeRadiusScale = 1.5f;
             [Space]
             public Color foamColor = Color.white;
             [Tooltip("WORLD size (metres) of one foam-pattern tile. The pattern is sampled in world " +
@@ -1516,6 +1551,11 @@ namespace AbstractOcclusion.WebGpuWater
         internal float foamAdvect => foamSettings.foamAdvect;
         internal float foamFromSpeed => foamSettings.foamFromSpeed;
         internal float foamFromCurvature => foamSettings.foamFromCurvature;
+        internal float foamBreakStrength => foamSettings.foamBreakStrength;
+        internal float foamBreakRange => foamSettings.foamBreakRange;
+        internal float foamCrestBias => foamSettings.foamCrestBias;
+        internal float foamWakeStrength => foamSettings.foamWakeStrength;
+        internal float foamWakeRadiusScale => foamSettings.foamWakeRadiusScale;
         internal Color foamColor => foamSettings.foamColor;
         internal float foamPatternSize => foamSettings.foamPatternSize;
         internal float foamStrength => foamSettings.foamStrength;
@@ -1564,6 +1604,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.001f, 0.08f)] public float rippleStrength = 0.025f;
             [Tooltip("Radius of a click/drag ripple (world units; volume-scale independent).")]
             [Range(0.005f, 0.2f)] public float rippleRadius = 0.05f;
+            [Tooltip("Horizontal choppiness of the interactive ripple + WAKE field (Crest-style pinch): " +
+                     "sharpens ripple/wake crests horizontally so a boat wake reads crisp instead of soft " +
+                     "and round. 0 = off (height-only, unchanged). Raise for a sharp V-wake; also sharpens " +
+                     "ambient interactive ripples. On the ocean the wake rides the camera-following sim window.")]
+            [Range(0f, 1.5f)] public float rippleChoppiness = 0f;
             [Tooltip("Seed the pool with random ripples on start.")]
             public bool seedRipplesOnStart = true;
             [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
@@ -1579,6 +1624,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float waveSpeed => rippleSettings.waveSpeed;
         internal float damping => rippleSettings.damping;
         internal int stepsPerFrame => rippleSettings.stepsPerFrame;
+        internal float rippleChoppiness => rippleSettings.rippleChoppiness;
         internal bool seedRipplesOnStart => rippleSettings.seedRipplesOnStart;
         internal bool conserveVolume => rippleSettings.conserveVolume;
         internal float conserveMaxCorrection => rippleSettings.conserveMaxCorrection;

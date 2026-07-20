@@ -174,8 +174,11 @@ namespace AbstractOcclusion.WebGpuWater
                 // against the wrong height wherever the shore surface differs - fogging the ABOVE-water
                 // scene near shore. Height uses only fft.x (ApplyShoreToFftSample), so zero derivs are
                 // correct for this height-only gate. Identity offshore (no shore field).
+                // Edge guard mirrors the render: the gate must not arm against wave height the
+                // feathered border no longer displays.
                 y += LargeWaveField.ApplyShoreToFftSample(new Vector3(fftHeight, 0f, 0f),
-                         p.x, p.z, _waveTime, SwellWavelength, ShoreWaveCtx).x;
+                         p.x, p.z, _waveTime, SwellWavelength, ShoreWaveCtx).x
+                     * LargeWaveEdgeWeight(p.x, p.z);
             else
                 y += SampleLargeWaveField(p.x, p.z).x;
             return y;

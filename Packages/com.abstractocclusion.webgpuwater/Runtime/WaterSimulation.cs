@@ -74,6 +74,11 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
         static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
         static readonly int ID_FoamAdvect = Shader.PropertyToID("_FoamAdvect");
+        static readonly int ID_FoamBreakStrength = Shader.PropertyToID("_FoamBreakStrength");
+        static readonly int ID_FoamBreakRange = Shader.PropertyToID("_FoamBreakRange");
+        static readonly int ID_FoamCrestBias = Shader.PropertyToID("_FoamCrestBias");
+        static readonly int ID_WakeFoamStrength = Shader.PropertyToID("_WakeFoamStrength");
+        static readonly int ID_WakeFoamRadiusScale = Shader.PropertyToID("_WakeFoamRadiusScale");
         static readonly int ID_FoamSrc = Shader.PropertyToID("FoamSrc");
         static readonly int ID_FoamDst = Shader.PropertyToID("FoamDst");
         static readonly int ID_PartialSums = Shader.PropertyToID("PartialSums");
@@ -111,6 +116,12 @@ namespace AbstractOcclusion.WebGpuWater
         float _reflectSolidThreshold;  // coverage above which a solid-mask cell reflects
         float _reflectRestDip;         // resting depression at solid cells (pool units)
         float _reflectFlipY;           // 1 = flip V (same convention as the obstacle map)
+
+        // Wake foam (foam move #3): a moving interactor stamps foam into the foam buffer, scaled by its
+        // speed, which StepFoam then advects + decays into a trail. Set per frame by the body from its
+        // foam settings; default 0 = off, so a sphere interaction is byte-identical (pure copy-through).
+        float _wakeFoamStrength;
+        float _wakeFoamRadiusScale = 1.5f;
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
@@ -255,6 +266,16 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _bedTex = bed;
             _useBedDepth = (enabled && bed != null) ? 1f : 0f;
+        }
+
+        /// <summary>Wake-foam stamp (foam move #3): how strongly a moving interactor deposits foam at
+        /// the hull (<paramref name="strength"/>, 0 = off) and how far past the sphere radius the stamp
+        /// reaches (<paramref name="radiusScale"/>). Applied inside <see cref="AddSphereInteraction"/>;
+        /// with strength 0 an interaction copies the foam buffer through unchanged.</summary>
+        public void SetWakeFoam(float strength, float radiusScale)
+        {
+            _wakeFoamStrength = Mathf.Max(0f, strength);
+            _wakeFoamRadiusScale = Mathf.Max(1e-4f, radiusScale);
         }
 
         // Bind the bed map + active flag onto a kernel. A texture is always bound (black when inactive)
@@ -449,7 +470,16 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_SphereWeight, weight);
             _cs.SetFloat(ID_SphereStrength, strength);
             _cs.SetVector(ID_SphereAxisScale, _dropAxisScale);
+            // Wake foam (move #3): the kernel also stamps foam at the hull. It reads FoamSrc and writes
+            // FoamDst for every texel (copy-through outside the stamp), so the foam buffer ping-pongs in
+            // lockstep with the height field here - swap it too. At _wakeFoamStrength 0 this is a pure
+            // copy, so foam is unchanged. StepFoam (later this frame) advects + decays the deposit.
+            _cs.SetFloat(ID_WakeFoamStrength, _wakeFoamStrength);
+            _cs.SetFloat(ID_WakeFoamRadiusScale, _wakeFoamRadiusScale);
+            _cs.SetTexture(_kSphereInteract, ID_FoamSrc, _foamA);
+            _cs.SetTexture(_kSphereInteract, ID_FoamDst, _foamB);
             Dispatch(_kSphereInteract);
+            (_foamA, _foamB) = (_foamB, _foamA);
         }
 
         /// <summary>Forces the surface by the change in submerged footprint
@@ -503,9 +533,11 @@ namespace AbstractOcclusion.WebGpuWater
         /// Reads the current height/normal state; ping-pongs the foam textures.</summary>
         public void StepFoam(float genRate, float genThreshold, float minWaveHeight, float decayFresh,
                              float decayResidual, float spread, float fromSpeed, float fromCurv,
-                             float advect, float dtSteps, float decayRate)
+                             float advect, float dtSteps, float decayRate,
+                             float breakStrength, float breakRange, float crestBias)
         {
             SetGridUniforms();
+            _cs.SetFloat(ID_FoamCrestBias, crestBias);
             _cs.SetFloat(ID_FoamGenRate, genRate);
             _cs.SetFloat(ID_FoamGenThreshold, genThreshold);
             _cs.SetFloat(ID_FoamMinWaveHeight, minWaveHeight);
@@ -517,9 +549,16 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
             _cs.SetFloat(ID_FoamFromCurv, fromCurv);
             _cs.SetFloat(ID_FoamAdvect, advect);
+            _cs.SetFloat(ID_FoamBreakStrength, breakStrength);
+            _cs.SetFloat(ID_FoamBreakRange, breakRange);
             _cs.SetTexture(_kFoam, ID_Src, _a);        // height state (read)
             _cs.SetTexture(_kFoam, ID_FoamSrc, _foamA);
             _cs.SetTexture(_kFoam, ID_FoamDst, _foamB);
+            // The shallow-water breaking boost reads the bed map (BedColumnDepth), so it must be
+            // bound onto the Foam kernel too - it was previously only bound for Update. A texture is
+            // always bound (black when inactive) so the WebGPU backend never sees an unbound sampler;
+            // the shader gates every read on _UseBedDepth, so a bedless body is unaffected.
+            BindBed(_kFoam);
             BindShoreFoam(_kFoam);                     // surf-front whitewash source (inert by default)
             _cs.Dispatch(_kFoam, _groups, _groups, 1);
             (_foamA, _foamB) = (_foamB, _foamA);

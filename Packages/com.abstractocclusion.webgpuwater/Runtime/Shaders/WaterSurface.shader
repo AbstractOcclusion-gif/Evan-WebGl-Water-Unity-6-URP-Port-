@@ -194,6 +194,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float4 _HorizonHazeColor;
             float  _HorizonHazeDensity;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
+            float _RippleChoppiness;   // per-body; horizontal Gerstner pinch on the interactive ripple/wake (0 = off)
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
 
             float _RefractionDistortion;
@@ -325,6 +326,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     worldPos.y  += lbwHeight;
                     worldPos.xz += lbwDisp; // 0 when choppiness = 0
                 }
+                // Interactive-ripple horizontal choppiness (Crest-style _HorizontalDisplace, aimed at the
+                // WAKE): the ripple sim only lifts HEIGHT, so the wake V and interactive ripples read soft
+                // and round. Add a Gerstner pinch along the ripple slope so they sharpen. info.ba is the sim
+                // normal.xz (= -grad h, already faded at the window edge), so displacing AGAINST it pulls
+                // the surface toward crests. 0 = off (byte-identical). SIGN NOTE: if the wake BULGES instead
+                // of sharpening, flip the '-' to '+' (cf. the sim-window Scroll sign). The fragment
+                // re-samples the ripple at the displaced xz (minor, as the large-wave path already does);
+                // add a source-xz carry later if a strong pinch shows a sampling seam.
+                if (_RippleChoppiness > 0.0)
+                    worldPos.xz -= _RippleChoppiness * info.ba;
                 // Surf swash film: over the beach the surface HUGS THE SAND (a thin film a few
                 // centimetres proud of it) wherever the swash has recently reached - a flat plane
                 // below the terrain would lose the depth test and the breathing waterline + wet

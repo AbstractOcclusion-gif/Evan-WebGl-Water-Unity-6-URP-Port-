@@ -128,9 +128,12 @@ namespace AbstractOcclusion.WebGpuWater
             // by extent.y and rotates), so Velocity.y is exactly d(Height)/dt for the wind-wave layer.
             float worldRate = (VolumeRotation * new Vector3(0f, poolRate * VolumeExtentSafe.y, 0f)).y;
             if (openWater)
+                // Edge guard: the feathered border's surface barely moves, so its vertical rate
+                // scales down with the same weight the height sample uses.
                 worldRate += LargeWaveField.VerticalVelocityAtQuery(worldPoint.x, worldPoint.z, WaveTime,
                     LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength, SwellHeight,
-                    LargeWaveChoppiness, ShoreWaveCtx);
+                    LargeWaveChoppiness, ShoreWaveCtx)
+                    * LargeWaveEdgeWeight(worldPoint.x, worldPoint.z);
 
             Vector3 velocity = worldFlow;
             velocity.y += worldRate;

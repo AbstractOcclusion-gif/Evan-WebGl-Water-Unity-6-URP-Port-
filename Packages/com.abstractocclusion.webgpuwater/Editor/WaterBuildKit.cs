@@ -372,8 +372,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         // The active render pipeline's default lit material (URP here), so a custom-mesh prop
-        // isn't magenta. Built-in fallback kept for safety.
-        static Material DefaultPipelineMaterial()
+        // isn't magenta. Built-in fallback kept for safety. Internal: the showcase builder derives
+        // its tinted prop materials from this material's shader.
+        internal static Material DefaultPipelineMaterial()
         {
             var pipeline = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline;
             if (pipeline != null && pipeline.defaultMaterial != null) return pipeline.defaultMaterial;

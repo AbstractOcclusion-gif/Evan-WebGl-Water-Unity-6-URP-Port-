@@ -21097,7 +21097,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
-  displaceScale: 1
+  displaceScale: 1.5
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
@@ -21619,7 +21619,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
-  displaceScale: 0.1
+  displaceScale: 0.3
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
@@ -22106,6 +22106,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
+  chunkFootprint: 0
+  chunkDensityBoost: 1
+  chunkRefraction: 0.5
+  chunkReflectivity: 0.6
+  chunkMeniscus: 0.5
+  chunkMesh: {fileID: 0}
+  chunkFillLevel: 0.5
+  discSurface: 0
+  jerlovWaterType: 3
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
@@ -22134,6 +22143,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
+    edgeFeatherMeters: 10
     clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
@@ -22196,12 +22206,27 @@ MonoBehaviour:
     realRefraction: 1
     reflectionStrength: 0.2
     envReflectionIntensity: 1
+    fresnelFloor: 0
+    fresnelPower: 5
+    sunRoughness: 0.08
+    roughnessFar: 0.2
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+  detailNormalSettings:
+    texture: {fileID: 0}
+    strength: 0.6
+    tileMeters: 18
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -22380,6 +22405,11 @@ MonoBehaviour:
     foamAdvect: 2.88
     foamFromSpeed: 12.1
     foamFromCurvature: 30
+    foamBreakStrength: 0
+    foamBreakRange: 1.5
+    foamCrestBias: 0
+    foamWakeStrength: 0
+    foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
     foamPatternSize: 2
     foamStrength: 0.977
@@ -22407,6 +22437,7 @@ MonoBehaviour:
     stepsPerFrame: 1
     rippleStrength: 0.05
     rippleRadius: 0.096
+    rippleChoppiness: 0
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -22501,6 +22532,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
+  chunkFootprint: 0
+  chunkDensityBoost: 1
+  chunkRefraction: 0.5
+  chunkReflectivity: 0.6
+  chunkMeniscus: 0.5
+  chunkMesh: {fileID: 0}
+  chunkFillLevel: 0.5
+  discSurface: 0
+  jerlovWaterType: 3
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
@@ -22529,6 +22569,7 @@ MonoBehaviour:
     swellHeight: 0
     swellWavelength: 140
     unboundedOcean: 0
+    edgeFeatherMeters: 10
     clipmapGridResolution: 64
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
@@ -22581,7 +22622,7 @@ MonoBehaviour:
   godRayRenderer: {fileID: 1179984680}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 11400000, guid: f154c8a0d423d964d829fa66c201f64c, type: 2}
+  quality: {fileID: 0}
   enableCulling: 1
   activationDistance: 100
   reflectionSettings:
@@ -22591,12 +22632,27 @@ MonoBehaviour:
     realRefraction: 1
     reflectionStrength: 1
     envReflectionIntensity: 1
+    fresnelFloor: 0
+    fresnelPower: 5
+    sunRoughness: 0.08
+    roughnessFar: 0.2
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+  detailNormalSettings:
+    texture: {fileID: 0}
+    strength: 0.6
+    tileMeters: 18
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -22764,7 +22820,7 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 2
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 0
+    foam: 1
     foamGenRate: 1.46
     foamDecay: 0.96
     foamDecayResidual: 0.993
@@ -22773,13 +22829,18 @@ MonoBehaviour:
     foamGenThreshold: 0.15
     foamMinWaveHeight: 0.01
     foamAdvect: 3
-    foamFromSpeed: 6
-    foamFromCurvature: 30
+    foamFromSpeed: 11
+    foamFromCurvature: 55.2
+    foamBreakStrength: 0
+    foamBreakRange: 0.1
+    foamCrestBias: 1
+    foamWakeStrength: 0
+    foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
     foamPatternSize: 2
     foamStrength: 1
-    foamFeather: 0.15
-    foamCoreCut: 0.5
+    foamFeather: 0.405
+    foamCoreCut: 0.875
     foamBorderWidth: 0.08
     foamContactDepth: 0.06
   _legacyFoam: 0
@@ -22798,10 +22859,11 @@ MonoBehaviour:
   _legacyFoamContactDepth: 0.06
   rippleSettings:
     waveSpeed: 0.6
-    damping: 0.99
-    stepsPerFrame: 2
-    rippleStrength: 0.025
+    damping: 0.9949
+    stepsPerFrame: 1
+    rippleStrength: 0.08
     rippleRadius: 0.05
+    rippleChoppiness: 0
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -22920,7 +22982,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
-  displaceScale: 0.1
+  displaceScale: 0.3
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1

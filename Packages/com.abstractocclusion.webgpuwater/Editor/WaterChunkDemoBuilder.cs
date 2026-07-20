@@ -71,8 +71,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // One WaterVolume configured as a sphere chunk: a real bounded surface body (foam / above-below
         // / reflections) that ALSO owns the fog shell. Non-primary so it doesn't fight the sea for the
         // globals; its own fog off (the shell renders the volume); surface swapped to a disc.
-        static GameObject CreateSphereChunk(BuildContext ctx, Transform parent, string name,
-                                            Vector3 center, float radius)
+        // Internal: the feature-showcase builder reuses this exact rig for its chunk finale station.
+        internal static GameObject CreateSphereChunk(BuildContext ctx, Transform parent, string name,
+                                                     Vector3 center, float radius)
         {
             var extent = new Vector3(radius, radius, radius);
             WaterVolume body = WaterBuildKit.CreateWaterBody(ctx, parent, name, center, extent,

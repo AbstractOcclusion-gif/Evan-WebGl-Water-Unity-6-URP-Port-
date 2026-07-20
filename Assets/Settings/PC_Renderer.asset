@@ -42,7 +42,8 @@ MonoBehaviour:
   - {fileID: 7833122117494664109}
   - {fileID: 8897549262932812953}
   - {fileID: -6042312171749561422}
-  m_RendererFeatureMap: ad6b866f10d7b46c9924a6d4e9717a7bb22bd9e4176525ac
+  - {fileID: 1903198951947190138}
+  m_RendererFeatureMap: ad6b866f10d7b46c9924a6d4e9717a7bb22bd9e4176525ac7a3fb5fb5c85691a
   m_UseNativeRenderPass: 1
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
@@ -71,6 +72,20 @@ MonoBehaviour:
   m_DepthTextureFormat: 0
   m_AccurateGbufferNormals: 0
   m_IntermediateTextureMode: 0
+--- !u!114 &1903198951947190138
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: df55ea1d4d99a70478817b98e1ae843e, type: 3}
+  m_Name: WaterChunkDepthFeature
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterChunkDepthFeature
+  m_Active: 1
+  chunkDepthShader: {fileID: 4800000, guid: 5014835c3c5e56a46abef61a9686c638, type: 3}
 --- !u!114 &1952920351681808396
 MonoBehaviour:
   m_ObjectHideFlags: 0

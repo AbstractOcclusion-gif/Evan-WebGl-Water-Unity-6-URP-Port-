@@ -197,6 +197,37 @@ float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
 float _FoamAdvect;     // texels foam is carried along the surface flow per step
 
+// Shallow-water breaking boost (foam pass move #1). Where a baked bed makes the water column
+// shallow, waves shoal and break more readily, so surface turbulence aerates white far sooner
+// than it does in deep water (the selective, over-the-shelf whitecapping KWS gates on Froude
+// number). This BOOSTS generation in shallow, fast-moving water; it never suppresses deep-water
+// foam, so a bottomless body (or _FoamBreakStrength 0) is byte-identical. Depth is read from the
+// bed map already bound for the Update pass (BedColumnDepth); inert unless _UseBedDepth is set.
+float _FoamBreakStrength; // 0 = off (identity), 1 = full shallow-breaking boost
+float _FoamBreakRange;    // pool-unit column depth over which "shallow" ramps to "deep" (<=0 = off)
+// Froude gate constants: only the RATIO speed/sqrt(g*depth) matters here, so g just sets the scale
+// the LO/HI knees sit on. LO/HI mirror KWS's supercritical-flow window. MAX_BOOST caps how much
+// shallow breaking can multiply local generation.
+static const float FOAM_BREAK_GRAVITY   = 9.81;
+static const float FOAM_BREAK_FROUDE_LO = 0.15;
+static const float FOAM_BREAK_FROUDE_HI = 0.65;
+static const float FOAM_BREAK_MIN_DEPTH = 1e-3; // guards the sqrt on a near-dry column
+static const float FOAM_BREAK_MAX_BOOST = 2.0;  // shallow breaking can up to triple local gen (1 + 2)
+
+// Crest-selective generation (foam move #2). The amplitude gate blends from ABSOLUTE wave height
+// (rise above rest) toward CREST height (rise above the local neighbourhood mean = max(0,-lap)) by
+// _FoamCrestBias. At bias 1 foam forms on wave crests and skips the equally-tall troughs a fast
+// wake or chop leaves behind - the KWS "height above local average" whitecap rule. 0 = old behaviour.
+float _FoamCrestBias;
+
+// Wake foam (foam move #3). A moving hull churns air into the water, so the SphereInteract kernel
+// stamps foam directly at the interactor, scaled by its speed, and StepFoam then advects + decays it
+// into the trailing wake (the emergent shear foam alone reads thin - the heightfield carries no true
+// horizontal current). _WakeFoamStrength 0 = off: foam is copied through unchanged, byte-identical.
+float _WakeFoamStrength;    // master gain on the wake stamp
+float _WakeFoamRadiusScale; // stamp radius as a multiple of the sphere radius
+static const float WAKE_FOAM_SPEED_GAIN = 25.0; // maps sim-normalised step speed onto a 0..1 stamp
+
 // Bed depth (Phase 1 shoreline): pool-space terrain bed height (R = bed pool-Y), baked by
 // WaterVolume in the SAME pool frame as the sim, so a sim cell's UV maps straight to it. Used to
 // hold dry land flat (ripples reflect off the waterline) and drain the open-shore boundary.
@@ -297,8 +328,8 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
     float dist = length(d);
 
     // Copy-through outside the region of influence: this kernel ping-pongs the whole field, so every
-    // texel must write its (possibly unchanged) state to Dst.
-    if (dist > _SphereRadius * SPHERE_CULL_RADII) { Dst[p] = info; return; }
+    // texel must write its (possibly unchanged) state to Dst - and now the foam buffer too (move #3).
+    if (dist > _SphereRadius * SPHERE_CULL_RADII) { FoamDst[p] = FoamSrc.Load(int3(p, 0)); Dst[p] = info; return; }
 
     float sdf = dist - _SphereRadius;                 // signed distance to the sphere in the plane
     float2 nrm = dist > 1e-5 ? d / dist : float2(0.0, 0.0); // outward normal
@@ -322,6 +353,15 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
 
     info.g += _SphereWeight * (verticalForce + horizontalForce) * _SphereStrength;
     Dst[p] = Sanitize(info);
+
+    // Wake foam (move #3): stamp foam at the hull, scaled by the interactor's speed and submersion,
+    // over a soft disc a little wider than the sphere. StepFoam advects + decays it into the trail.
+    // _WakeFoamStrength 0 leaves the stamp at zero, so this is a pure copy-through (byte-identical).
+    float wakeSpeed = length(_SphereVelXZ);
+    float wakeDisc  = saturate(1.0 - dist / max(_SphereRadius * _WakeFoamRadiusScale, 1e-4));
+    float wakeStamp = _SphereWeight * _WakeFoamStrength
+                    * saturate(wakeSpeed * WAKE_FOAM_SPEED_GAIN) * wakeDisc;
+    FoamDst[p] = saturate(FoamSrc.Load(int3(p, 0)) + wakeStamp);
 }
 
 // Solid-mask coverage at sim texel p, matching the obstacle map's flip convention and clamped so an
@@ -528,10 +568,30 @@ void Foam(uint3 id : SV_DispatchThreadID)
     // The subtraction keeps the response linear above the knee (a hermite here floods the pool).
     float activity = (speed + shear * FOAM_SHEAR_FRACTION) * _FoamFromSpeed
                    + max(0.0, -lap) * _FoamFromCurv;
-    // AMPLITUDE gate on top: waves shorter than the authored world height never foam.
+    // AMPLITUDE gate on top: waves shorter than the authored world height never foam. Crest-selective
+    // generation (move #2): blend the gate signal from absolute height toward CREST height (rise above
+    // the local mean = max(0,-lap), 0 in troughs) by _FoamCrestBias, so foam sits on crests and skips
+    // equally-tall troughs. -lap is already the neighbourhood-mean minus centre (a pool-unit height),
+    // so it is dimensionally comparable to _FoamMinWaveHeight.
+    float crestHeight  = max(0.0, -lap);
+    float heightSignal = lerp(abs(info.r), crestHeight, _FoamCrestBias);
     float heightGate = smoothstep(_FoamMinWaveHeight * 0.5, max(_FoamMinWaveHeight, 1e-6),
-                                  abs(info.r));
+                                  heightSignal);
     float gen = saturate(activity - _FoamGenThreshold) * heightGate;
+
+    // Shallow-water breaking boost (move #1): shallow AND supercritical water aerates far more
+    // readily. Only ever multiplies gen UP, and only where a bed makes the column shallow, so
+    // deep water and bedless bodies are untouched. See the uniform block above for the rationale.
+    if (_UseBedDepth > 0.5 && _FoamBreakStrength > 0.0 && _FoamBreakRange > 0.0)
+    {
+        float2 uvCell   = ((float2)p + 0.5) * _Delta;
+        float  depthCol = BedColumnDepth(uvCell);                            // pool-unit still-water column
+        float  shallow  = 1.0 - smoothstep(0.0, _FoamBreakRange, depthCol);  // 1 shallow -> 0 deep
+        float  froude   = speed / sqrt(FOAM_BREAK_GRAVITY * max(depthCol, FOAM_BREAK_MIN_DEPTH));
+        float  breaking = smoothstep(FOAM_BREAK_FROUDE_LO, FOAM_BREAK_FROUDE_HI, froude);
+        gen *= 1.0 + _FoamBreakStrength * FOAM_BREAK_MAX_BOOST * shallow * breaking;
+    }
+
     foam += gen * (_FoamGenRate * _FoamDtSteps);
 
     // Surf breaker-front foam (coastline): whitewash where fronts have broken, a thin line at the

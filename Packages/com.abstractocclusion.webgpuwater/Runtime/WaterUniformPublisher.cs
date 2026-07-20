@@ -85,7 +85,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
+        static readonly int ID_RippleChoppiness = Shader.PropertyToID("_RippleChoppiness");
         static readonly int ID_LargeWaveDetail = Shader.PropertyToID("_LargeWaveDetailSlope");
+        static readonly int ID_LargeWaveEdgeFeather = Shader.PropertyToID("_LargeWaveEdgeFeather");
         static readonly int ID_OceanWorldWaves = Shader.PropertyToID("_OceanWorldWaves");
         static readonly int ID_SwellWavelength = Shader.PropertyToID("_LargeSwellWavelength");
         static readonly int ID_SwellHeight = Shader.PropertyToID("_LargeSwellHeight");
@@ -300,7 +302,11 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LargeWaveAmp, _body.LargeWaveAmplitudeEffective);
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);
+            sink.SetFloat(ID_RippleChoppiness, _body.rippleChoppiness);
             sink.SetFloat(ID_LargeWaveDetail, _body.OceanDetailSlope);
+            // 0 for pools AND unbounded oceans (the Effective accessor gates); only a BOUNDED
+            // open-water body feathers its wave field toward the footprint border.
+            sink.SetFloat(ID_LargeWaveEdgeFeather, _body.LargeWaveEdgeFeatherEffective);
             sink.SetFloat(ID_OceanWorldWaves, _body.IsOceanClipmap ? 1f : 0f);
             sink.SetFloat(ID_SwellWavelength, _body.SwellWavelength);
             sink.SetFloat(ID_SwellHeight, _body.SwellHeight);

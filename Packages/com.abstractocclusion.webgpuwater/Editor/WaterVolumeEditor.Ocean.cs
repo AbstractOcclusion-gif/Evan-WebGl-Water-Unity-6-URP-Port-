@@ -35,7 +35,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "ocean.largeWaveChoppiness",
                         "ocean.swellHeight",
                         "ocean.swellWavelength",
-                        WaterVolumePropertyPaths.UnboundedOcean);
+                        WaterVolumePropertyPaths.UnboundedOcean,
+                        WaterVolumePropertyPaths.EdgeFeatherMeters);
                 },
                 contentEnabled: LakeOrOcean);
         }
@@ -89,7 +90,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string SwellHelp =
             "Large Wave Amplitude scales the wind-driven swell (steered by the Wind Waves section). " +
             "Swell Height adds an independent long-period roll on top. Unbounded Ocean extends the " +
-            "surface to the horizon (an ocean, not a bounded lake).";
+            "surface to the horizon (an ocean, not a bounded lake). Edge Feather flattens the wave " +
+            "field toward a BOUNDED body's border so the surface never ends as a wall of water.";
     }
 }
 #endif

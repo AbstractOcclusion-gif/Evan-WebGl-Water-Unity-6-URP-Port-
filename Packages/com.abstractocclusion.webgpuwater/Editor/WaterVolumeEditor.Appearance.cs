@@ -198,7 +198,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "foamSettings.foamSpread",
                     "foamSettings.foamAdvect",
                     "foamSettings.foamFromSpeed",
-                    "foamSettings.foamFromCurvature");
+                    "foamSettings.foamFromCurvature",
+                    "foamSettings.foamBreakStrength",
+                    "foamSettings.foamBreakRange",
+                    "foamSettings.foamCrestBias",
+                    "foamSettings.foamWakeStrength",
+                    "foamSettings.foamWakeRadiusScale");
                 WaterEditorUI.SubHeading("Shading");
                 DrawFields(
                     "foamSettings.foamColor",

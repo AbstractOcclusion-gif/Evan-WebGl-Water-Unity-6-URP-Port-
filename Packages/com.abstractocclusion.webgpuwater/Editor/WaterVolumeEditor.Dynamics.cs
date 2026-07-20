@@ -30,6 +30,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "rippleSettings.stepsPerFrame",
                     "rippleSettings.rippleStrength",
                     "rippleSettings.rippleRadius",
+                    "rippleSettings.rippleChoppiness",
                     "rippleSettings.seedRipplesOnStart");
                 // Volume conservation is meaningless on an unbounded ocean (no finite volume to conserve).
                 DrawFieldsIf(Bounded,

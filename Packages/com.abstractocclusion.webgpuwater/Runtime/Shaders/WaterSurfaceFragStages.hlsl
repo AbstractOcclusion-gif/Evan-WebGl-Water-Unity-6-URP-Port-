@@ -295,11 +295,14 @@ float EvaluateCrestGlow(v2f i, WaterGeomStage g)
     // power so it concentrates on the sharp folds. Added emissively after compositing (see
     // below) so it reads regardless of what is behind the crest. Ocean-FFT only + gated. ----
     float sssBoost = 0.0;
+    // Edge guard: the feathered border renders flattened crests, so their glow must flatten
+    // with them (this raw fold read bypasses the weighted wave-field composition points).
+    float lbwEdge = LbwEdgeWeight(i.largeWaveSourceXZ);
     if (_SssEnabled > 0.5 && _OceanFftActive > 0.5)
     {
         // Shore-attenuated fold: no crest glow from waves the depth field has
         // flattened (shoreFrag is inert off surf bodies - deep ocean unchanged).
-        float fold = OceanFftJacobianShore(i.largeWaveSourceXZ, shoreFrag);
+        float fold = OceanFftJacobianShore(i.largeWaveSourceXZ, shoreFrag) * lbwEdge;
         float ramp = saturate((fold - _SssPinchMin)
                               / max(_SssPinchMax - _SssPinchMin, SSS_AMPLITUDE_EPSILON));
         float pinch = pow(ramp, _SssPinchFalloff);
@@ -313,7 +316,7 @@ float EvaluateCrestGlow(v2f i, WaterGeomStage g)
     if (_SssEnabled > 0.5 && surfFrag.breaker > 0.0)
     {
         float surfSun = pow(saturate(dot(-incomingRay, _LightDir)), _SssSunFalloff);
-        sssBoost += surfFrag.breaker * surfSun * _SssIntensity;
+        sssBoost += surfFrag.breaker * surfSun * _SssIntensity * lbwEdge;
     }
     return sssBoost;
 }
