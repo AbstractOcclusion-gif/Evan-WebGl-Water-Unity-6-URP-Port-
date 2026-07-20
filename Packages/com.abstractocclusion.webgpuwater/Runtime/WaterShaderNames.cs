@@ -25,5 +25,6 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string SplashParticles = Root + "SplashParticles";
         internal const string WaterUnderwaterFog = Root + "WaterUnderwaterFog";
         internal const string WaterExclusionWall = Root + "WaterExclusionWall";
+        internal const string WaterChunkWall = Root + "WaterChunkWall";
     }
 }

@@ -162,6 +162,13 @@ namespace AbstractOcclusion.WebGpuWater
         Mesh _surfaceAboveOriginalMesh, _surfaceUnderOriginalMesh;
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
 
+        // Round (disc) surface footprint for a CHUNK body: ApplyMeshDetail rebuilds the play-mode
+        // surface as a disc instead of the square grid, so a sphere/round chunk reads circular.
+        // Default false = the square footprint every existing body uses. Serialized so it survives
+        // play mode / domain reload (ApplyMeshDetail runs from the serialized state).
+        [SerializeField, HideInInspector] internal bool discSurface;
+        const int DiscSurfaceMinSegments = 24; // angular floor so a low sim res still reads round
+
         bool _paused;
         float _stepDebt;     // fractional solver steps owed (frame-rate-independent stepping)
         float _foamTimeDebt; // reference steps elapsed since the last foam pass (foam runs once per frame, not per solver step)
@@ -441,7 +448,9 @@ namespace AbstractOcclusion.WebGpuWater
             int detail = SurfaceMeshDetail();
             if (detail <= 0) return; // keep the authored mesh
 
-            _lowDetailGrid = WaterMeshBuilder.BuildGrid(detail);
+            _lowDetailGrid = discSurface
+                ? WaterMeshBuilder.BuildDisc(detail, Mathf.Max(detail, DiscSurfaceMinSegments))
+                : WaterMeshBuilder.BuildGrid(detail);
             _lowDetailGrid.hideFlags = HideFlags.HideAndDontSave;
             SwapRendererMesh(surfaceAbove, _lowDetailGrid, ref _surfaceAboveOriginalMesh);
             SwapRendererMesh(surfaceUnder, _lowDetailGrid, ref _surfaceUnderOriginalMesh);
@@ -818,6 +827,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_mpb == null) _mpb = new MaterialPropertyBlock();
             WriteBodyProps(_mpb);
+            SetChunkSurfaceProps(_mpb); // _ChunkSphereClip for the disc surface (before it receives the block)
 
             ApplyBlockTo(surfaceAbove);
             ApplyBlockTo(surfaceUnder);
@@ -825,6 +835,7 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyBlockTo(godRayRenderer);
             ApplyPatchBlock();
             ApplyClipmapBlock();
+            ApplyChunkShellBlock(_mpb); // chunk shell reuses this body's block (frame + waves + fog)
         }
 
         // Sim-window patch build/placement/teardown -> WaterVolume.SimWindowPatch.cs.
@@ -887,6 +898,7 @@ namespace AbstractOcclusion.WebGpuWater
             // keeps the renderer off even when the body is on-screen. Windowed bodies also
             // suppress god rays (out of scope, same reason as caustics).
             SetRendererEnabled(godRayRenderer, on && _godRaysAllowed && !_windowed);
+            SetChunkShellEnabled(on);
         }
 
         static void SetRendererEnabled(Renderer r, bool on) { if (r != null && r.enabled != on) r.enabled = on; }

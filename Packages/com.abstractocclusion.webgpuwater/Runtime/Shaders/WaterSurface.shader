@@ -365,6 +365,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // last include directly above frag().
             #include "WaterSurfaceFragStages.hlsl"
 
+            // Chunk sphere footprint clip (published per body by WaterVolume.Chunk.cs); 0 = ordinary body.
+            float _ChunkSphereClip;
+            // Slight overdraw past the unit sphere (squared-radius units, ~1% radius) so the disc rim
+            // and the shell wall share a COVERED seam: an exact clip left 1-px holes where the
+            // rasterized rim undershot the analytic sphere the shell resolves. The shell renders
+            // after the disc and its wall pixels replace the overhang, so the overlap never shows.
+            #define CHUNK_SPHERE_CLIP_MARGIN 0.02
+
             fixed4 frag(v2f i) : SV_Target
             {
                 // Dry-interior exclusion (boat hull, sub room): kill the surface fragment
@@ -374,6 +382,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // same contract ShorelineStage's clip() already relies on), and with zero
                 // volumes the uniform count skips the loop entirely.
                 if (InsideExclusion(i.worldPos)) discard;
+
+                // Chunk sphere footprint: clip the flat surface disc to the body's SPHERE so the circle
+                // tracks the sphere's cross-section as waves move the water level. A fixed-radius disc is
+                // exact only at the rest level; a raised/lowered level meets the sphere at a SMALLER
+                // circle, so an unclipped disc over/under-shoots the shell's edge. i.worldPos is fully
+                // displaced (ripple + wind + swell), so the pool point is exact at any level.
+                if (_ChunkSphereClip > 0.5)
+                {
+                    float3 chunkPool = WorldToPool(i.worldPos);
+                    // Keep fragments up to the margin PAST the unit sphere (covered-seam overdraw).
+                    clip(1.0 + CHUNK_SPHERE_CLIP_MARGIN - dot(chunkPool, chunkPool));
+                }
 
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
                 float waterClarity = EvaluateWaterClarity(i, geom.shore);

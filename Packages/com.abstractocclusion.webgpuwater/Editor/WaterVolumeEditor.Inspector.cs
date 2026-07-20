@@ -18,6 +18,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showLook = true;
         bool _showPlacement = true;
         bool _showBody = true;
+        bool _showChunk = false;
         bool _showPerformance = false;
         bool _showReflections = false;
         bool _showSimulation = false;
@@ -62,6 +63,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showLook, nameof(_showLook), load);
             Sync(ref _showPlacement, nameof(_showPlacement), load);
             Sync(ref _showBody, nameof(_showBody), load);
+            Sync(ref _showChunk, nameof(_showChunk), load);
             Sync(ref _showPerformance, nameof(_showPerformance), load);
             Sync(ref _showReflections, nameof(_showReflections), load);
             Sync(ref _showSimulation, nameof(_showSimulation), load);
@@ -120,6 +122,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     // Make it exist + hook it up: placement, wiring, cameras, interaction plumbing.
                     DrawPlacementSection();
                     DrawBodySection();
+                    DrawChunkSection();
                     DrawWiringSection();
                     DrawObjectInteractionSection();
                     DrawCameraSection();

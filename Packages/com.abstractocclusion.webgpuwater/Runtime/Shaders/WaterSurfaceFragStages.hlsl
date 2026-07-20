@@ -318,6 +318,22 @@ float EvaluateCrestGlow(v2f i, WaterGeomStage g)
     return sssBoost;
 }
 
+// Chunk bodies (WaterVolume.Chunk.cs): the water column under the disc ends at the chunk
+// PRIMITIVE, not at the scene behind the pixel - without this cap a floating chunk fogged its
+// view against the ground metres below the sphere. Published per body by SetChunkSurfaceProps
+// (always written, 0 on ordinary bodies, so the clamp is inert everywhere else).
+#include "WaterChunkPrimitive.hlsl" // ChunkIntersect (WaterShared already included, guard no-ops)
+float _ChunkFogClamp; // 1 = cap the refracted fog span at the chunk primitive's exit
+float _ChunkShape;    // CHUNK_SHAPE_* selector (box / sphere)
+
+// World-metre span from a POOL-space surface point to the chunk primitive's exit along the
+// refracted world ray (the pool t of a NORMALISED world ray IS world metres - affine frame).
+float ChunkRefractionSpan(float3 poolPos, float3 refractedRayWS)
+{
+    float3 poolDir = WorldDirToPool(refractedRayWS);
+    return max(ChunkIntersect(_ChunkShape, poolPos, poolDir).y, 0.0);
+}
+
 // Refraction: analytic pool trace or real screen-space refraction, fogged by
 // the traversed water and pulled toward the body in-scatter by the clarity curve.
 float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity)
@@ -348,9 +364,13 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity)
 
         // Fog the transmitted view by the water thickness behind the surface
         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
+        // Chunk bodies cap the span at the primitive exit (the scene behind is DRY space).
         float sceneEyeR = LinearEyeDepth(RawSceneDepth(saturate(ruv)));
         float surfEyeR  = EyeDepthOf(i.worldPos);
-        refractedColor = ApplyWaterVolumeClarity(refractedColor, max(0.0, sceneEyeR - surfEyeR), bodyInscatter, waterClarity);
+        float waterSpan = max(0.0, sceneEyeR - surfEyeR);
+        if (_ChunkFogClamp > 0.5)
+            waterSpan = min(waterSpan, ChunkRefractionSpan(i.position, refractedRay));
+        refractedColor = ApplyWaterVolumeClarity(refractedColor, waterSpan, bodyInscatter, waterClarity);
     }
     else if (_LargeBody < 0.5)
     {
@@ -360,7 +380,11 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity)
         // and its refracted colour is already the deep-water colour, so it is skipped.
         float3 pdFog = WorldDirToPool(refractedRay);
         float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
-        float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
+        float exitTFog = max(0.0, tfog.y);
+        // Chunk bodies: the primitive (inscribed in the pool box) is the real water end.
+        if (_ChunkFogClamp > 0.5)
+            exitTFog = min(exitTFog, max(ChunkIntersect(_ChunkShape, i.position, pdFog).y, 0.0));
+        float3 exitWorld = PoolToWorld(i.position + pdFog * exitTFog);
         refractedColor = ApplyWaterVolumeClarity(refractedColor, length(exitWorld - i.worldPos), bodyInscatter, waterClarity);
     }
 

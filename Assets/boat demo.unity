@@ -168,6 +168,9 @@ MonoBehaviour:
   drawWaterWalls: 1
   wallScatterBoost: 1.2
   wallShader: {fileID: 0}
+  edgeColor: {r: 0, g: 0, b: 0, a: 1}
+  edgeIntensity: 0.55
+  edgeSpread: 0.12
 --- !u!114 &22235976
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1851,7 +1854,10 @@ MonoBehaviour:
   size: {x: 1, y: 1, z: 1}
   drawWaterWalls: 1
   wallScatterBoost: 1.2
-  wallShader: {fileID: 0}
+  wallShader: {fileID: 4800000, guid: 7be6fdf6364de4a499679d0a2a1ca92e, type: 3}
+  edgeColor: {r: 0, g: 0, b: 0, a: 1}
+  edgeIntensity: 0.55
+  edgeSpread: 0.12
 --- !u!65 &1786542065
 BoxCollider:
   m_ObjectHideFlags: 0
