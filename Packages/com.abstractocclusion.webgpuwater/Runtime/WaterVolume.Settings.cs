@@ -1497,6 +1497,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 20f)] public float foamFromSpeed = 6f;
             [Tooltip("How strongly surface curvature (crests, chop, sharp folds) generates foam.")]
             [Range(0f, 100f)] public float foamFromCurvature = 30f;
+            [Tooltip("Foam DEPOSIT: how much lasting foam a burst of turbulence lays down instantly, " +
+                     "instead of only trickling in at the generation rate. Raise this so a fast wake or " +
+                     "churn leaves a real deposit/trail that lingers and dissolves, rather than fading as " +
+                     "the boat passes. 0 = off (rate-only, old look).")]
+            [Range(0f, 1f)] public float foamDeposit = 0.5f;
             [Tooltip("Shallow-water breaking boost: where a baked bed (shore/beach/shelf) makes the " +
                      "water shallow, waves shoal and break sooner, so foam generation is boosted there " +
                      "- foam gathers over shelves and on the approach to shore (the selective, " +
@@ -1551,6 +1556,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float foamAdvect => foamSettings.foamAdvect;
         internal float foamFromSpeed => foamSettings.foamFromSpeed;
         internal float foamFromCurvature => foamSettings.foamFromCurvature;
+        internal float foamDeposit => foamSettings.foamDeposit;
         internal float foamBreakStrength => foamSettings.foamBreakStrength;
         internal float foamBreakRange => foamSettings.foamBreakRange;
         internal float foamCrestBias => foamSettings.foamCrestBias;

@@ -74,6 +74,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
         static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
         static readonly int ID_FoamAdvect = Shader.PropertyToID("_FoamAdvect");
+        static readonly int ID_FoamDeposit = Shader.PropertyToID("_FoamDeposit");
         static readonly int ID_FoamBreakStrength = Shader.PropertyToID("_FoamBreakStrength");
         static readonly int ID_FoamBreakRange = Shader.PropertyToID("_FoamBreakRange");
         static readonly int ID_FoamCrestBias = Shader.PropertyToID("_FoamCrestBias");
@@ -534,10 +535,11 @@ namespace AbstractOcclusion.WebGpuWater
         public void StepFoam(float genRate, float genThreshold, float minWaveHeight, float decayFresh,
                              float decayResidual, float spread, float fromSpeed, float fromCurv,
                              float advect, float dtSteps, float decayRate,
-                             float breakStrength, float breakRange, float crestBias)
+                             float breakStrength, float breakRange, float crestBias, float deposit)
         {
             SetGridUniforms();
             _cs.SetFloat(ID_FoamCrestBias, crestBias);
+            _cs.SetFloat(ID_FoamDeposit, deposit);
             _cs.SetFloat(ID_FoamGenRate, genRate);
             _cs.SetFloat(ID_FoamGenThreshold, genThreshold);
             _cs.SetFloat(ID_FoamMinWaveHeight, minWaveHeight);

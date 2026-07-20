@@ -196,6 +196,7 @@ float _FoamSpread;        // 0..1 diffusion toward neighbour average
 float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
 float _FoamAdvect;     // texels foam is carried along the surface flow per step
+float _FoamDeposit;    // 0..1 instant DEPOSIT floor: turbulence lays lasting foam, not just a rate trickle
 
 // Shallow-water breaking boost (foam pass move #1). Where a baked bed makes the water column
 // shallow, waves shoal and break more readily, so surface turbulence aerates white far sooner
@@ -593,6 +594,12 @@ void Foam(uint3 id : SV_DispatchThreadID)
     }
 
     foam += gen * (_FoamGenRate * _FoamDtSteps);
+    // DEPOSIT floor: the rate term above only trickles foam in, so a wake that churns a cell for just a
+    // few frames as it passes leaves almost nothing. Real turbulence DEPOSITS - one strong turbulent
+    // moment lays a lasting patch of foam that the residual decay then dissolves (KWS floors the foam
+    // mask with saturate(), it does not only accumulate). max() so the deposit never lowers foam that is
+    // already thicker; gen carries all the gates + the shallow-break boost, so only real churn deposits.
+    foam = max(foam, saturate(gen * _FoamDeposit));
 
     // Surf breaker-front foam (coastline): whitewash where fronts have broken, a thin line at the
     // cresting lip, and standing lace hugging the waterline - all injected as generation so the

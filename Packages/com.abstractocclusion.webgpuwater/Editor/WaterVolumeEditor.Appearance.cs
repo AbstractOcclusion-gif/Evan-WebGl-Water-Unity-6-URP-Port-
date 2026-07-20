@@ -199,6 +199,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "foamSettings.foamAdvect",
                     "foamSettings.foamFromSpeed",
                     "foamSettings.foamFromCurvature",
+                    "foamSettings.foamDeposit",
                     "foamSettings.foamBreakStrength",
                     "foamSettings.foamBreakRange",
                     "foamSettings.foamCrestBias",
