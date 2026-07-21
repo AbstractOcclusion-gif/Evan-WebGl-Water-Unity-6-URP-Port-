@@ -1,21 +1,32 @@
 // WebGpuWater - water-driven spray emitter ("spray pump").
 //
-// Floats a probe point on the water surface and throws spray through the shared WaterSplashEmitter
-// whenever the probe and the surface under it CLOSE ON EACH OTHER quickly. That single relative-motion
-// signal covers both cases the effect is for:
-//   - a wave rushing UP at a (near-)static point  -> spray bursting off a rock / pier,
-//   - a hull driving DOWN through the surface      -> spray thrown in front of a boat.
+// Floats one or more probe points on the water surface and throws spray through the shared
+// WaterSplashEmitter wherever a probe and the surface under it move sharply against each other. Unlike
+// WaterSplash (which fires only when a Rigidbody punches DOWN through the waterline, so a stationary
+// object stays silent), this reads the water's motion relative to each tracked point.
 //
-// Contrast with WaterSplash, which triggers on a Rigidbody punching down through the waterline: that
-// stays silent for a stationary object no matter how hard the water hits it. This measures the water's
-// motion relative to the tracked point, so a fixed rock still sprays when a fast wave arrives.
+// Each probe carries its own mode, so one object can mix a Boat-mode bow row with Rock-mode points:
+//   - Rock : reacts to how fast the WATER rises toward the point (incoming waves/ripples included) -
+//            a fixed rock or pier throwing spray as a wave slams it.
+//   - Boat : reacts to how fast the POINT drives down into the water, sampled against the analytic
+//            surface only, so a hull's own emitted wake can't re-trigger it - spray off a bow.
+//   - Both : fires on either source (the unified closing speed).
 //
-// Step 1 of the "WOW pass": a single probe. The per-probe temporal state lives in one struct so the
-// array pass can hold many probes without reshaping the trigger maths.
+// Step 3 of the "WOW pass": per-probe modes. All same-sampling probes are gathered into one batched
+// WaterVolume.SampleHeights call into reused buffers (at most two calls total: ripples-included and
+// analytic-only), so an N-probe pump still allocates nothing per frame.
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
+    /// <summary>What a spray probe reacts to. See <see cref="WaterSprayPump"/> for the per-mode signal.</summary>
+    public enum WaterSprayMode
+    {
+        Both, // default: rising water OR a descending point
+        Boat, // the point driving down into the water; analytic surface only (ignores own wake)
+        Rock, // the water rising toward a (near-)static point; interactive ripples included
+    }
+
     [DisallowMultipleComponent]
     public class WaterSprayPump : MonoBehaviour
     {
@@ -27,28 +38,43 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultSprayRadius = 0.25f;
 
         // ---- internal guards ----
-        // Below this frame time the finite-difference closing speed is numerically unstable: a single
-        // hitched frame would read as an enormous impact and fire a false burst, so such frames are skipped.
+        // Below this frame time the finite-difference speeds are numerically unstable: a single hitched
+        // frame would read as an enormous impact and fire a false burst, so such frames are skipped.
         const float MinFrameDeltaSeconds = 1e-4f;
         // Floors the min..max span so a misconfigured maxImpactSpeed <= minImpactSpeed can't divide by zero.
         const float MinImpactSpeedSpan = 1e-3f;
+        // The trigger only needs the surface height; skipping Normal/Velocity skips their per-point work.
+        const WaterQueryFields TriggerFields = WaterQueryFields.Height;
 
-        [Header("Probe")]
-        [Tooltip("Local-space offset from this object's origin where the surface is sampled and spray is thrown.")]
-        [SerializeField] Vector3 probePoint = Vector3.zero;
+        /// <summary>One probe: a local-space point and what it reacts to.</summary>
+        [System.Serializable]
+        public struct SprayProbe
+        {
+            [Tooltip("Local-space offset from this object's origin where the surface is sampled and spray is thrown.")]
+            public Vector3 localOffset;
 
-        [Tooltip("Only spray while the probe sits within this vertical distance (world units) of the surface, " +
+            [Tooltip("Boat = point driving into water (own wake ignored); Rock = water rising at a static " +
+                     "point (ripples included); Both = either.")]
+            public WaterSprayMode mode;
+        }
+
+        [Header("Probes")]
+        [Tooltip("The probe points. One behaves like a single jet; a row along a bow or a ring around a rock " +
+                 "reads as a sheet. Use the Auto-place button (below) to populate from the object's geometry.")]
+        [SerializeField] SprayProbe[] probes = { new SprayProbe { localOffset = Vector3.zero, mode = WaterSprayMode.Both } };
+
+        [Tooltip("Only spray while a probe sits within this vertical distance (world units) of the surface, " +
                  "so a point held in mid-air or dragged deep underwater stays silent.")]
         [Min(0f)] [SerializeField] float surfaceBand = DefaultSurfaceBand;
 
         [Header("Trigger")]
-        [Tooltip("Closing speed (world units/sec) between probe and surface below which nothing sprays.")]
+        [Tooltip("Trigger speed (world units/sec) below which nothing sprays. Interpreted per the probe's mode.")]
         [Min(0f)] [SerializeField] float minImpactSpeed = DefaultMinImpactSpeed;
 
-        [Tooltip("Closing speed that produces the strongest spray; faster impacts clamp to full strength.")]
+        [Tooltip("Trigger speed that produces the strongest spray; faster impacts clamp to full strength.")]
         [Min(0f)] [SerializeField] float maxImpactSpeed = DefaultMaxImpactSpeed;
 
-        [Tooltip("Minimum seconds between two bursts from this probe, so a sustained impact doesn't emit every frame.")]
+        [Tooltip("Minimum seconds between two bursts from ONE probe, so a sustained impact doesn't emit every frame.")]
         [Min(0f)] [SerializeField] float emitCooldownSeconds = DefaultEmitCooldownSeconds;
 
         [Header("Spray")]
@@ -58,11 +84,13 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Shared splash emitter. Auto-found in the scene if left empty.")]
         [SerializeField] WaterSplashEmitter emitter;
 
-        [Tooltip("Sample the analytic surface only (ignore this object's own interactive ripples), so a " +
-                 "self-emitting mover isn't re-triggered by its own wake.")]
-        [SerializeField] bool ignoreOwnRipples = false;
-
-        ProbeState _state;
+        // Reused per-frame buffers (no per-frame allocation). Two sample buffers because Boat probes read
+        // the analytic-only surface while Rock/Both read the ripple-included surface: each group is one
+        // batched query, filled only when at least one probe needs it.
+        Vector3[] _worldPoints;
+        WaterSample[] _rippleSamples;   // interactive ripples included -> Rock, Both
+        WaterSample[] _analyticSamples; // analytic surface only -> Boat
+        ProbeState[] _states;
 
         void Start()
         {
@@ -72,9 +100,13 @@ namespace AbstractOcclusion.WebGpuWater
                                  "in the scene; it will detect impacts but emit nothing until one is assigned.", this);
         }
 
-        // Drop stale history so a re-enable (or leaving and re-entering the water) can't diff a gap across
-        // the missing frames and fire a phantom burst.
-        void OnDisable() => _state = default;
+        // Drop stale history so a re-enable (or leaving and re-entering the water) can't diff across the
+        // missing frames and fire a phantom burst.
+        void OnDisable()
+        {
+            if (_states == null) return;
+            for (int i = 0; i < _states.Length; i++) _states[i] = default;
+        }
 
         // LateUpdate: sample AFTER the sims have stepped this frame, so the surface reflects the current
         // waves - the same ordering WaterSplashEmitter's droplet drift relies on.
@@ -83,48 +115,120 @@ namespace AbstractOcclusion.WebGpuWater
             float deltaSeconds = Time.deltaTime;
             if (deltaSeconds < MinFrameDeltaSeconds) return;
 
-            Vector3 world = transform.TransformPoint(probePoint);
+            int count = probes != null ? probes.Length : 0;
+            if (count == 0) return;
+            EnsureBuffers(count);
 
-            // Resolve the body under the probe each frame, so a probe crossing between two lakes samples
-            // the right one. ignoreOwnRipples feeds the analytic-only surface for self-emitting movers.
-            WaterVolume body = WaterVolume.BodyContaining(world);
-            if (body == null || !body.SampleHeight(world, out WaterSample sample, 0f, ignoreOwnRipples))
+            for (int i = 0; i < count; i++)
+                _worldPoints[i] = transform.TransformPoint(probes[i].localOffset);
+
+            // One body for the whole cluster: a pump belongs to a single object floating on a single body.
+            // Any probe outside that body's footprint comes back Valid=false and is skipped below.
+            WaterVolume body = WaterVolume.BodyContaining(transform.position);
+            if (body == null)
             {
-                _state.HasHistory = false; // outside the footprint / no reading: don't diff across the gap
+                InvalidateAll();
                 return;
             }
 
-            float gap = world.y - sample.Height; // + above the surface, - below
-            TryEmit(world, sample.Height, gap, deltaSeconds);
+            SampleSurfaces(body, count);
 
-            _state.PreviousGap = gap;
-            _state.HasHistory = true;
+            for (int i = 0; i < count; i++)
+                StepProbe(i, deltaSeconds);
         }
 
-        void TryEmit(Vector3 world, float surfaceHeight, float gap, float deltaSeconds)
+        // At most two batched queries: one ripple-included (Rock/Both), one analytic-only (Boat). Each is
+        // run only if some probe needs it, so a uniform-mode pump pays for a single query.
+        void SampleSurfaces(WaterVolume body, int count)
         {
-            if (!_state.HasHistory) return;              // need two frames to measure a closing speed
-            if (Mathf.Abs(gap) > surfaceBand) return;    // not at the waterline
-            if (Time.time < _state.NextEmitTime) return; // cooling down
-            if (emitter == null) return;                 // warned once in Start; nothing to emit through
+            bool needRipples = false;
+            bool needAnalytic = false;
+            for (int i = 0; i < count; i++)
+            {
+                if (probes[i].mode == WaterSprayMode.Boat) needAnalytic = true;
+                else needRipples = true;
+            }
 
-            // Positive when probe and surface are converging: the wave rose toward the probe, or the probe
-            // drove toward the water. One number captures the rock-hit and the boat-plunge alike.
-            float closingSpeed = (_state.PreviousGap - gap) / deltaSeconds;
-            if (closingSpeed < minImpactSpeed) return;
+            int owner = GetInstanceID();
+            if (needRipples)
+                body.SampleHeights(owner, 0f, _worldPoints, _rippleSamples, TriggerFields, excludeInteractiveRipples: false);
+            if (needAnalytic)
+                body.SampleHeights(owner, 0f, _worldPoints, _analyticSamples, TriggerFields, excludeInteractiveRipples: true);
+        }
+
+        void StepProbe(int index, float deltaSeconds)
+        {
+            WaterSprayMode mode = probes[index].mode;
+            WaterSample sample = mode == WaterSprayMode.Boat ? _analyticSamples[index] : _rippleSamples[index];
+            if (!sample.Valid)
+            {
+                _states[index].HasHistory = false; // no reading this frame: don't diff across the gap
+                return;
+            }
+
+            Vector3 world = _worldPoints[index];
+            float surfaceHeight = sample.Height;
+            TryEmit(index, mode, world, surfaceHeight, deltaSeconds);
+
+            _states[index].PreviousProbeY = world.y;
+            _states[index].PreviousSurfaceHeight = surfaceHeight;
+            _states[index].HasHistory = true;
+        }
+
+        void TryEmit(int index, WaterSprayMode mode, Vector3 world, float surfaceHeight, float deltaSeconds)
+        {
+            ref ProbeState state = ref _states[index];
+            if (!state.HasHistory) return;                             // need two frames to measure a speed
+            if (Mathf.Abs(world.y - surfaceHeight) > surfaceBand) return; // not at the waterline
+            if (Time.time < state.NextEmitTime) return;               // cooling down
+            if (emitter == null) return;                              // warned once in Start; nothing to emit through
+
+            float surfaceRise = (surfaceHeight - state.PreviousSurfaceHeight) / deltaSeconds; // > 0 water rising
+            float probeDescent = (state.PreviousProbeY - world.y) / deltaSeconds;             // > 0 point sinking
+            float signal = TriggerSignal(mode, surfaceRise, probeDescent);
+            if (signal < minImpactSpeed) return;
 
             float span = Mathf.Max(MinImpactSpeedSpan, maxImpactSpeed - minImpactSpeed);
-            float strength = Mathf.Clamp01((closingSpeed - minImpactSpeed) / span);
+            float strength = Mathf.Clamp01((signal - minImpactSpeed) / span);
 
             Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z);
             emitter.EmitSplash(surfacePoint, strength, sprayRadius);
-            _state.NextEmitTime = Time.time + emitCooldownSeconds;
+            state.NextEmitTime = Time.time + emitCooldownSeconds;
         }
 
-        // Per-probe temporal state. One instance today; the array pass keeps an array of these, one per point.
+        // Rock keys off the water alone (a static probe's own motion shouldn't matter); Boat keys off the
+        // point driving into the water; Both is their sum - exactly the closing speed of steps 1-2.
+        static float TriggerSignal(WaterSprayMode mode, float surfaceRise, float probeDescent)
+        {
+            switch (mode)
+            {
+                case WaterSprayMode.Rock: return surfaceRise;
+                case WaterSprayMode.Boat: return probeDescent;
+                default:                  return surfaceRise + probeDescent;
+            }
+        }
+
+        // Grow-on-demand buffers, rebuilt only when the probe count changes (e.g. edited in the Inspector).
+        void EnsureBuffers(int count)
+        {
+            if (_worldPoints != null && _worldPoints.Length == count) return;
+            _worldPoints = new Vector3[count];
+            _rippleSamples = new WaterSample[count];
+            _analyticSamples = new WaterSample[count];
+            _states = new ProbeState[count]; // fresh state: a resized array starts without history
+        }
+
+        void InvalidateAll()
+        {
+            for (int i = 0; i < _states.Length; i++) _states[i].HasHistory = false;
+        }
+
+        // Per-probe temporal state, one entry per point. Probe Y and surface height are kept separately (not
+        // just their gap) so Rock and Boat can read the surface-only and point-only rates independently.
         struct ProbeState
         {
-            public float PreviousGap;
+            public float PreviousProbeY;
+            public float PreviousSurfaceHeight;
             public float NextEmitTime;
             public bool HasHistory;
         }
