@@ -1,7 +1,10 @@
 // WebGL Water - shared splash particle emitter (Unity 6 / URP port)
 // Owns (or references) a real Particle System so the splash is fully editable in
-// the Inspector: select the "Splash Particles" object to tweak modules, and swap
-// the droplet texture on its ParticleSystemRenderer material. Both object impacts
+// the Inspector: the builder creates one "Water Splash FX" root (this component)
+// with two children - "Droplet Spray (CPU Fallback)" (Shuriken droplets, only
+// bursts on bodies WITHOUT an active GPU WaterFoamParticles) and "Crown Ring"
+// (flipbook crown, always plays). Swap the droplet texture on the fallback's
+// ParticleSystemRenderer material. Both object impacts
 // (WaterSplash) and the mouse interaction (WaterVolume) emit through this.
 //
 // Droplets pop, then stick to the water surface and DRIFT with the waves: they
@@ -103,6 +106,10 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal float crownBaseSize = 0.4f;
         [Tooltip("Crown lifetime; the flipbook plays through once over this time.")]
         [SerializeField] internal float crownLifetime = 0.5f;
+        [Tooltip("Crown tint, applied per emit as the particle start color (multiplies the material).")]
+        [SerializeField] internal Color crownTint = CrownStartColor;
+        [Tooltip("Crown opacity multiplier on top of the tint's alpha.")]
+        [Range(0f, 1f)] [SerializeField] internal float crownOpacity = 1f;
 
         ParticleSystem.Particle[] _buffer;
 
@@ -191,7 +198,10 @@ namespace AbstractOcclusion.WebGpuWater
                 // Map the burst shaping onto the GPU request; per-droplet jitter runs in-kernel.
                 float upSpeed = upwardBias * (UpwardStrengthFloor + UpwardStrengthGain * strength);
                 float outSpeed = radius * outwardSpread * Mathf.Max(MinOutwardStrength, strength);
-                gpuSpray.QueueSplashBurst(surfacePos, strength, radius, count, upSpeed, outSpeed);
+                // Droplet life/size travel WITH the request: pump/splash bursts obey THIS
+                // component (or the profile's Splash section), not the ambient-mist ranges.
+                gpuSpray.QueueSplashBurst(surfacePos, strength, radius, count, upSpeed, outSpeed,
+                                          lifetime, dropletSize);
                 EmitCrown(surfacePos, strength, radius);
                 return;
             }
@@ -235,6 +245,12 @@ namespace AbstractOcclusion.WebGpuWater
             ep.startLifetime = crownLifetime;
             ep.startSize = crownBaseSize * Mathf.Lerp(CrownMinSizeFactor, CrownMaxSizeFactor, strength)
                          + radius * CrownRadiusContribution;
+            // Per-particle start color (same channel the droplets already use for their
+            // velocity-proportional alpha) - the profile can retint the crown without
+            // touching the shared material asset.
+            Color crownColor = crownTint;
+            crownColor.a *= crownOpacity;
+            ep.startColor = crownColor;
             crownParticles.Emit(ep, 1);
         }
 

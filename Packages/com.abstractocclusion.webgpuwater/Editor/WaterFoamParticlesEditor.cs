@@ -22,8 +22,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _spawnThreshold, _spawnRate, _maxSpawnPerFrame, _sprayChance, _sprayLaunchSpeed;
         SerializedProperty _lifeRange, _sizeRange, _sizeHeroPower, _spawnMaxDistance;
         SerializedProperty _sprayMaterial, _sprayLifeRange, _spraySizeRange, _sprayFlipbookGrid, _sprayFlipbookFps;
+        SerializedProperty _depositLifeRange, _depositSizeRange;
         SerializedProperty _gravity, _flowDrift, _windDriftSpeed, _drag;
         SerializedProperty _crestRollSpeed, _flipbookGrid, _flipbookFps;
+
+        // Profile-driven state, refreshed each GUI pass: driven fields are DISABLED (not
+        // just warned about) so users can't type into values the profile overwrites next frame.
+        bool _ambientDriven;
+        bool _lookDriven;
 
         bool _wiringExpanded = true;
         bool _poolExpanded;
@@ -56,6 +62,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _spraySizeRange = serializedObject.FindProperty("spraySizeRange");
             _sprayFlipbookGrid = serializedObject.FindProperty("sprayFlipbookGrid");
             _sprayFlipbookFps = serializedObject.FindProperty("sprayFlipbookFps");
+            _depositLifeRange = serializedObject.FindProperty("depositLifeRange");
+            _depositSizeRange = serializedObject.FindProperty("depositSizeRange");
             _gravity = serializedObject.FindProperty("gravity");
             _flowDrift = serializedObject.FindProperty("flowDrift");
             _windDriftSpeed = serializedObject.FindProperty("windDriftSpeed");
@@ -70,13 +78,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.DrawHeader("Water Foam Particles", "GPU foam + spray pool");
             serializedObject.Update();
 
+            var profile = _profile.objectReferenceValue as WaterFoamProfile;
+            _ambientDriven = profile != null && profile.ambient.drive;
+            _lookDriven = profile != null && profile.look.drive;
+
             DrawStatusAndRepair();
 
             _wiringExpanded = WaterEditorUI.Section("Wiring & Assets", _wiringExpanded, DrawWiring);
             _poolExpanded = WaterEditorUI.Section("Pool", _poolExpanded, DrawPool);
             _spawnExpanded = WaterEditorUI.Section("Spawning", _spawnExpanded, DrawSpawning);
             _lookExpanded = WaterEditorUI.Section("Look & Life", _lookExpanded, DrawLookLife);
-            _sprayExpanded = WaterEditorUI.Section("Spray Droplets", _sprayExpanded, DrawSpray);
+            _sprayExpanded = WaterEditorUI.Section("Ambient Mist", _sprayExpanded, DrawSpray);
             _motionExpanded = WaterEditorUI.Section("Motion", _motionExpanded, DrawMotion);
             _oceanExpanded = WaterEditorUI.Section("Ocean Crest & Flipbook", _oceanExpanded, DrawOceanFlipbook);
 
@@ -105,8 +117,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (_profile.objectReferenceValue != null)
                 EditorGUILayout.HelpBox(
                     "A Foam Profile is assigned: its driven sections OVERRIDE the matching fields below " +
-                    "every frame (spawn, life, size, atlas, tint, veil). Tune the profile - or clear it, " +
-                    "or turn off that section's Drive toggle - to change them here.",
+                    "every frame, so those fields are greyed out here. Tune the profile - or clear it, " +
+                    "or turn off that section's Drive toggle - to edit them on this component.",
                     MessageType.Info);
 
             if (!DeviceSupportsDensity())
@@ -180,30 +192,56 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         void DrawSpawning()
         {
-            EditorGUILayout.PropertyField(_spawnThreshold);
-            EditorGUILayout.PropertyField(_spawnRate);
-            EditorGUILayout.PropertyField(_maxSpawnPerFrame);
-            EditorGUILayout.PropertyField(_sprayChance);
-            EditorGUILayout.PropertyField(_sprayLaunchSpeed);
+            using (new EditorGUI.DisabledScope(_ambientDriven))
+            {
+                EditorGUILayout.PropertyField(_spawnThreshold);
+                EditorGUILayout.PropertyField(_spawnRate);
+                EditorGUILayout.PropertyField(_maxSpawnPerFrame);
+                EditorGUILayout.PropertyField(_sprayChance,
+                    new GUIContent("Mist Chance",
+                        "Chance a foam spawn launches as an airborne mist droplet instead of floating foam."));
+                EditorGUILayout.PropertyField(_sprayLaunchSpeed,
+                    new GUIContent("Mist Launch Speed", "Upward launch speed of ambient mist droplets."));
+            }
         }
 
         void DrawLookLife()
         {
-            EditorGUILayout.PropertyField(_lifeRange);
-            EditorGUILayout.PropertyField(_sizeRange);
-            EditorGUILayout.PropertyField(_sizeHeroPower);
-            EditorGUILayout.PropertyField(_spawnMaxDistance);
+            using (new EditorGUI.DisabledScope(_ambientDriven))
+            {
+                EditorGUILayout.PropertyField(_lifeRange);
+                EditorGUILayout.PropertyField(_sizeRange);
+            }
+            using (new EditorGUI.DisabledScope(_lookDriven))
+                EditorGUILayout.PropertyField(_sizeHeroPower);
+            using (new EditorGUI.DisabledScope(_ambientDriven))
+                EditorGUILayout.PropertyField(_spawnMaxDistance);
         }
 
         void DrawSpray()
         {
-            EditorGUILayout.HelpBox("Airborne droplets, tuned independently of the floating foam above. " +
-                "Leave the material empty to draw them with the foam Particle Material.", MessageType.None);
-            EditorGUILayout.PropertyField(_sprayMaterial, new GUIContent("Spray Material"));
-            EditorGUILayout.PropertyField(_sprayLifeRange, new GUIContent("Lifetime"));
-            EditorGUILayout.PropertyField(_spraySizeRange, new GUIContent("Size"));
+            EditorGUILayout.HelpBox("Ambient mist: airborne droplets thrown off the floating foam " +
+                "(Mist Chance above). Pump/impact SPLASH droplets are tuned on the WaterSplashEmitter " +
+                "instead - these values do NOT affect them. Leave the material empty to draw the mist " +
+                "with the foam Particle Material.", MessageType.None);
+            EditorGUILayout.PropertyField(_sprayMaterial, new GUIContent("Mist Material"));
+            using (new EditorGUI.DisabledScope(_ambientDriven))
+            {
+                EditorGUILayout.PropertyField(_sprayLifeRange, new GUIContent("Mist Lifetime"));
+                EditorGUILayout.PropertyField(_spraySizeRange, new GUIContent("Mist Size"));
+            }
             EditorGUILayout.PropertyField(_sprayFlipbookGrid, new GUIContent("Flipbook Grid"));
             EditorGUILayout.PropertyField(_sprayFlipbookFps, new GUIContent("Flipbook FPS"));
+
+            EditorGUILayout.Space();
+            EditorGUILayout.HelpBox("Deposited foam: when ANY airborne droplet (mist or pump splash) " +
+                "lands, it becomes a surface foam patch re-rolled from these ranges - tuned " +
+                "independently of the droplet that made it.", MessageType.None);
+            using (new EditorGUI.DisabledScope(_ambientDriven))
+            {
+                EditorGUILayout.PropertyField(_depositLifeRange, new GUIContent("Deposit Lifetime"));
+                EditorGUILayout.PropertyField(_depositSizeRange, new GUIContent("Deposit Size"));
+            }
         }
 
         void DrawMotion()
@@ -217,8 +255,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawOceanFlipbook()
         {
             EditorGUILayout.PropertyField(_crestRollSpeed);
-            EditorGUILayout.PropertyField(_flipbookGrid);
-            EditorGUILayout.PropertyField(_flipbookFps);
+            using (new EditorGUI.DisabledScope(_lookDriven))
+            {
+                EditorGUILayout.PropertyField(_flipbookGrid);
+                EditorGUILayout.PropertyField(_flipbookFps);
+            }
         }
     }
 }

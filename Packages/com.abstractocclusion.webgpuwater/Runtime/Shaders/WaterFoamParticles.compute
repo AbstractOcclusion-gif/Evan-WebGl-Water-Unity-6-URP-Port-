@@ -123,6 +123,10 @@ float _SizeHeroPower;     // >= 1; KWS pow-distribution: most particles small, r
 // Spray droplets get their OWN size + lifetime so they tune apart from floating foam.
 float _SprayLifeMin, _SprayLifeMax; // seconds (KIND_SPRAY only)
 float _SpraySizeMin, _SpraySizeMax; // world units (KIND_SPRAY only)
+// Deposited foam: what a LANDED droplet (mist or splash burst) turns into. Re-rolled on
+// landing so the surface patch tunes apart from the airborne droplet that made it.
+float _DepositLifeMin, _DepositLifeMax; // seconds
+float _DepositSizeMin, _DepositSizeMax; // world units
 float _TexelWorldArea;    // world-space area covered by one sim texel
 
 // Update tuning
@@ -196,7 +200,11 @@ struct BurstRequest
     float  outSpeed; // world units/sec base outward throw
     float  seed;     // per-burst random salt
     float  count;    // droplets requested (<= MAX_BURST_DROPLETS)
-    float3 _pad;
+    // Per-burst droplet life/size (was padding; stride stays 48 bytes): bursts tune on
+    // the WaterSplashEmitter, fully independent of the ambient-mist _SprayLife/_SpraySize.
+    float  lifeMin;  // seconds
+    float  lifeMax;  // seconds
+    float  size;     // world half-size before jitter
 };
 StructuredBuffer<BurstRequest> BurstRequests;
 uint _BurstRequestCount;
@@ -211,6 +219,8 @@ static const float BURST_UP_JITTER_MIN = 0.5;
 static const float BURST_UP_JITTER_MAX = 1.2;
 static const float BURST_SPAWN_HEIGHT = 0.01;  // just above the surface, never submerged
 static const float BURST_RING_RADIUS_SCALE = 0.5; // spawn inside half the impact radius
+static const float BURST_SIZE_JITTER_MIN = 0.6;   // matches WaterSplashEmitter.SizeJitterMin
+static const float BURST_SIZE_JITTER_MAX = 1.3;   // matches WaterSplashEmitter.SizeJitterMax
 
 // ---- Foam motion richness (KWS curl + clumping): floating foam is swirled by a
 // divergence-free curl field and gently attracted toward noise maxima, so it gathers
@@ -576,9 +586,11 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     float upSpeed = burst.upSpeed * lerp(BURST_UP_JITTER_MIN, BURST_UP_JITTER_MAX, r3);
     particle.velocity = float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
     particle.age = 0.0;
-    // Burst droplets are spray: use the spray size/life range (same split as the Spawn kernel).
-    particle.life = lerp(_SprayLifeMin, _SprayLifeMax, r1);
-    particle.size = lerp(_SpraySizeMin, _SpraySizeMax, pow(r2, _SizeHeroPower));
+    // Burst droplets carry their OWN life/size in the request (from the WaterSplashEmitter),
+    // so pump/impact splashes tune independently of the ambient-mist spray ranges.
+    particle.life = lerp(burst.lifeMin, burst.lifeMax, r1);
+    particle.size = burst.size
+                  * lerp(BURST_SIZE_JITTER_MIN, BURST_SIZE_JITTER_MAX, pow(r2, _SizeHeroPower));
     particle.seed = r0;
     particle.kind = KIND_SPRAY;
     particle.strength = saturate(burst.strength);
@@ -645,6 +657,15 @@ void Update(uint3 id : SV_DispatchThreadID)
             particle.worldPos.y = 0.0;
             particle.velocity = float3(particle.velocity.x, 0.0, particle.velocity.z) * SPRAY_LANDING_KEEP;
             particle.kind = KIND_SURFACE;
+            // The deposit is its OWN foam element: restart the age and re-roll life + size
+            // from the deposit ranges, so the landed patch is tuned independently of the
+            // airborne droplet that made it (which kept its spray life/size until now).
+            uint2 depositKey = uint2(slot, asuint(particle.seed));
+            particle.age = 0.0;
+            particle.life = lerp(_DepositLifeMin, _DepositLifeMax,
+                                 Rand01(depositKey, _FrameSeed));
+            particle.size = lerp(_DepositSizeMin, _DepositSizeMax,
+                                 Rand01(depositKey, _FrameSeed ^ 0x9E3779B9u));
         }
     }
     else

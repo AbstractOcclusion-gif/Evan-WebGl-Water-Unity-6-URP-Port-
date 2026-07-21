@@ -22,31 +22,35 @@ MonoBehaviour:
     sizeHeroPower: 6
   ambient:
     drive: 1
-    spawnThreshold: 1
-    spawnRate: 96
-    maxSpawnPerFrame: 1918
-    sprayChance: 0
-    sprayLaunchSpeed: 0.95
-    lifeRange: {x: 0.2, y: 0.3}
-    sizeRange: {x: 1, y: 3}
+    spawnThreshold: 0.71
+    spawnRate: 200
+    maxSpawnPerFrame: 4096
+    sprayChance: 0.37
+    sprayLaunchSpeed: 1
+    lifeRange: {x: 5, y: 4}
+    sizeRange: {x: 0.01, y: 0.02}
     spawnMaxDistance: 400
-    sprayLifeRange: {x: 3, y: 4}
-    spraySizeRange: {x: 0.5, y: 1}
+    sprayLifeRange: {x: 0.25, y: 0.5}
+    spraySizeRange: {x: 0.1, y: 0.12}
+    depositLifeRange: {x: 10, y: 20}
+    depositSizeRange: {x: 0.1, y: 0.3}
   veil:
     drive: 1
     opacity: 1
-    densityLowGain: 2.24
+    densityLowGain: 4
     densityHighGain: 1
     breakupTexture: {fileID: 2800000, guid: 8fc49b69d0d057948be747fa1a37627c, type: 3}
-    breakupTiling: 3
-    breakupStrength: 0.73
+    breakupTiling: 10.4
+    breakupStrength: 1
   splash:
     drive: 1
-    maxParticlesPerBurst: 96
-    upwardBias: 0.4
-    outwardSpread: 0.32
-    dropletSize: 0
-    lifetime: {x: 4, y: 8}
+    maxParticlesPerBurst: 17
+    upwardBias: 0.82
+    outwardSpread: 0.54
+    dropletSize: 0.1
+    lifetime: {x: 3, y: 5}
     crownMinStrength: 1
     crownBaseSize: 0.6
     crownLifetime: 0.7
+    crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
+    crownOpacity: 1

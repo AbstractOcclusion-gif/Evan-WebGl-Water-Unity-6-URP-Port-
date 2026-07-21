@@ -51,9 +51,18 @@ namespace AbstractOcclusion.WebGpuWater
         {
             public Vector3 center;
             public float radius, strength, upSpeed, outSpeed, seed, count;
-            public Vector3 _pad;
+            // Per-burst droplet life/size (was padding): splash/pump bursts tune on the
+            // WaterSplashEmitter, fully independent of the ambient-mist spray ranges.
+            public float lifeMin, lifeMax, size;
         }
         static readonly int BurstStride = Marshal.SizeOf<BurstRequest>();
+
+        // Safety margin on the burst-keep-alive window (covers landing detection latency).
+        const float BurstSimPadSeconds = 0.5f;
+        // Until this time the sim/draw stay alive even with ambient foam OFF: event bursts
+        // (pump/impact splashes) are independent of foam turbulence, so their droplets must
+        // finish their airborne + deposited life after the last queued burst.
+        float _burstSimActiveUntil;
 
         /// <summary>How the floating (surface) foam is rendered. Spray is always textured quads.</summary>
         public enum FoamRenderMode
@@ -118,6 +127,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SprayLifeMax = Shader.PropertyToID("_SprayLifeMax");
         static readonly int ID_SpraySizeMin = Shader.PropertyToID("_SpraySizeMin");
         static readonly int ID_SpraySizeMax = Shader.PropertyToID("_SpraySizeMax");
+        static readonly int ID_DepositLifeMin = Shader.PropertyToID("_DepositLifeMin");
+        static readonly int ID_DepositLifeMax = Shader.PropertyToID("_DepositLifeMax");
+        static readonly int ID_DepositSizeMin = Shader.PropertyToID("_DepositSizeMin");
+        static readonly int ID_DepositSizeMax = Shader.PropertyToID("_DepositSizeMax");
         // _DrawKind values for the foam/spray two-pass split (MUST match FoamParticles.shader).
         const float DrawKindFoam = 1f;
         const float DrawKindSpray = 2f;
@@ -213,10 +226,19 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Vector2Int sprayFlipbookGrid = new Vector2Int(1, 1);
         [Tooltip("Spray flipbook speed (frames/sec). 0 = a static droplet sprite.")]
         [Range(0f, 30f)] [SerializeField] internal float sprayFlipbookFps = 0f;
+        // Deposited foam: what a LANDED droplet (mist or splash burst) turns into on the
+        // surface. Defaults match the old implicit behaviour (droplet kept its spray
+        // size/leftover life) closely enough that nothing jumps until tuned.
+        [Tooltip("Lifetime range (seconds) of the foam patch a landed droplet deposits on the surface.")]
+        [SerializeField] internal Vector2 depositLifeRange = new Vector2(0.5f, 1f);
+        [Tooltip("World half-size range of the deposited foam patch.")]
+        [SerializeField] internal Vector2 depositSizeRange = new Vector2(0.02f, 0.05f);
 
         [Header("Motion")]
+        // Default 1 (not the old 4): at 4 droplets slammed down so fast that lifetime
+        // tuning appeared to do nothing - the fall, not the life, ended the visible arc.
         [Tooltip("Gravity on spray droplets (world units/sec^2).")]
-        [Range(0f, 20f)] [SerializeField] internal float gravity = 4f;
+        [Range(0f, 20f)] [SerializeField] internal float gravity = 1f;
         [Tooltip("Drift speed along the surface flow, per unit of surface slope (world units/sec).")]
         [Range(0f, 2f)] [SerializeField] internal float flowDrift = 0.25f;
         [Tooltip("Constant downwind drift of floating foam (world units/sec).")]
@@ -377,8 +399,12 @@ namespace AbstractOcclusion.WebGpuWater
             // with a dead pool.
             if (_particles == null || _counters == null || particleCompute == null) return;
             if (volume.SimStateTexture == null || volume.FoamMaskTexture == null) return;
-            // Spawn when the 2D foam sim is on OR this is an ocean (whose FFT crests are the source).
-            if (!volume.Foam && !volume.OceanFftActive) return;
+            // Ambient spawning needs the 2D foam sim ON or an ocean (FFT crests as source).
+            // Event bursts do NOT: with both ambient sources off, keep dispatching through
+            // the burst window so pump/impact splashes still spray (the Spawn kernel is
+            // harmless then - the foam mask is black, so it early-outs per texel).
+            bool ambientFoamActive = volume.Foam || volume.OceanFftActive;
+            if (!ambientFoamActive && Time.time >= _burstSimActiveUntil) return;
 
             // Master profile: re-applied every frame (a handful of field copies), so retuning
             // the asset is live in play mode and no editor plumbing is needed.
@@ -436,6 +462,11 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetFloat(ID_SprayLifeMax, Mathf.Max(sprayLifeRange.x, sprayLifeRange.y));
             cs.SetFloat(ID_SpraySizeMin, spraySizeRange.x);
             cs.SetFloat(ID_SpraySizeMax, Mathf.Max(spraySizeRange.x, spraySizeRange.y));
+            // Deposited foam ranges (landed droplets re-roll from these in the Update kernel).
+            cs.SetFloat(ID_DepositLifeMin, depositLifeRange.x);
+            cs.SetFloat(ID_DepositLifeMax, Mathf.Max(depositLifeRange.x, depositLifeRange.y));
+            cs.SetFloat(ID_DepositSizeMin, depositSizeRange.x);
+            cs.SetFloat(ID_DepositSizeMax, Mathf.Max(depositSizeRange.x, depositSizeRange.y));
             cs.SetFloat(ID_TexelWorldArea, volume.SimTexelWorldArea);
 
             cs.SetFloat(ID_Gravity, gravity);
@@ -605,7 +636,8 @@ namespace AbstractOcclusion.WebGpuWater
         /// (soft budget, like the turbulence spawns). Droplet look/motion is this system's
         /// spray path, so event splashes match turbulence-thrown spray exactly.</summary>
         public void QueueSplashBurst(Vector3 surfacePos, float strength, float radius,
-                                     int dropletCount, float upSpeed, float outSpeed)
+                                     int dropletCount, float upSpeed, float outSpeed,
+                                     Vector2 dropletLifeRange, float dropletSize)
         {
             if (!isActiveAndEnabled || _pendingBursts.Count >= MaxBurstsPerFrame) return;
             _pendingBursts.Add(new BurstRequest
@@ -616,8 +648,17 @@ namespace AbstractOcclusion.WebGpuWater
                 upSpeed = Mathf.Max(0f, upSpeed),
                 outSpeed = Mathf.Max(0f, outSpeed),
                 seed = Random.value,
-                count = Mathf.Clamp(dropletCount, 1, MaxBurstDroplets)
+                count = Mathf.Clamp(dropletCount, 1, MaxBurstDroplets),
+                lifeMin = Mathf.Max(0f, dropletLifeRange.x),
+                lifeMax = Mathf.Max(dropletLifeRange.x, dropletLifeRange.y),
+                size = Mathf.Max(0f, dropletSize)
             });
+            // Keep the sim/draw alive (even with ambient foam OFF) until these droplets
+            // have fully lived: airborne life + the deposited-foam life they roll on landing.
+            float burstLifeSpan = Mathf.Max(dropletLifeRange.x, dropletLifeRange.y)
+                                + Mathf.Max(depositLifeRange.x, depositLifeRange.y)
+                                + BurstSimPadSeconds;
+            _burstSimActiveUntil = Mathf.Max(_burstSimActiveUntil, Time.time + burstLifeSpan);
         }
 
         // Constant downwind drift in world space: the wave bank's heading convention is

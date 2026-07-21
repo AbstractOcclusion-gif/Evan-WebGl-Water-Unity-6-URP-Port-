@@ -41,8 +41,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Sprite atlas for foam + roller quads. None = keep each material's own.")]
             public Texture2D particleAtlas;
             public Vector2Int flipbookGrid = new Vector2Int(2, 2);
-            [Range(0f, 30f)] public float flipbookFps = 4f;
-            [Range(1f, 6f)] public float sizeHeroPower = 2f;
+            // Defaults MATCH WaterFoamParticles' own field defaults, so assigning a fresh
+            // profile changes nothing until the user actually tweaks it (no silent drift).
+            [Range(0f, 30f)] public float flipbookFps = 0f;
+            [Range(1f, 6f)] public float sizeHeroPower = 1f;
         }
 
         [System.Serializable]
@@ -52,7 +54,7 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 1f)] public float spawnThreshold = 0.25f;
             [Range(0f, 200f)] public float spawnRate = 30f;
             [Range(16, 4096)] public int maxSpawnPerFrame = 256;
-            [Range(0f, 1f)] public float sprayChance = 0.08f;
+            [Range(0f, 1f)] public float sprayChance = 0.15f;
             [Range(0f, 5f)] public float sprayLaunchSpeed = 0.6f;
             public Vector2 lifeRange = new Vector2(1.5f, 4f);
             public Vector2 sizeRange = new Vector2(0.02f, 0.06f);
@@ -61,6 +63,11 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector2 sprayLifeRange = new Vector2(0.5f, 1.2f);
             [Tooltip("Airborne spray droplet size range (world half-size) - separate from foam sizeRange.")]
             public Vector2 spraySizeRange = new Vector2(0.02f, 0.05f);
+            // Deposited foam (landed droplets). Defaults match the component - zero drift.
+            [Tooltip("Lifetime range (seconds) of the foam patch a landed droplet deposits.")]
+            public Vector2 depositLifeRange = new Vector2(0.5f, 1f);
+            [Tooltip("World half-size range of the deposited foam patch.")]
+            public Vector2 depositSizeRange = new Vector2(0.02f, 0.05f);
         }
 
         [System.Serializable]
@@ -89,6 +96,12 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 1f)] public float crownMinStrength = 0.25f;
             public float crownBaseSize = 0.4f;
             public float crownLifetime = 0.5f;
+            // Crown LOOK lives here too (it used to be unreachable from the profile: only
+            // sizing was mirrored, so the profile tint silently ignored the crown).
+            // Defaults match WaterSplashEmitter's crown defaults - zero drift on assign.
+            [Tooltip("Crown flipbook tint, applied per emit as the particle start color.")]
+            public Color crownTint = new Color(0.95f, 0.98f, 1f, 1f);
+            [Range(0f, 1f)] public float crownOpacity = 1f;
         }
 
         [Tooltip("Shared look for every foam element under the body.")]
@@ -117,6 +130,8 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.spawnMaxDistance = ambient.spawnMaxDistance;
                 foam.sprayLifeRange = ambient.sprayLifeRange;
                 foam.spraySizeRange = ambient.spraySizeRange;
+                foam.depositLifeRange = ambient.depositLifeRange;
+                foam.depositSizeRange = ambient.depositSizeRange;
             }
             if (look.drive)
             {
@@ -137,6 +152,8 @@ namespace AbstractOcclusion.WebGpuWater
             emitter.crownMinStrength = splash.crownMinStrength;
             emitter.crownBaseSize = splash.crownBaseSize;
             emitter.crownLifetime = splash.crownLifetime;
+            emitter.crownTint = splash.crownTint;
+            emitter.crownOpacity = splash.crownOpacity;
         }
 
         // ---- Draw-time material overrides (property blocks; assets never written) -----

@@ -731,13 +731,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return sun;
         }
 
+        // Hierarchy names for the splash feature: ONE root GO holding the emitter, with
+        // both particle systems as clearly-labelled children (the old flat siblings
+        // "Splash Particles"/"Splash Crown" read as two unrelated features).
+        internal const string SplashRootName = "Water Splash FX";
+        internal const string SplashDropletChildName = "Droplet Spray (CPU Fallback)";
+        internal const string SplashCrownChildName = "Crown Ring";
+
         // Shared, fully editable splash particles (drift droplets + a flipbook crown).
         // Materials are create-once assets on the lit splash shader, so hand-tuning
         // survives rebuilds (same convention as the water/foam-particle materials).
+        // One root so the hierarchy reads as a single feature: the emitter on the root
+        // drives both children. "Droplet Spray" is the CPU fallback - bodies with an
+        // active GPU WaterFoamParticles route droplets there instead, so it only bursts
+        // on non-GPU bodies. "Crown Ring" always plays on both paths.
         internal static WaterSplashEmitter CreateSplashEmitter(Transform parent)
         {
-            var splashGO = NewUndoableGameObject("Splash Particles");
-            splashGO.transform.SetParent(parent);
+            var rootGO = NewUndoableGameObject(SplashRootName);
+            rootGO.transform.SetParent(parent);
+            var splashEmitter = rootGO.AddComponent<WaterSplashEmitter>();
+
+            var splashGO = NewUndoableGameObject(SplashDropletChildName);
+            splashGO.transform.SetParent(rootGO.transform);
             var splashPS = splashGO.AddComponent<ParticleSystem>();
             WaterSplashEmitter.ConfigureForDrift(splashPS);
             var splashPSR = splashGO.GetComponent<ParticleSystemRenderer>();
@@ -745,11 +760,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
             // Render mode is owned by ConfigureForDrift (stretched billboards: fast droplets
             // streak along their motion) - no override here.
-            var splashEmitter = splashGO.AddComponent<WaterSplashEmitter>();
             splashEmitter.particles = splashPS;
 
-            var crownGO = NewUndoableGameObject("Splash Crown");
-            crownGO.transform.SetParent(parent);
+            var crownGO = NewUndoableGameObject(SplashCrownChildName);
+            crownGO.transform.SetParent(rootGO.transform);
             var crownPS = crownGO.AddComponent<ParticleSystem>();
             WaterSplashEmitter.ConfigureCrown(crownPS, CrownSheetCols, CrownSheetRows);
             var crownPSR = crownGO.GetComponent<ParticleSystemRenderer>();
