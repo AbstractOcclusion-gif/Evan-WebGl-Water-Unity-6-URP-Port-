@@ -57,6 +57,10 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector2 lifeRange = new Vector2(1.5f, 4f);
             public Vector2 sizeRange = new Vector2(0.02f, 0.06f);
             [Range(0f, 400f)] public float spawnMaxDistance = 120f;
+            [Tooltip("Airborne spray droplet lifetime range (seconds) - separate from foam lifeRange.")]
+            public Vector2 sprayLifeRange = new Vector2(0.5f, 1.2f);
+            [Tooltip("Airborne spray droplet size range (world half-size) - separate from foam sizeRange.")]
+            public Vector2 spraySizeRange = new Vector2(0.02f, 0.05f);
         }
 
         [System.Serializable]
@@ -111,6 +115,8 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.lifeRange = ambient.lifeRange;
                 foam.sizeRange = ambient.sizeRange;
                 foam.spawnMaxDistance = ambient.spawnMaxDistance;
+                foam.sprayLifeRange = ambient.sprayLifeRange;
+                foam.spraySizeRange = ambient.spraySizeRange;
             }
             if (look.drive)
             {

@@ -120,6 +120,9 @@ float _SprayLaunchSpeed;  // world units/sec initial upward speed of spray
 float _LifeMin, _LifeMax; // seconds
 float _SizeMin, _SizeMax; // world units
 float _SizeHeroPower;     // >= 1; KWS pow-distribution: most particles small, rare heroes
+// Spray droplets get their OWN size + lifetime so they tune apart from floating foam.
+float _SprayLifeMin, _SprayLifeMax; // seconds (KIND_SPRAY only)
+float _SpraySizeMin, _SpraySizeMax; // world units (KIND_SPRAY only)
 float _TexelWorldArea;    // world-space area covered by one sim texel
 
 // Update tuning
@@ -516,10 +519,15 @@ void Spawn(uint3 id : SV_DispatchThreadID)
         particle.velocity += float3(surfToShore.x, 0.0, surfToShore.y)
                            * (SURF_SPRAY_THROW_SPEED * surfLip);
     particle.age = 0.0;
-    particle.life = lerp(_LifeMin, _LifeMax, r1);
+    // Spray and floating foam draw their lifetime/size from separate ranges (KIND split).
+    float lifeMin = spray ? _SprayLifeMin : _LifeMin;
+    float lifeMax = spray ? _SprayLifeMax : _LifeMax;
+    particle.life = lerp(lifeMin, lifeMax, r1);
     // Hero-size distribution (KWS): pow biases the roll small, so a few rare sprites land
-    // near _SizeMax and read as hero clumps. _SizeHeroPower 1 = the original uniform sizes.
-    particle.size = lerp(_SizeMin, _SizeMax, pow(r2, _SizeHeroPower));
+    // near the max and read as hero clumps. _SizeHeroPower 1 = the original uniform sizes.
+    float sizeMin = spray ? _SpraySizeMin : _SizeMin;
+    float sizeMax = spray ? _SpraySizeMax : _SizeMax;
+    particle.size = lerp(sizeMin, sizeMax, pow(r2, _SizeHeroPower));
     particle.seed = r2;
     particle.kind = spray ? KIND_SPRAY : KIND_SURFACE;
     particle.strength = saturate(foam);
@@ -568,9 +576,9 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     float upSpeed = burst.upSpeed * lerp(BURST_UP_JITTER_MIN, BURST_UP_JITTER_MAX, r3);
     particle.velocity = float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
     particle.age = 0.0;
-    particle.life = lerp(_LifeMin, _LifeMax, r1);
-    // Same hero-size distribution as the turbulence spawns (one look for all droplets).
-    particle.size = lerp(_SizeMin, _SizeMax, pow(r2, _SizeHeroPower));
+    // Burst droplets are spray: use the spray size/life range (same split as the Spawn kernel).
+    particle.life = lerp(_SprayLifeMin, _SprayLifeMax, r1);
+    particle.size = lerp(_SpraySizeMin, _SpraySizeMax, pow(r2, _SizeHeroPower));
     particle.seed = r0;
     particle.kind = KIND_SPRAY;
     particle.strength = saturate(burst.strength);

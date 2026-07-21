@@ -1659,7 +1659,11 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal bool configureCamera = false;
 
         [Header("Splash")]
-        [Tooltip("Shared splash emitter used for mouse interaction (and objects).")]
+        [Tooltip("Splash emitter this body routes impacts through (object splashes, the spray pump, " +
+                 "mouse interaction). Left empty, one is resolved or created on demand.")]
         [SerializeField] internal WaterSplashEmitter splashEmitter;
+        [Tooltip("Supply a splash emitter to triggers over this body. When none is assigned or found, " +
+                 "one is created on demand. Untick to keep this body silent (no object/pump/mouse splashes).")]
+        [SerializeField] internal bool provideSplashEmitter = true;
     }
 }

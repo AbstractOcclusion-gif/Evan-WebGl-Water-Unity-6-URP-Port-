@@ -580,7 +580,42 @@ namespace AbstractOcclusion.WebGpuWater
             if (targetCamera == null) targetCamera = Camera.main;
             if (sun == null) sun = ResolveSun();
             if (orbit == null && targetCamera != null) orbit = targetCamera.GetComponent<OrbitCamera>();
-            if (splashEmitter == null) splashEmitter = FindFirstObjectByType<WaterSplashEmitter>();
+            // splashEmitter is resolved lazily on first impact (ResolveSplashEmitter), not eagerly here,
+            // so a body that never splashes never searches the scene or creates an emitter.
+        }
+
+        // Name of the emitter auto-created when a body must supply splashes but none is authored.
+        const string AutoSplashEmitterName = "Splash Emitter (auto)";
+
+        /// <summary>The splash emitter this body routes impacts through - resolved lazily and cached:
+        /// an assigned emitter, one already under the body, any emitter in the scene (back-compat with
+        /// a single rigged emitter), or a droplet-only emitter created on the body on demand. Returns
+        /// null when the body opts out of splashes (<see cref="provideSplashEmitter"/> off), so triggers
+        /// over it stay silent.</summary>
+        internal WaterSplashEmitter ResolveSplashEmitter()
+        {
+            if (!provideSplashEmitter) return null;
+            if (splashEmitter != null) return splashEmitter;
+
+            splashEmitter = GetComponentInChildren<WaterSplashEmitter>();
+            if (splashEmitter != null) return splashEmitter;
+
+            splashEmitter = FindFirstObjectByType<WaterSplashEmitter>();
+            if (splashEmitter != null) return splashEmitter;
+
+            if (!Application.isPlaying) return null; // never spawn content into a scene being edited
+            return splashEmitter = CreateOwnedSplashEmitter();
+        }
+
+        // A droplet-only emitter parented to this body. WaterSplashEmitter.Awake builds a drift
+        // ParticleSystem with no editor assets; the crown flipbook is an editor-only asset, so an
+        // auto-created emitter has no crown - droplets still fire (GPU-routed when the body has a
+        // WaterFoamParticles). The authored wizard emitter is the path that carries the crown.
+        WaterSplashEmitter CreateOwnedSplashEmitter()
+        {
+            var host = new GameObject(AutoSplashEmitterName);
+            host.transform.SetParent(transform, worldPositionStays: false);
+            return host.AddComponent<WaterSplashEmitter>();
         }
 
         // The scene's key light: the lighting-settings sun if set, else the first directional light.

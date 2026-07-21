@@ -10,7 +10,8 @@ namespace AbstractOcclusion.WebGpuWater
     [RequireComponent(typeof(Rigidbody))]
     public class WaterSplash : MonoBehaviour
     {
-        [Tooltip("Shared splash emitter. Auto-found in the scene if left empty.")]
+        [Tooltip("Explicit splash emitter override. Left empty, the water body under the object " +
+                 "supplies one (WaterVolume.ResolveSplashEmitter).")]
         [SerializeField] internal WaterSplashEmitter emitter;
 
         [Tooltip("Minimum downward speed at the surface to trigger a splash.")]
@@ -34,11 +35,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _rb = GetComponent<Rigidbody>();
             _col = GetComponent<Collider>();
-        }
-
-        void Start()
-        {
-            if (emitter == null) emitter = FindFirstObjectByType<WaterSplashEmitter>();
         }
 
         void FixedUpdate()
@@ -65,8 +61,10 @@ namespace AbstractOcclusion.WebGpuWater
                 if (speed >= minImpactSpeed)
                 {
                     float strength = Mathf.Clamp01(speed / Mathf.Max(MinDivisorSpeed, maxImpactSpeed));
-                    if (emitter != null)
-                        emitter.EmitSplash(new Vector3(center.x, surfaceY, center.z), strength, halfX * 2f);
+                    // Explicit override wins; otherwise the body the object entered supplies the emitter.
+                    WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
+                    if (activeEmitter != null)
+                        activeEmitter.EmitSplash(new Vector3(center.x, surfaceY, center.z), strength, halfX * 2f);
                     body.AddRipple(center.x, center.z, Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
                                    Mathf.Min(rippleStrength, speed * SpeedToRippleStrength));
                 }

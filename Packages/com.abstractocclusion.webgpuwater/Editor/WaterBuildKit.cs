@@ -31,7 +31,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         public Camera Camera;
         public OrbitCamera Orbit;
         public Light Sun;
-        public WaterSplashEmitter Splash;
         public Material MatAbove, MatUnder, MatPool;
         public string Folder; // per-build asset folder for this scene's materials
     }
@@ -100,6 +99,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string ShaderFoamDensityComposite = WaterShaderNames.FoamDensityComposite;
         internal const string FoamParticleComputePath = PackageShadersRoot + "/WaterFoamParticles.compute";
         internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
+        // Round soft droplet sprite for the airborne spray pass (its own look, separate from foam).
+        internal const string FoamDropletTexPath = Gen + "/FoamDroplet.png";
 
         // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
         internal const string ShaderSplashParticles = WaterShaderNames.SplashParticles;
@@ -169,8 +170,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         // The pure ASSET half of a build (meshes, sky, tiles, quality, materials) - no scene
-        // mutation, so the prefab builder can reuse it without also rigging a camera/sun/splash
-        // into the open scene. Camera/Orbit/Sun/Splash stay null until RigScene fills them.
+        // mutation, so the prefab builder can reuse it without also rigging a camera/sun
+        // into the open scene. Camera/Orbit/Sun stay null until RigScene fills them.
         internal static bool TryBuildSharedAssets(string assetFolder, bool buildPoolMaterial, out BuildContext ctx)
         {
             ctx = null;
@@ -204,14 +205,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return true;
         }
 
-        // The SCENE half of a build: camera framing + orbit, sun and splash rig. Split from the
-        // asset half so each caller takes exactly what it needs.
+        // The SCENE half of a build: camera framing + orbit and sun. Split from the asset half so
+        // each caller takes exactly what it needs. The splash emitter is rigged per-body in
+        // CreateWaterBody (the body owns its splash), not as a loose scene-root object.
         internal static void RigScene(BuildContext ctx, Transform sceneRoot)
         {
             ctx.Camera = SetUpCamera(out OrbitCamera orbit);
             ctx.Orbit = orbit;
             ctx.Sun = CreateSun(sceneRoot);
-            ctx.Splash = CreateSplashEmitter(sceneRoot);
         }
 
         // A fully-wired water body: a "Frame" GameObject carrying the WaterVolume (its transform IS
@@ -220,7 +221,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // the volume frame places in the shader. Only ONE body per scene should be primary.
         internal static WaterVolume CreateWaterBody(BuildContext ctx, Transform parent, string name,
             Vector3 position, Vector3 extent, bool primary, bool withPool, bool withGodRays,
-            bool withFoamParticles = true)
+            bool withFoamParticles = true, bool withSplash = true)
         {
             var bodyRoot = NewUndoableGameObject(name);
             bodyRoot.transform.SetParent(parent);
@@ -234,7 +235,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.targetCamera = ctx.Camera;
             volume.sun = ctx.Sun;
             volume.orbit = ctx.Orbit;
-            volume.splashEmitter = ctx.Splash;
             volume.volumeExtent = extent;
             volume.IsPrimary = primary;
 
@@ -261,6 +261,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             if (withFoamParticles) AddFoamParticles(volume, ctx.Folder);
 
+            // The body owns its splash: the authored emitter (drift droplets + flipbook crown) lives
+            // under this body's frame, not as a loose scene-root object. Off = this body stays silent.
+            volume.provideSplashEmitter = withSplash;
+            if (withSplash) volume.splashEmitter = CreateSplashEmitter(volume.transform);
+
             EditorUtility.SetDirty(volume);
             return volume;
         }
@@ -272,12 +277,34 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             if (volume == null) return null;
 
+            // Don't add a component we can't wire: bail if the required compute/shader is missing.
+            if (AssetDatabase.LoadAssetAtPath<ComputeShader>(FoamParticleComputePath) == null ||
+                Shader.Find(ShaderFoamParticles) == null)
+            {
+                Debug.LogWarning("WebGL Water: foam particle compute/shader missing; skipping particle setup.");
+                return null;
+            }
+
+            var particles = Undo.AddComponent<WaterFoamParticles>(volume.gameObject);
+            particles.volume = volume;
+            WireFoamAssets(particles, materialFolder);
+            return particles;
+        }
+
+        // Load (or create) and assign the foam compute + quad material + density-composite material
+        // onto an EXISTING WaterFoamParticles. Shared by AddFoamParticles and the component
+        // inspector's Wire/Repair button, so both paths produce identical wiring. Assets are
+        // create-once in the given folder; hand-tuned material values survive a repair.
+        internal static void WireFoamAssets(WaterFoamParticles particles, string materialFolder)
+        {
+            if (particles == null) return;
+
             var compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(FoamParticleComputePath);
             var shader = Shader.Find(ShaderFoamParticles);
             if (compute == null || shader == null)
             {
-                Debug.LogWarning("WebGL Water: foam particle compute/shader missing; skipping particle setup.");
-                return null;
+                Debug.LogWarning("WebGL Water: foam particle compute/shader missing; foam assets not wired.");
+                return;
             }
 
             var material = LoadOrCreateMaterial(materialFolder + "/FoamParticles.mat", shader, m =>
@@ -294,13 +321,22 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 densityMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDensityComposite.mat",
                                                        densityShader, m => { });
 
-            var particles = Undo.AddComponent<WaterFoamParticles>(volume.gameObject);
-            particles.volume = volume;
+            if (particles.volume == null) particles.volume = particles.GetComponentInParent<WaterVolume>();
             particles.particleCompute = compute;
             particles.particleMaterial = material;
             particles.densityMaterial = densityMaterial;
+
+            // Spray droplet material: same FoamParticles shader, a round droplet sprite so airborne
+            // spray reads as droplets not foam clumps. Only set when unassigned (never clobber a
+            // hand-picked one); if the droplet texture is missing the material just draws a soft dot.
+            if (particles.sprayMaterial == null)
+                particles.sprayMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDroplet.mat", shader, m =>
+                {
+                    var droplet = LoadFlipbook(FoamDropletTexPath, TextureWrapMode.Clamp, true);
+                    if (droplet != null) m.SetTexture(PropParticleTex, droplet);
+                });
+
             EditorUtility.SetDirty(particles);
-            return particles;
         }
 
         // ---------------------------------------------------------------- demo props

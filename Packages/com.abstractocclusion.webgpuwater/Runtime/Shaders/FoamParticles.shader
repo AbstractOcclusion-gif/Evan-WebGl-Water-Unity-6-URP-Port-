@@ -81,10 +81,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             StructuredBuffer<FoamParticle> _Particles;
 
             sampler2D _ParticleTex;
-            // 0 when the screen-space density pass renders the floating foam (this draw then only
-            // shows KIND_SPRAY droplets); 1 = classic quads for everything. Set per draw by
-            // WaterFoamParticles.cs, never a material slider.
-            float _SurfaceQuadsEnabled;
+            // Which kinds this draw renders: 0 = both, 1 = floating foam only (KIND_SURFACE),
+            // 2 = spray only (KIND_SPRAY). Lets foam and spray draw in separate passes with their
+            // own materials. Set per draw by WaterFoamParticles.cs, never a material slider.
+            float _DrawKind;
             // _LargeBody (1 = open water, picks the large-body glue below) comes from
             // WaterVolume.hlsl - already included; do not redeclare.
             float3 _SunColor; // Unity directional light color * intensity (global, from WaterVolume)
@@ -118,9 +118,11 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             {
                 FoamParticle particle = _Particles[vid / 6];
                 if (particle.life <= 0.0 || particle.age >= particle.life) return Dead();
-                // Density mode: floating foam is rendered by the screen-space density composite;
-                // this draw keeps only the ballistic spray as textured billboards.
-                if (particle.kind != KIND_SPRAY && _SurfaceQuadsEnabled < 0.5) return Dead();
+                // Kind filter (two-pass split): a foam-only pass drops spray, a spray-only pass
+                // drops foam, so each can be drawn with its own material. 0 = draw both.
+                bool isSpray = (particle.kind == KIND_SPRAY);
+                if (_DrawKind > 1.5 && !isSpray) return Dead();                  // spray-only pass
+                if (_DrawKind > 0.5 && _DrawKind < 1.5 && isSpray) return Dead(); // foam-only pass
 
                 float2 corner = ParticleQuadCorner(vid);
 

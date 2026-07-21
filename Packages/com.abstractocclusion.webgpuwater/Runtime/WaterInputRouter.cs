@@ -139,8 +139,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (body == null) return;
 
             body.AddRipple(hit.x, hit.z, _owner.RippleRadius, _owner.RippleStrength);
-            if (_owner.splashEmitter != null)
-                _owner.splashEmitter.EmitSplash(hit, TapSplashStrength, _owner.RippleRadius * DragSplashRadiusScale);
+            WaterSplashEmitter splash = _owner.ResolveSplashEmitter();
+            if (splash != null)
+                splash.EmitSplash(hit, TapSplashStrength, _owner.RippleRadius * DragSplashRadiusScale);
         }
 #endif
 
@@ -162,12 +163,13 @@ namespace AbstractOcclusion.WebGpuWater
                     // Route the ripple to the clicked body (world-space API; it converts).
                     _dragBody.AddRipple(hit.x, hit.z, _owner.RippleRadius, _owner.RippleStrength);
 
-                    if (_owner.splashEmitter != null)
+                    WaterSplashEmitter splash = _owner.ResolveSplashEmitter();
+                    if (splash != null)
                     {
                         float strength = Mathf.Clamp01(moved / DragSplashFullStrengthDistance);
                         if (strength > MinDragSplashStrength)
-                            _owner.splashEmitter.EmitSplash(hit, strength * DragSplashStrengthScale,
-                                                            _owner.RippleRadius * DragSplashRadiusScale);
+                            splash.EmitSplash(hit, strength * DragSplashStrengthScale,
+                                              _owner.RippleRadius * DragSplashRadiusScale);
                     }
                     _prevWorld = hit;
                     break;

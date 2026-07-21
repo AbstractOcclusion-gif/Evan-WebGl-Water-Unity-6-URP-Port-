@@ -315,9 +315,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return;
             }
 
+            // withSplash rigs the emitter under the body and sets its provideSplashEmitter gate, so an
+            // unticked Splash simply never creates one (no build-then-destroy of a loose object).
             var body = CreateWaterBody(ctx, root.transform, WaterBodyName, Vector3.zero, _extent,
                                        primary: true, withPool: withPool, withGodRays: _godRays,
-                                       withFoamParticles: _foam);
+                                       withFoamParticles: _foam, withSplash: _splash);
 
             body.rippleQuality = _rippleQuality;
             ApplyBaseType(body);
@@ -325,18 +327,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ApplyReflection(body);
             ApplyFoam(body);
             bool openWater = ApplyOpenWater(body);
-
-            // Splash unticked: the build context always creates a shared splash emitter, so remove it and
-            // unwire the body when the user opted out - otherwise props still splash despite the toggle.
-            // The crown system lives on its own sibling object, so it must go too (it used to be
-            // silently left behind as an orphan).
-            if (!_splash && ctx.Splash != null)
-            {
-                body.splashEmitter = null;
-                if (ctx.Splash.crownParticles != null)
-                    Undo.DestroyObjectImmediate(ctx.Splash.crownParticles.gameObject);
-                Undo.DestroyObjectImmediate(ctx.Splash.gameObject);
-            }
 
             ApplyCameraMode(body);
 
@@ -748,13 +738,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Undo.SetCurrentGroupName("Add Water Splashes");
             int undoGroup = Undo.GetCurrentGroup();
             // Reuse an existing emitter (the body's own, or any in the scene - splashes are shared) so a
-            // scene never accumulates duplicate emitters; create one only when there is none.
+            // scene never accumulates duplicate emitters; create one under the body when there is none.
             WaterSplashEmitter emitter = body.splashEmitter != null
                 ? body.splashEmitter
                 : Object.FindFirstObjectByType<WaterSplashEmitter>();
             if (emitter == null) emitter = CreateSplashEmitter(body.transform);
             Undo.RecordObject(body, "Add Water Splashes");
             body.splashEmitter = emitter;
+            body.provideSplashEmitter = true; // retrofit turns the gate on so the body actually splashes
             Selection.activeObject = emitter.gameObject;
             Undo.CollapseUndoOperations(undoGroup);
             Debug.Log($"[WebGL Water] Splashes enabled on '{body.name}' (shared emitter '{emitter.name}').");

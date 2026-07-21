@@ -90,7 +90,8 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("World radius of each spray burst passed to the emitter.")]
         [Min(0f)] [SerializeField] float sprayRadius = DefaultSprayRadius;
 
-        [Tooltip("Shared splash emitter. Auto-found in the scene if left empty.")]
+        [Tooltip("Explicit splash emitter override. Left empty, the water body under the pump " +
+                 "supplies one (WaterVolume.ResolveSplashEmitter).")]
         [SerializeField] WaterSplashEmitter emitter;
 
         // Reused per-frame buffers (no per-frame allocation). Two sample buffers because Boat probes read
@@ -100,14 +101,6 @@ namespace AbstractOcclusion.WebGpuWater
         WaterSample[] _rippleSamples;   // interactive ripples included -> Rock, Both
         WaterSample[] _analyticSamples; // analytic surface only -> Boat
         ProbeState[] _states;
-
-        void Start()
-        {
-            if (emitter == null) emitter = FindFirstObjectByType<WaterSplashEmitter>();
-            if (emitter == null)
-                Debug.LogWarning($"{nameof(WaterSprayPump)} on '{name}' found no {nameof(WaterSplashEmitter)} " +
-                                 "in the scene; it will detect impacts but emit nothing until one is assigned.", this);
-        }
 
         // Drop stale history so a re-enable (or leaving and re-entering the water) can't diff across the
         // missing frames and fire a phantom burst.
@@ -142,8 +135,12 @@ namespace AbstractOcclusion.WebGpuWater
 
             SampleSurfaces(body, count);
 
+            // Explicit override wins; otherwise the body the pump floats on supplies the emitter
+            // (resolved once for the whole cluster, since every probe shares that one body).
+            WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
+
             for (int i = 0; i < count; i++)
-                StepProbe(i, deltaSeconds);
+                StepProbe(i, deltaSeconds, activeEmitter);
         }
 
         // At most two batched queries: one ripple-included (Rock/Both), one analytic-only (Boat). Each is
@@ -165,7 +162,7 @@ namespace AbstractOcclusion.WebGpuWater
                 body.SampleHeights(owner, 0f, _worldPoints, _analyticSamples, TriggerFields, excludeInteractiveRipples: true);
         }
 
-        void StepProbe(int index, float deltaSeconds)
+        void StepProbe(int index, float deltaSeconds, WaterSplashEmitter activeEmitter)
         {
             WaterSprayMode mode = probes[index].mode;
             WaterSample sample = mode == WaterSprayMode.Boat ? _analyticSamples[index] : _rippleSamples[index];
@@ -177,20 +174,21 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector3 world = _worldPoints[index];
             float surfaceHeight = sample.Height;
-            TryEmit(index, mode, world, surfaceHeight, deltaSeconds);
+            TryEmit(index, mode, world, surfaceHeight, deltaSeconds, activeEmitter);
 
             _states[index].PreviousProbePosition = world;
             _states[index].PreviousSurfaceHeight = surfaceHeight;
             _states[index].HasHistory = true;
         }
 
-        void TryEmit(int index, WaterSprayMode mode, Vector3 world, float surfaceHeight, float deltaSeconds)
+        void TryEmit(int index, WaterSprayMode mode, Vector3 world, float surfaceHeight, float deltaSeconds,
+                     WaterSplashEmitter activeEmitter)
         {
             ref ProbeState state = ref _states[index];
             if (!state.HasHistory) return;                             // need two frames to measure a speed
             if (Mathf.Abs(world.y - surfaceHeight) > surfaceBand) return; // not at the waterline
             if (Time.time < state.NextEmitTime) return;               // cooling down
-            if (emitter == null) return;                              // warned once in Start; nothing to emit through
+            if (activeEmitter == null) return;                        // body has no emitter (or opts out): nothing to emit through
 
             Vector3 previous = state.PreviousProbePosition;
             float surfaceRise = (surfaceHeight - state.PreviousSurfaceHeight) / deltaSeconds; // > 0 water rising
@@ -205,7 +203,7 @@ namespace AbstractOcclusion.WebGpuWater
             float strength = Mathf.Clamp01((signal - minImpactSpeed) / span);
 
             Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z);
-            emitter.EmitSplash(surfacePoint, strength, sprayRadius);
+            activeEmitter.EmitSplash(surfacePoint, strength, sprayRadius);
             state.NextEmitTime = Time.time + emitCooldownSeconds;
         }
 

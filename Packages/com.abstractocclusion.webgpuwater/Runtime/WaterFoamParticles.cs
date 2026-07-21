@@ -113,7 +113,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanFftDomainSizes = Shader.PropertyToID("_OceanFftDomainSizes");
         static readonly int ID_OceanFftCascadeCount = Shader.PropertyToID("_OceanFftCascadeCount");
         static readonly int ID_CrestRoll = Shader.PropertyToID("_CrestRoll");
-        static readonly int ID_SurfaceQuadsEnabled = Shader.PropertyToID("_SurfaceQuadsEnabled");
+        static readonly int ID_DrawKind = Shader.PropertyToID("_DrawKind");
+        static readonly int ID_SprayLifeMin = Shader.PropertyToID("_SprayLifeMin");
+        static readonly int ID_SprayLifeMax = Shader.PropertyToID("_SprayLifeMax");
+        static readonly int ID_SpraySizeMin = Shader.PropertyToID("_SpraySizeMin");
+        static readonly int ID_SpraySizeMax = Shader.PropertyToID("_SpraySizeMax");
+        // _DrawKind values for the foam/spray two-pass split (MUST match FoamParticles.shader).
+        const float DrawKindFoam = 1f;
+        const float DrawKindSpray = 2f;
 
         // Density foam + spawn quality (compute + composite shader).
         static readonly int ID_DensityBuffer = Shader.PropertyToID("DensityBuffer");
@@ -154,7 +161,7 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("How the floating foam is rendered. Screen Space Density (KWS-style) accumulates " +
                  "particles into a density field and shades it as connected foam; Quads draws every " +
                  "particle as its own textured billboard. Spray droplets are always billboards.")]
-        [SerializeField] internal FoamRenderMode renderMode = FoamRenderMode.ScreenSpaceDensity;
+        [SerializeField] internal FoamRenderMode renderMode = FoamRenderMode.Quads;
         [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamDensityComposite shader. Required " +
                  "for Screen Space Density mode; the Water Wizard creates and assigns it.")]
         [SerializeField] internal Material densityMaterial;
@@ -193,6 +200,19 @@ namespace AbstractOcclusion.WebGpuWater
                  "falloff to a sparse dusting. Larger = foam reaches further before thinning (costs " +
                  "more live particles). 0 = no distance thinning at all.")]
         [Range(0f, 400f)] [SerializeField] internal float spawnMaxDistance = 120f;
+
+        [Header("Spray droplets")]
+        [Tooltip("Optional material for airborne spray droplets (their own look). None = draw spray with " +
+                 "the foam Particle Material above.")]
+        [SerializeField] internal Material sprayMaterial;
+        [Tooltip("Spray droplet lifetime range (seconds) - independent of the floating-foam lifetime above.")]
+        [SerializeField] internal Vector2 sprayLifeRange = new Vector2(0.5f, 1.2f);
+        [Tooltip("Spray droplet world half-size range - independent of the floating-foam size above.")]
+        [SerializeField] internal Vector2 spraySizeRange = new Vector2(0.02f, 0.05f);
+        [Tooltip("Spray sprite atlas layout (cols, rows). (1,1) = a plain droplet texture, no flipbook.")]
+        [SerializeField] internal Vector2Int sprayFlipbookGrid = new Vector2Int(1, 1);
+        [Tooltip("Spray flipbook speed (frames/sec). 0 = a static droplet sprite.")]
+        [Range(0f, 30f)] [SerializeField] internal float sprayFlipbookFps = 0f;
 
         [Header("Motion")]
         [Tooltip("Gravity on spray droplets (world units/sec^2).")]
@@ -239,6 +259,7 @@ namespace AbstractOcclusion.WebGpuWater
         Camera _densityCamera;  // the ONE camera the splat/composite pair is built for
         Matrix4x4 _densityViewProjThisFrame; // approx VP for the composite's breakup pattern only
         MaterialPropertyBlock _mpb;
+        MaterialPropertyBlock _sprayMpb;
         MaterialPropertyBlock _densityMpb;
 
         bool DensityModeActive => renderMode == FoamRenderMode.ScreenSpaceDensity
@@ -312,6 +333,7 @@ namespace AbstractOcclusion.WebGpuWater
             _burstUpload = new BurstRequest[MaxBurstsPerFrame];
 
             _mpb = new MaterialPropertyBlock();
+            _sprayMpb = new MaterialPropertyBlock();
             _densityMpb = new MaterialPropertyBlock();
 
             // The density splat runs right before its camera renders (final matrices - see
@@ -409,6 +431,11 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetFloat(ID_SizeMin, sizeRange.x);
             cs.SetFloat(ID_SizeMax, Mathf.Max(sizeRange.x, sizeRange.y));
             cs.SetFloat(ID_SizeHeroPower, Mathf.Max(1f, sizeHeroPower));
+            // Spray droplets use their own size/life ranges (foam/spray split).
+            cs.SetFloat(ID_SprayLifeMin, sprayLifeRange.x);
+            cs.SetFloat(ID_SprayLifeMax, Mathf.Max(sprayLifeRange.x, sprayLifeRange.y));
+            cs.SetFloat(ID_SpraySizeMin, spraySizeRange.x);
+            cs.SetFloat(ID_SpraySizeMax, Mathf.Max(spraySizeRange.x, spraySizeRange.y));
             cs.SetFloat(ID_TexelWorldArea, volume.SimTexelWorldArea);
 
             cs.SetFloat(ID_Gravity, gravity);
@@ -615,26 +642,47 @@ namespace AbstractOcclusion.WebGpuWater
 
         void Draw()
         {
-            // The body's own uniforms (sim texture, volume frame, waves, sun) drive the
-            // vertex shader; the particle buffer rides along in the same block.
-            volume.WriteBodyProps(_mpb);
-            _mpb.SetBuffer(ID_ParticlesShader, _particles);
-            WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
-            // Shared look from the master profile rides over the material (assets stay clean).
-            if (profile != null) profile.WriteLook(_mpb);
-            // When the density splat is armed for this frame, the quad draw carries ONLY the
-            // ballistic spray; otherwise (quads mode, no camera, paused sim) it draws everything.
-            _mpb.SetFloat(ID_SurfaceQuadsEnabled, _densityPending ? 0f : 1f);
+            int vertexCount = _capacityPow2 * VerticesPerParticle;
 
-            var rp = new RenderParams(particleMaterial)
+            // Floating foam pass: its own material, look and flipbook. Skipped in density mode,
+            // where the screen-space veil draws the foam instead (_DrawKind = foam-only). The body's
+            // uniforms (sim texture, volume frame, waves, sun) drive the vertex shader; the particle
+            // buffer rides along in the same block.
+            if (!_densityPending)
+            {
+                volume.WriteBodyProps(_mpb);
+                _mpb.SetBuffer(ID_ParticlesShader, _particles);
+                WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
+                if (profile != null) profile.WriteLook(_mpb); // shared look over the foam material
+                _mpb.SetFloat(ID_DrawKind, DrawKindFoam);
+
+                var foamRp = new RenderParams(particleMaterial)
+                {
+                    worldBounds = volume.SimWorldBounds,
+                    matProps = _mpb
+                };
+                Graphics.RenderPrimitives(foamRp, MeshTopology.Triangles, vertexCount);
+            }
+            else
+            {
+                DrawDensityComposite();
+            }
+
+            // Spray pass: ALWAYS drawn as billboards, with its own droplet material (falls back to the
+            // foam material when none is assigned) and its own flipbook (_DrawKind = spray-only). No
+            // profile look override here, so spray keeps its material's own look, independent of foam.
+            Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
+            volume.WriteBodyProps(_sprayMpb);
+            _sprayMpb.SetBuffer(ID_ParticlesShader, _particles);
+            WaterParticlePool.WriteFlipbook(_sprayMpb, sprayFlipbookGrid, sprayFlipbookFps);
+            _sprayMpb.SetFloat(ID_DrawKind, DrawKindSpray);
+
+            var sprayRp = new RenderParams(sprayDrawMaterial)
             {
                 worldBounds = volume.SimWorldBounds,
-                matProps = _mpb
+                matProps = _sprayMpb
             };
-            Graphics.RenderPrimitives(rp, MeshTopology.Triangles, _capacityPow2 * VerticesPerParticle);
-
-            if (_densityPending)
-                DrawDensityComposite();
+            Graphics.RenderPrimitives(sprayRp, MeshTopology.Triangles, vertexCount);
         }
 
         // Fullscreen triangle that shades the splatted density as connected foam. The bounds
