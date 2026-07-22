@@ -29,6 +29,11 @@ namespace AbstractOcclusion.WebGpuWater
         // waterline, drawn only on the near-plane "at 0" frames by WaterChunkWall.shader. Look-tune
         // knob - wire an inspector slider in WaterVolumeEditor.Chunk.cs like the others if desired.
         [SerializeField, HideInInspector] internal float chunkMeniscus = 0.5f;
+        // Volumetric god-ray shafts inside the chunk (0 = off). The shell wall marches the submerged
+        // column and accumulates the body's caustic focusing, so the shafts are shaped to the chunk
+        // primitive + fill level. Default off - opt-in look knob (WaterChunkWall.shader reads both).
+        [SerializeField, HideInInspector] internal float chunkGodRayStrength = 0f;
+        [SerializeField, HideInInspector] internal Color chunkGodRayColor = new Color(1f, 0.97f, 0.85f, 1f);
         // The closed mesh a Mesh-footprint chunk fills. Authored in POOL space [-1,1] (like the shell
         // box), placed by the volume frame; the depth prepass rasterises its front/back faces.
         [SerializeField, HideInInspector] internal Mesh chunkMesh;
@@ -100,6 +105,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ChunkMeniscus = Shader.PropertyToID("_ChunkMeniscus");
         static readonly int ID_ChunkUseMesh = Shader.PropertyToID("_ChunkUseMesh");
         static readonly int ID_ChunkSurfacePoolY = Shader.PropertyToID("_ChunkSurfacePoolY");
+        static readonly int ID_ChunkGodRayStrength = Shader.PropertyToID("_ChunkGodRayStrength");
+        static readonly int ID_ChunkGodRayColor = Shader.PropertyToID("_ChunkGodRayColor");
 
         // Build the shell renderer once (lazily). Null material (shader missing in a build without the
         // Always-Included registration) leaves the shell absent - the surface still renders.
@@ -208,6 +215,8 @@ namespace AbstractOcclusion.WebGpuWater
             bodyBlock.SetFloat(ID_ChunkRefraction, chunkRefraction);
             bodyBlock.SetFloat(ID_ChunkReflectivity, chunkReflectivity);
             bodyBlock.SetFloat(ID_ChunkMeniscus, chunkMeniscus);
+            bodyBlock.SetFloat(ID_ChunkGodRayStrength, chunkGodRayStrength);
+            bodyBlock.SetColor(ID_ChunkGodRayColor, chunkGodRayColor);
             _chunkShellRenderer.SetPropertyBlock(bodyBlock);
         }
 

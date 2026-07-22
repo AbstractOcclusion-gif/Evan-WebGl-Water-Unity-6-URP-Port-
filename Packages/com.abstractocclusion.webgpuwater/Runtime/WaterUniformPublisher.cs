@@ -240,6 +240,21 @@ namespace AbstractOcclusion.WebGpuWater
         // object shaders without a WaterMembership read. Same derivations as the property block.
         internal void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
 
+        // Set ONLY the wind-wave uniforms on a material the caustic pass draws with directly. That pass
+        // runs BEFORE ApplyBodyBlock populates the per-body block, so the caustic material can't see the
+        // per-body wave params any other way. Same sources and the same WindWaves-off gate as
+        // WriteBodyUniforms, so Caustics.shader's WaveSlope matches the surface's exactly.
+        internal void ApplyWaveUniforms(Material material)
+        {
+            if (material == null) throw new System.ArgumentNullException(nameof(material));
+            material.SetFloat(ID_WaveTime, _body.WaveTime);
+            material.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
+            material.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
+            material.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
+            material.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
+            material.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
+        }
+
         /// <summary>Camera-submerged flag + flat surface Y for the underwater fog pass. Global only
         /// (it is camera state, not a per-object uniform), so it lives outside WriteBodyUniforms.
         /// fogSimple 1 = the tier's Simple mode: the fog shader takes the closed-form flat-waterline

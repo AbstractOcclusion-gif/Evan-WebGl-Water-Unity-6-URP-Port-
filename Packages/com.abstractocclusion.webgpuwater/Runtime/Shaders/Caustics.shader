@@ -26,6 +26,14 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
             // Brings WaterShared: CAUSTIC_PROJECTION_SCALE, CAUSTIC_FOCUS_SCALE,
             // CAUSTIC_NORMAL_SOFTEN (shared with LargeBodyCaustics), RIM_SHADOW_*, POOL_*.
             #include "WaterCommon.hlsl"
+            // WaveSlope + _WaveTime: the SAME analytic wind-wave layer the surface folds into its
+            // normal (WaterSurfaceFragStages.hlsl:61), so the caustic focuses through the exact
+            // waves the surface shows - correlated by construction. The params
+            // (_WaveA/_WaveB/_WaveCount/_WaveMetersPerUnit/_WaveTime) are per-body, so they are set
+            // on THIS material in WaterCausticsPass.Render (the body block isn't applied at caustic
+            // time). Inert when Wind Waves is off: _WaveCount == 0 -> WaveSlope() returns 0.
+            #include "WaterWaves.hlsl"
+            float _WaveNormalStrength; // the same wave-normal strength the surface uses (mirrors LargeBodyCaustics)
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f
@@ -52,10 +60,16 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // plain sample makes the projected heights/normals - and therefore the whole
                 // caustic focusing - blocky in builds whenever mesh res != sim res.
                 float4 info = SampleWaterBilinear(v.vertex.xy * 0.5 + 0.5);
-                // Softens the normal (CAUSTIC_NORMAL_SOFTEN, WaterShared - shared with the
+                // Softens the ripple normal (CAUSTIC_NORMAL_SOFTEN, WaterShared - shared with the
                 // large-body caustic): full-strength slopes over-focus into hard sparkles.
                 info.ba *= CAUSTIC_NORMAL_SOFTEN;
-                float3 normal = float3(info.b, sqrt(max(0.0, 1.0 - dot(info.ba, info.ba))), info.a);
+                // Fold in the wind-wave slope exactly as the surface does (same MINUS sign and raw
+                // * _WaveNormalStrength, WaterSurfaceFragStages.hlsl:61) so the caustic - and the
+                // chunk god-ray shafts that sample it - inherit the wave structure the surface shows.
+                // Ripple keeps its soften; the wave term is raw (mirrors the surface). With Wind Waves
+                // off WaveSlope() is 0, so nxz == the softened ripple normal -> byte-identical RT.
+                float2 nxz = info.ba - WaveSlope(v.vertex.xy) * _WaveNormalStrength;
+                float3 normal = float3(nxz.x, sqrt(max(0.0, 1.0 - dot(nxz, nxz))), nxz.y);
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
                 float3 ray = refract(-_LightDir, normal, IOR_AIR / IOR_WATER);

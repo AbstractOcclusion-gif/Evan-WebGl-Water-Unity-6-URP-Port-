@@ -14,6 +14,22 @@ MonoBehaviour:
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterUnderwaterFogFeature
   m_Active: 1
   underwaterFogShader: {fileID: 4800000, guid: b4b285a8c132e8a47adf2ef988eb03db, type: 3}
+--- !u!114 &-1775250637409646255
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 28b839b3a07266e4d808d7c3764a20b8, type: 3}
+  m_Name: WaterCausticProjectionFeature
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterCausticProjectionFeature
+  m_Active: 1
+  causticProjectionShader: {fileID: 4800000, guid: ae310ed4b5f55814ca3850aa159750bd, type: 3}
+  causticStrength: 4
+  causticTint: {r: 1, g: 1, b: 1, a: 1}
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -43,7 +59,8 @@ MonoBehaviour:
   - {fileID: 8897549262932812953}
   - {fileID: -6042312171749561422}
   - {fileID: 1903198951947190138}
-  m_RendererFeatureMap: ad6b866f10d7b46c9924a6d4e9717a7bb22bd9e4176525ac7a3fb5fb5c85691a
+  - {fileID: -1775250637409646255}
+  m_RendererFeatureMap: ad6b866f10d7b46c9924a6d4e9717a7bb22bd9e4176525ac7a3fb5fb5c85691a5189e971f30a5de7
   m_UseNativeRenderPass: 1
   xrSystemData: {fileID: 0}
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}

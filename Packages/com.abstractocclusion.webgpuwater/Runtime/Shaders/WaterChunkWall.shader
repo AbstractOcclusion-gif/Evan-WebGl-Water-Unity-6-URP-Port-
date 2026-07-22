@@ -74,6 +74,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             TEXTURE2D_X_FLOAT(_ChunkFogFrontDepth); // front faces: nearest entry into the mesh
             TEXTURE2D_X_FLOAT(_ChunkFogBackDepth);  // back faces:  exit from the mesh
 
+            // Volumetric god-ray shafts inside the chunk: accumulate the body's caustic focusing along the
+            // submerged column (same _CausticTex + refracted projection the pool god rays use), so the
+            // shafts are automatically shaped to the chunk primitive + fill level - the column already is.
+            // Off at _ChunkGodRayStrength 0. _CausticTex / _LightDir / _CausticOccluderActive come from
+            // WaterCommon; DepthFadeScalar / _GodRayDepthFade from WaterFog.
+            float  _ChunkGodRayStrength;
+            float4 _ChunkGodRayColor;
+
             #define CHUNK_SUN_WRAP 0.5
             #define CHUNK_COLUMN_EPSILON 1e-4
             #define CHUNK_UV_MIN 0.001
@@ -97,12 +105,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             #define CHUNK_MENISCUS_SPAN_FRACTION 0.06
             #define CHUNK_MENISCUS_MAX_DISTANCE 6.0
             #define CHUNK_MENISCUS_DARKEN 0.55
+            // God-ray march step count over the submerged column - kept modest (mesh chunks already pay the
+            // depth prepass + the waterline march); dithered so the low count reads as noise, not banding.
+            #define CHUNK_GODRAY_STEPS 12
 
             float2 ChunkClipToScreenUV(float4 clipPos)
             {
                 float2 uv = clipPos.xy / max(clipPos.w, CHUNK_CLIP_W_EPS) * 0.5 + 0.5;
                 if (_ProjectionParams.x < 0.0) uv.y = 1.0 - uv.y;
                 return uv;
+            }
+
+            // Interleaved-gradient noise (Jimenez) for the god-ray march start jitter, so a low step count
+            // reads as fine noise the additive accumulation averages out rather than banding.
+            float ChunkInterleavedGradientNoise(float2 pixel)
+            {
+                return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
             }
 
             // Interactive ripple height at a point, window-aware - mirrors WaterSurface.shader's
@@ -187,17 +205,35 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 bool useMesh = _ChunkUseMesh > 0.5;
                 float2 t;
                 float3 frontWS = float3(0.0, 0.0, 0.0);
+                bool meshHasEntryFace = true; // false when the camera is INSIDE the mesh (no front face in view)
                 if (useMesh)
                 {
                     uint2 pixel = uint2(IN.positionCS.xy);
                     float rawFront = LOAD_TEXTURE2D_X(_ChunkFogFrontDepth, pixel).r;
                     float rawBack  = LOAD_TEXTURE2D_X(_ChunkFogBackDepth,  pixel).r;
-                    // Cleared depth == far: no mesh at this pixel -> hand it back (disc / scene shows).
-                    clip((rawFront != UNITY_RAW_FAR_CLIP_VALUE && rawBack != UNITY_RAW_FAR_CLIP_VALUE) ? 1.0 : -1.0);
-                    frontWS       = ComputeWorldSpacePosition(screenUV, rawFront, UNITY_MATRIX_I_VP);
-                    float3 backWS = ComputeWorldSpacePosition(screenUV, rawBack,  UNITY_MATRIX_I_VP);
-                    t = float2(dot(frontWS - _WorldSpaceCameraPos, rayDir),
-                               dot(backWS  - _WorldSpaceCameraPos, rayDir));
+                    bool haveFront = rawFront != UNITY_RAW_FAR_CLIP_VALUE;
+                    bool haveBack  = rawBack  != UNITY_RAW_FAR_CLIP_VALUE;
+                    // The EXIT (back) face is mandatory - the ray must leave the mesh. The ENTRY (front)
+                    // face is MISSING when the camera is INSIDE the mesh: its front faces are behind the
+                    // eye, so the front-depth prepass (Cull Back) drew nothing at this pixel. Then the
+                    // column starts at the CAMERA, mirroring the analytic path's entryT = max(t.x,0) = 0
+                    // for an inside eye. Requiring BOTH faces (the old test) discarded every shell pixel
+                    // from inside a mesh chunk, so the wall vanished. Only a truly missed ray (no back
+                    // face) is empty -> hand it back to the disc / scene.
+                    clip(haveBack ? 1.0 : -1.0);
+                    float3 backWS = ComputeWorldSpacePosition(screenUV, rawBack, UNITY_MATRIX_I_VP);
+                    float tFront = 0.0;
+                    if (haveFront)
+                    {
+                        frontWS = ComputeWorldSpacePosition(screenUV, rawFront, UNITY_MATRIX_I_VP);
+                        tFront = dot(frontWS - _WorldSpaceCameraPos, rayDir);
+                    }
+                    else
+                    {
+                        frontWS = _WorldSpaceCameraPos; // inside: entry is the eye, no interface
+                    }
+                    meshHasEntryFace = haveFront;
+                    t = float2(tFront, dot(backWS - _WorldSpaceCameraPos, rayDir));
                 }
                 else
                 {
@@ -334,7 +370,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     // Front-face world position's screen-space gradient IS the face normal - cheap,
                     // no normals RT. Noisy at silhouettes (a clipped neighbour's far position), but
                     // the sides are fog-dominated so it never reads. Cross order gives an outward N.
-                    surfaceN = normalize(cross(ddy(frontWS), ddx(frontWS)));
+                    // Inside the mesh (no front face) frontWS is the constant eye position -> a zero
+                    // gradient -> NaN, so fall back to the view direction. The inside view is the
+                    // cameraInWater veil, which ignores this normal for refraction; it only feeds the
+                    // inscatter sun wrap, where the view direction is a fine stand-in.
+                    surfaceN = meshHasEntryFace
+                             ? normalize(cross(ddy(frontWS), ddx(frontWS)))
+                             : viewDirWS;
                 }
                 else
                 {
@@ -352,6 +394,35 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                                          _WorldSpaceCameraPos.y + rayDir.y * exitT), wavyTopY);
                 float3 depthDarken = DownwellingAttenuation(deepestY, wavyTopY);
 
+                // Volumetric god-ray shafts: march the submerged span [entryT, exitT] (already shaped to the
+                // chunk primitive + fill level), projecting each sample down the refracted sun onto the body's
+                // caustic map exactly like the pool god rays - so bright focused light reads as shafts that
+                // flicker with the caustics, occluded by submerged objects (caustic green) and faded with
+                // depth. Additive; costs nothing at _ChunkGodRayStrength 0.
+                float3 shaftGlow = float3(0.0, 0.0, 0.0);
+                if (_ChunkGodRayStrength > 0.0 && column > CHUNK_COLUMN_EPSILON)
+                {
+                    float3 grRefracted = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
+                    float3 grPoolRefract = WorldDirToPool(grRefracted);
+                    float grDt = max(exitT - entryT, 0.0) / CHUNK_GODRAY_STEPS;
+                    float grJitter = ChunkInterleavedGradientNoise(IN.positionCS.xy);
+                    float grAccum = 0.0;
+                    [loop]
+                    for (int gr = 0; gr < CHUNK_GODRAY_STEPS; gr++)
+                    {
+                        float grT = entryT + (gr + grJitter) * grDt;
+                        float3 grWorld = _WorldSpaceCameraPos + rayDir * grT;
+                        float3 grPool = WorldToPool(grWorld);
+                        float2 grCuv = ProjectCausticUV(grPool, grPoolRefract);
+                        float4 grCaustic = tex2Dlod(_CausticTex, float4(grCuv, 0.0, 0.0));
+                        float grShadow = (_CausticOccluderActive > 0.5)
+                                       ? OccluderLitFromGreen(grPool.y, grCaustic.g) : 1.0;
+                        float grFade = DepthFadeScalar(grWorld.y, wavyTopY, _GodRayDepthFade);
+                        grAccum += grCaustic.r * grShadow * grFade;
+                    }
+                    shaftGlow = _ChunkGodRayColor.rgb * _SunColor * (grAccum * grDt * _ChunkGodRayStrength);
+                }
+
                 // VEIL path: premultiplied in-scatter over the framebuffer. Taken on the CHEAP tier
                 // (no opaque-texture copy) AND whenever the camera is IN the water (per-frame CPU
                 // state, hysteresis - see _ChunkCameraUnderwater): there the entry is the eye (no
@@ -365,7 +436,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     float coverage = max(opacity.r, max(opacity.g, opacity.b));
                     float3 sheen = cameraInWater ? float3(0.0, 0.0, 0.0) : reflection;
                     float3 veil = (inscatter * opacity + sheen) * depthDarken;
-                    return half4(veil, coverage);
+                    return half4(veil + shaftGlow, coverage); // shafts add over the fog veil
                 }
 
                 // FULL tier: refract the backdrop sample by the view ray bending at the surface.
@@ -384,6 +455,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 float3 color = sceneColor * transmittance + inscatter * (1.0 - transmittance);
                 color += reflection;
                 color *= depthDarken;
+                color += shaftGlow; // volumetric shafts add after the depth darken (they are their own light)
                 return half4(color, 1.0);
             }
             ENDHLSL

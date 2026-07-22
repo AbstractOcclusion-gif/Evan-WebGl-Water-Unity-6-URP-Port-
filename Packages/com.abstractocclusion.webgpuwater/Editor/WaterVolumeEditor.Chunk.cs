@@ -42,6 +42,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 ChunkSlider("chunkRefraction", ChunkRefractionLabel, ChunkUnitMin, ChunkUnitMax);
                 ChunkSlider("chunkReflectivity", ChunkReflectivityLabel, ChunkUnitMin, ChunkUnitMax);
                 ChunkSlider("chunkMeniscus", ChunkMeniscusLabel, ChunkUnitMin, ChunkUnitMax);
+                ChunkSlider("chunkGodRayStrength", ChunkGodRayLabel, ChunkUnitMin, ChunkGodRayMax);
+                SerializedProperty godRayColor = Prop("chunkGodRayColor");
+                if (godRayColor != null) EditorGUILayout.PropertyField(godRayColor, ChunkGodRayColorLabel);
 
                 EditorGUI.EndDisabledGroup();
             });
@@ -62,6 +65,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float ChunkDensityMax = 2f;
         const float ChunkUnitMin = 0f;
         const float ChunkUnitMax = 1f;
+        const float ChunkGodRayMax = 4f;
 
         static readonly GUIContent ChunkFootprintLabel = new GUIContent(
             "Footprint", "None = an ordinary body. Box / Sphere turn this body into a floating chunk of " +
@@ -86,6 +90,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly GUIContent ChunkMeniscusLabel = new GUIContent(
             "Meniscus", "Strength of the thin surface-tension line drawn along the waterline on the " +
             "near-plane 'at 0' frames. 0 = off.");
+        static readonly GUIContent ChunkGodRayLabel = new GUIContent(
+            "God Ray Strength", "Volumetric light shafts inside the chunk, focused by its own caustics and " +
+            "shaped to the shape + fill level (marched in the shell wall). 0 = off.");
+        static readonly GUIContent ChunkGodRayColorLabel = new GUIContent(
+            "God Ray Color", "Tint of the volumetric shafts (multiplied by the sun colour).");
         const string ChunkHelp =
             "Turns this body into a self-contained floating CHUNK of water (the invert of an exclusion " +
             "carve). For a Sphere, keep Round Surface on and Water Fog (Look tab) off - the chunk renders " +

@@ -29,8 +29,9 @@ namespace AbstractOcclusion.WebGpuWater
 {
     public sealed class WaterCausticProjectionFeature : ScriptableRendererFeature
     {
-        // Defaults mirror WaterReceiver's caustic controls so foreign surfaces read at the same strength.
+        // Defaults mirror WaterReceiver's / AnalyticPool's controls so foreign surfaces read the same.
         const float DefaultCausticStrength = 4f;
+        const float DefaultRefractedShadowStrength = 0.6f;
 
         [Tooltip("The AbstractOcclusion/WebGpuWater/WaterCausticProjection shader. Assign the shader asset of that name.")]
         [SerializeField] Shader causticProjectionShader;
@@ -42,11 +43,23 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Colour tint of the projected caustics, applied like WaterReceiver's Caustic Tint.")]
         [SerializeField] Color causticTint = Color.white;
 
+        [Tooltip("Also project the REFRACTED object shadow onto foreign underwater surfaces (terrain, Standard " +
+                 "Lit) - the shadow those shaders can't refract themselves. Owned surfaces (WaterReceiver / " +
+                 "AnalyticPool) already do this in-shader and are skipped. NOTE: foreign surfaces still receive " +
+                 "URP's own un-refracted shadow from submerged casters, so with a low sun you may see a second, " +
+                 "offset shadow; drop those casters' URP shadow (or convert them to WaterReceiver) to avoid it.")]
+        [SerializeField] bool projectRefractedShadows = true;
+
+        [Tooltip("How dark the refracted object shadow is on foreign surfaces (0 = none, 1 = black). Matches AnalyticPool's Object Shadow Strength (default 0.6).")]
+        [Range(0f, 1f)]
+        [SerializeField] float refractedShadowStrength = DefaultRefractedShadowStrength;
+
         WaterCausticProjectionPass _pass;
         Material _material;
 
         static readonly int ID_CausticStrength = Shader.PropertyToID("_CausticStrength");
         static readonly int ID_CausticTint = Shader.PropertyToID("_CausticTint");
+        static readonly int ID_RefractedShadowStrength = Shader.PropertyToID("_RefractedShadowStrength");
 
         public override void Create()
         {
@@ -63,6 +76,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_material == null) return;
             _material.SetFloat(ID_CausticStrength, causticStrength);
             _material.SetColor(ID_CausticTint, causticTint);
+            _material.SetFloat(ID_RefractedShadowStrength, refractedShadowStrength);
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
@@ -70,6 +84,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_pass == null) return;                          // shader unassigned / not created
             if (!WaterVolume.CausticProjectionActive) return;   // opt-in off / no caustic RT / not submerged view
             ApplyMaterialParameters();
+            _pass.renderRefractedShadow = projectRefractedShadows;
             renderer.EnqueuePass(_pass);
         }
 

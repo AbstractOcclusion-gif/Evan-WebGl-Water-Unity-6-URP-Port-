@@ -931,8 +931,10 @@ namespace AbstractOcclusion.WebGpuWater
             SetClipmapRenderersEnabled(on && IsOceanClipmap);
             // God rays obey the quality tier as well as culling: a tier that disables them
             // keeps the renderer off even when the body is on-screen. Windowed bodies also
-            // suppress god rays (out of scope, same reason as caustics).
-            SetRendererEnabled(godRayRenderer, on && _godRaysAllowed && !_windowed);
+            // suppress god rays (out of scope, same reason as caustics). A CHUNK draws its own
+            // shafts inside the shell wall (shaped to its primitive + fill), so the pool god-ray
+            // box is suppressed for chunks to avoid double, unshaped shafts.
+            SetRendererEnabled(godRayRenderer, on && _godRaysAllowed && !_windowed && !IsChunk);
             SetChunkShellEnabled(on);
         }
 
@@ -1222,6 +1224,10 @@ namespace AbstractOcclusion.WebGpuWater
         // via the MPB; the primary also mirrors it to the _CausticTex global for objects.
         void RenderCaustics() => _caustics.Render(EffectiveWaterMesh, _water?.Texture, VolumeCenter.y,
                                                   VolumeCenter, VolumeExtentSafe, VolumeRotation, EffectiveLightDir.normalized);
+
+        // The caustic pass draws with its own material before ApplyBodyBlock runs, so it has no per-body
+        // wave params; it calls this at draw time to fold the surface's wind waves into the caustic.
+        internal void ApplyCausticWaveUniforms(Material causticMaterial) => Publisher.ApplyWaveUniforms(causticMaterial);
 
         // Project the ocean's near-field window sim into the caustic RT via the large-body (world-frame)
         // caustic, so the underwater god rays can sample real surface-focused shimmer near the camera.

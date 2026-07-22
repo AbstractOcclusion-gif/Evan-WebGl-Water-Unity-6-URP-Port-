@@ -84,6 +84,10 @@ namespace AbstractOcclusion.WebGpuWater
                              Vector3 lightDir)
         {
             if (simTexture != null) _material.SetTexture(ID_Water, simTexture);
+            // Fold the surface's wind-wave slope into the caustic. Set here on our own material because
+            // this pass runs before the owner applies its per-body block, so the wave params aren't on
+            // the material otherwise. Inert when Wind Waves is off (_WaveCount == 0 -> no change).
+            _owner.ApplyCausticWaveUniforms(_material);
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);
