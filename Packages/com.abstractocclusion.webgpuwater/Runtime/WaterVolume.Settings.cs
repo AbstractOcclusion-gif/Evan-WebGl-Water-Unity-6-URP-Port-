@@ -888,6 +888,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal float sssPinchMax => volumeScatterSettings.sssPinchMax;
         internal float sssPinchFalloff => volumeScatterSettings.sssPinchFalloff;
 
+        [Tooltip("On (default): underwater object shadows follow the REFRACTED light so they line up with " +
+                 "the caustics - but only on shaders we own; put submerged props on the Water Receiver shader " +
+                 "(other shaders like Standard Lit can't be intercepted and would show a second, straight " +
+                 "shadow). Off: object shadows use URP's straight shadow map, so ANY material shows ONE " +
+                 "consistent shadow - at the cost of the shadow and caustics drifting apart on a DEEP pool.")]
+        [SerializeField] internal bool refractShadows = true;
+
         [Header("Depth attenuation (downwelling)")]
         [SerializeField] DepthAttenuationSettings depthAttenuation = new DepthAttenuationSettings();
 
@@ -907,6 +914,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 8f)] public float depthDarkenStrength = 1f;
             [Tooltip("Extra softening of projected caustics on objects, per world unit of depth.")]
             [Range(0f, 8f)] public float causticDepthFade = 0.5f;
+            [Tooltip("Paint projected caustics onto ANY submerged surface (terrain, Standard Lit props, a " +
+                     "bare floor with no WaterReceiver) via a fullscreen depth pass - not just the water's own " +
+                     "receiver/pool shaders. Needs the WaterCausticProjection render feature on the camera's " +
+                     "URP renderer. Off = only surfaces that sample the caustic map show caustics.")]
+            public bool screenSpaceCaustics = false;
             [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
             [Range(0f, 8f)] public float godRayDepthFade = 0.5f;
             [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
@@ -919,6 +931,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color depthExtinction => depthAttenuation.depthExtinction;
         internal float depthDarkenStrength => depthAttenuation.depthDarkenStrength;
         internal float causticDepthFade => depthAttenuation.causticDepthFade;
+        internal bool screenSpaceCaustics => depthAttenuation.screenSpaceCaustics;
         internal float godRayDepthFade => depthAttenuation.godRayDepthFade;
         internal bool linkDepthToFog => depthAttenuation.linkDepthToFog;
 

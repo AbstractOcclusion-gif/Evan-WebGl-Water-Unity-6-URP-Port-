@@ -15,6 +15,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// Water Fog is on (circle the pond and see the murk inside). The feature reads this to gate.</summary>
         internal static bool UnderwaterFogActive { get; private set; }
 
+        /// <summary>True when the screen-space caustic projection pass should run this frame (set each frame
+        /// by the primary body). On when the body has a valid caustic RT and its Screen-Space Caustics
+        /// opt-in is set. Unlike fog this is NOT gated to a submerged camera: floor caustics are the main
+        /// use case seen from ABOVE the water. The feature reads this to gate.</summary>
+        internal static bool CausticProjectionActive { get; private set; }
+
         // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not
         // in Update: Update runs at DefaultExecutionOrder -50, before the OrbitCamera moves the camera
         // in LateUpdate, so an Update-time read lagged the fog one frame on entry. This fires after
@@ -94,6 +100,11 @@ namespace AbstractOcclusion.WebGpuWater
             // (reconstructs the fog behind its veil) ONLY when the fullscreen pass will not paint.
             Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
                                         fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f);
+
+            // Screen-space caustics: paint the projected pattern onto foreign surfaces (terrain, Standard
+            // Lit props, a bare floor) whenever this body has a caustic RT and the opt-in is on. Independent
+            // of submersion - the caustics are viewed from above the water too.
+            CausticProjectionActive = screenSpaceCaustics && CausticTexture != null;
         }
 
         // A little beyond the [-1,1] footprint so an edge-on view of a pond still triggers; the shader

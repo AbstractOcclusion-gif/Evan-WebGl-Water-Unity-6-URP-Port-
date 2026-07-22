@@ -18,6 +18,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "reflectionSettings.usePlanarReflection",
                     "reflectionSettings.reflectUrpProbe",
                     "reflectionSettings.realRefraction");
+                DrawFields("refractShadows");
+                if (!Prop("refractShadows").boolValue)
+                    EditorGUILayout.HelpBox(
+                        "Refract Underwater Shadows is OFF: every material (incl. Standard Lit) shows one " +
+                        "consistent shadow from URP's straight shadow map - but the shadow and the caustics " +
+                        "drift apart on a deep pool. On = shadows line up with the caustics (Water Receiver " +
+                        "shader on submerged objects).", MessageType.None);
                 WaterEditorUI.SubHeading("Look");
                 DrawFields(
                     "reflectionSettings.reflectionStrength",
@@ -87,6 +94,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "depthAttenuation.depthExtinction",
                     "depthAttenuation.depthDarkenStrength",
                     "depthAttenuation.causticDepthFade",
+                    "depthAttenuation.screenSpaceCaustics",
                     "depthAttenuation.godRayDepthFade",
                     "depthAttenuation.linkDepthToFog"));
         }

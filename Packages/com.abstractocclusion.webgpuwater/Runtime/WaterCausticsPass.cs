@@ -103,7 +103,11 @@ namespace AbstractOcclusion.WebGpuWater
         void DrawOccluders(float waterRestY, Vector3 volumeCenter, Vector3 volumeExtent,
                            Quaternion volumeRotation, Vector3 lightDir)
         {
-            if (_occluderMaterial == null) { OccluderChannelValid = false; return; }
+            // No occluder shader wired, OR the body opts out of refracted shadows: skip the occluder so
+            // _CausticOccluderActive publishes 0 and every shader (ours AND Standard Lit) falls back to
+            // URP's straight shadow map - one consistent shadow across any material, at the cost of the
+            // shadow/caustic registration on deep pools (the refractShadows gate).
+            if (_occluderMaterial == null || !_owner.refractShadows) { OccluderChannelValid = false; return; }
             // Green was just cleared to 1 (lit) and only this body's silhouettes go in, so the
             // channel is valid even when nothing is submerged - "no object shadow" is the answer.
             OccluderChannelValid = true;

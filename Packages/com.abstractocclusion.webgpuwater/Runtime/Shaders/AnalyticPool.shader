@@ -34,6 +34,11 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
             ZWrite On
             ZTest LEqual
 
+            // Mark these pixels so the screen-space WaterCausticProjection pass SKIPS them (this shader
+            // already adds caustics in-shader below - the pass must not add them a second time). Bit 3 is
+            // in URP's user stencil range (StencilUsage.UserMask = bits [0,3]); WriteMask 8 touches only it.
+            Stencil { Ref 8 WriteMask 8 Comp Always Pass Replace }
+
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
