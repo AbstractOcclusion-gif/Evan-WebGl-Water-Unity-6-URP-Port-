@@ -2,8 +2,8 @@
 // Paints the projected caustic pattern onto ANY underwater surface (terrain, Standard Lit props, a bare
 // ocean floor with no WaterReceiver) by reading the depth buffer and reusing the water's own pool-space
 // projection. Add this feature once to the renderer used by the water camera and assign the
-// WaterCausticProjection shader; it self-gates on WaterVolume.CausticProjectionActive, so it only enqueues
-// when the primary body has a caustic RT and its Screen-Space Caustics opt-in is on.
+// WaterCausticProjection shader; it self-gates on WaterVolume.AnyCausticProjectionBody(), so it only enqueues
+// when at least one body has a caustic RT and its Screen-Space Caustics opt-in is on.
 //
 // WIRING / CAVEATS:
 //  * Must be ADDED to the URP Renderer asset(s) the water camera uses, and the shader assigned - exactly
@@ -13,8 +13,9 @@
 //    and this pass skips those pixels, so they are visually unchanged. If your project uses screen-space
 //    decals or a Render Objects feature that also writes URP user stencil bit 3 (0x08) on submerged
 //    geometry, those pixels would be skipped too - re-home the bit in both places if so.
-//  * v1 covers the PRIMARY body's caustics (its _CausticTex + volume frame globals). Secondary bodies
-//    (WaterMembership) would need per-body caustic RTs bound - a known v1 limit.
+//  * PER BODY: the pass draws one fullscreen projection per body that has Screen-Space Caustics on, each
+//    framed on that body's own caustic RT + volume frame (via WriteBodyProps into a per-draw block). So a
+//    SECONDARY chunk's foreign floors receive the CHUNK's caustics, not just the primary's.
 //  * This adds the caustic PATTERN only. It does not fix the object SHADOW on foreign shaders (the
 //    separate un-refracted-URP-shadow limitation); use WaterReceiver on submerged props for that.
 //
@@ -82,7 +83,7 @@ namespace AbstractOcclusion.WebGpuWater
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             if (_pass == null) return;                          // shader unassigned / not created
-            if (!WaterVolume.CausticProjectionActive) return;   // opt-in off / no caustic RT / not submerged view
+            if (!WaterVolume.AnyCausticProjectionBody()) return; // no body has the opt-in on + a caustic RT
             ApplyMaterialParameters();
             _pass.renderRefractedShadow = projectRefractedShadows;
             renderer.EnqueuePass(_pass);

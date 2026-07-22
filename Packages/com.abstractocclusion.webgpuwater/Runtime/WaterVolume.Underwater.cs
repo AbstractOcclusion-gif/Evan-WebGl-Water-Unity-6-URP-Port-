@@ -2,6 +2,7 @@
 // Split out of WaterVolume.cs (final-clean E, verbatim move - any behavior change here is a bug):
 // the camera-submerged detection (wave-aware, with hysteresis) that arms the fullscreen fog pass,
 // and the per-body planar-mirror render driven from OnBeginCameraRender.
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -15,11 +16,31 @@ namespace AbstractOcclusion.WebGpuWater
         /// Water Fog is on (circle the pond and see the murk inside). The feature reads this to gate.</summary>
         internal static bool UnderwaterFogActive { get; private set; }
 
-        /// <summary>True when the screen-space caustic projection pass should run this frame (set each frame
-        /// by the primary body). On when the body has a valid caustic RT and its Screen-Space Caustics
-        /// opt-in is set. Unlike fog this is NOT gated to a submerged camera: floor caustics are the main
-        /// use case seen from ABOVE the water. The feature reads this to gate.</summary>
-        internal static bool CausticProjectionActive { get; private set; }
+        // Screen-space caustic projection runs PER BODY: any active body with a caustic RT and its
+        // Screen-Space Caustics opt-in on gets its own fullscreen projection (drawn with THAT body's
+        // _CausticTex + volume frame), so a SECONDARY chunk's foreign floors receive the CHUNK's caustics
+        // - not only the primary's. Unlike fog this is NOT gated to a submerged camera: floor caustics are
+        // the main use case, seen from ABOVE the water too. The feature reads these to gate + enumerate.
+        static bool QualifiesForCausticProjection(WaterVolume body)
+            => body != null && body.isActiveAndEnabled && body.screenSpaceCaustics && body.CausticTexture != null;
+
+        /// <summary>True when at least one active body should project screen-space caustics this frame
+        /// (the feature's cheap CPU gate before it enqueues the pass).</summary>
+        internal static bool AnyCausticProjectionBody()
+        {
+            for (int i = 0; i < Bodies.Count; i++)
+                if (QualifiesForCausticProjection(Bodies[i])) return true;
+            return false;
+        }
+
+        /// <summary>Fill <paramref name="into"/> with every body that projects screen-space caustics this
+        /// frame, so the pass can draw one fullscreen projection per body (each framed on its own RT).</summary>
+        internal static void CollectCausticProjectionBodies(List<WaterVolume> into)
+        {
+            into.Clear();
+            for (int i = 0; i < Bodies.Count; i++)
+                if (QualifiesForCausticProjection(Bodies[i])) into.Add(Bodies[i]);
+        }
 
         // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not
         // in Update: Update runs at DefaultExecutionOrder -50, before the OrbitCamera moves the camera
@@ -100,11 +121,8 @@ namespace AbstractOcclusion.WebGpuWater
             // (reconstructs the fog behind its veil) ONLY when the fullscreen pass will not paint.
             Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
                                         fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f);
-
-            // Screen-space caustics: paint the projected pattern onto foreign surfaces (terrain, Standard
-            // Lit props, a bare floor) whenever this body has a caustic RT and the opt-in is on. Independent
-            // of submersion - the caustics are viewed from above the water too.
-            CausticProjectionActive = screenSpaceCaustics && CausticTexture != null;
+            // Screen-space caustics are gated PER BODY (AnyCausticProjectionBody / CollectCausticProjectionBodies),
+            // not from this primary-only path, so a secondary chunk drives its own projection independently.
         }
 
         // A little beyond the [-1,1] footprint so an edge-on view of a pond still triggers; the shader

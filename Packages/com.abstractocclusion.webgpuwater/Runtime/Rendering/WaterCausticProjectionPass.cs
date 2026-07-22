@@ -20,6 +20,7 @@
 // pass - the shader's NotEqual stencil test uses it to skip those already-shaded surfaces. The resolved
 // _CameraDepthTexture is bound separately as a sampled texture for the world reconstruction.
 #if WEBGPUWATER_URP
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
@@ -37,6 +38,10 @@ namespace AbstractOcclusion.WebGpuWater
         readonly Material _material;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterCausticProjection");
 
+        // Reused each frame so the per-body loop allocates no garbage (mirrors WaterChunkDepthPass).
+        readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
+        static readonly List<WaterVolume> s_Bodies = new List<WaterVolume>();
+
         // Set by the feature each frame before enqueue: whether to run the refracted-shadow multiply pass.
         internal bool renderRefractedShadow = true;
 
@@ -49,17 +54,29 @@ namespace AbstractOcclusion.WebGpuWater
             ConfigureInput(ScriptableRenderPassInput.Depth);
         }
 
-        sealed class PassData { public Material material; public int shaderPass; }
+        sealed class PassData
+        {
+            public Material material;
+            public int shaderPass;
+            public List<WaterVolume> bodies;
+            public MaterialPropertyBlock block;
+        }
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
             if (_material == null) return;
 
+            // One projection per body with Screen-Space Caustics on (primary AND any secondary chunk/pool),
+            // each drawn with that body's own frame + caustic RT. Empty -> nothing to project this frame.
+            WaterVolume.CollectCausticProjectionBodies(s_Bodies);
+            if (s_Bodies.Count == 0) return;
+
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
 
-            // Shadow first (darken the base), then caustics add refracted light on top.
+            // Shadow first (darken the base) for ALL bodies, then caustics add refracted light on top for ALL
+            // bodies - keeping the global shadow-then-caustic order the single-body path had.
             if (renderRefractedShadow)
                 RecordProjectionPass(renderGraph, resources, cameraColor, ShadowShaderPass, "WaterRefractedShadow");
             RecordProjectionPass(renderGraph, resources, cameraColor, CausticShaderPass, "WaterCausticProjection");
@@ -72,6 +89,8 @@ namespace AbstractOcclusion.WebGpuWater
 
             data.material = _material;
             data.shaderPass = shaderPass;
+            data.bodies = s_Bodies;
+            data.block = _block;
             // ReadWrite loads the existing scene so the hardware blend composites onto it.
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             // Bind the depth-stencil target (Read only: the shader tests the stencil bit, it never writes depth).
@@ -80,9 +99,20 @@ namespace AbstractOcclusion.WebGpuWater
             // Resolved scene depth for the world reconstruction (SampleSceneDepth in the shader).
             if (resources.cameraDepthTexture.IsValid())
                 builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
-            builder.UseAllGlobalTextures(true); // _CausticTex + _WaterTex (published per-frame by the primary body)
+            builder.UseAllGlobalTextures(true); // _LightDir + any global left unset; per-body _CausticTex/_WaterTex come from the block
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, d.shaderPass));
+            {
+                for (int i = 0; i < d.bodies.Count; i++)
+                {
+                    WaterVolume body = d.bodies[i];
+                    if (body == null) continue;
+                    // Overwrite the block with THIS body's uniforms (frame + _CausticTex + _WaterTex +
+                    // _CausticDepthFade + occluder flag), so the fullscreen projection reprojects through this
+                    // body's caustics - exactly how WaterMembership relights a floater with its own lake.
+                    body.WriteBodyProps(d.block);
+                    CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, d.shaderPass);
+                }
+            });
         }
     }
 }
