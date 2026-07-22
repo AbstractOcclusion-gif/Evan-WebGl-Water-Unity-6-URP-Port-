@@ -65,6 +65,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamTexFPS = Shader.PropertyToID("_FoamTexFPS");
         static readonly int ID_FoamNormalStrength = Shader.PropertyToID("_FoamNormalStrength");
         static readonly int ID_OceanWhitecapTex = Shader.PropertyToID("_OceanWhitecapTex");
+        static readonly int ID_OceanWhitecapFrames = Shader.PropertyToID("_OceanWhitecapFrames");
+        static readonly int ID_OceanWhitecapFPS = Shader.PropertyToID("_OceanWhitecapFPS");
         static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
         static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
         static readonly int ID_FoamFeather = Shader.PropertyToID("_FoamFeather");
@@ -457,7 +459,13 @@ namespace AbstractOcclusion.WebGpuWater
                 sink.SetFloat(ID_FoamTexFPS, _body.foamPatternFps);
             }
             if (_body.oceanWhitecapTexture != null)
+            {
                 sink.SetTexture(ID_OceanWhitecapTex, _body.oceanWhitecapTexture);
+                // Optional flipbook - drives the deep whitecaps AND the surf whitewash (shared texture).
+                sink.SetVector(ID_OceanWhitecapFrames,
+                    new Vector4(_body.oceanWhitecapGrid.x, _body.oceanWhitecapGrid.y, 0f, 0f));
+                sink.SetFloat(ID_OceanWhitecapFPS, _body.oceanWhitecapFps);
+            }
             // Relief is shared by the foam pattern and the whitecap: push it when EITHER is body-owned.
             if (_body.foamPatternTexture != null || _body.oceanWhitecapTexture != null)
                 sink.SetFloat(ID_FoamNormalStrength, _body.foamReliefStrength);

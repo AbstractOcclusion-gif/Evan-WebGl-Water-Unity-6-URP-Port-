@@ -10522,6 +10522,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -10683,11 +10685,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -10810,7 +10814,7 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 2
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 1
+    foam: 0
     foamGenRate: 0.6
     foamDecay: 0.96
     foamDecayResidual: 0.993
@@ -12158,19 +12162,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
-  title: Buoyancy demo
-  description: Little demo to showcase buoyancy . Advanced buoyancy and stress test
-    comes soon .
-  showCameraControls: 0
-  corner: 0
-  margin: 16
-  panelWidth: 380
-  titleFontSize: 24
-  bodyFontSize: 18
-  backgroundColor: {r: 0, g: 0, b: 0, a: 0.55}
-  textColor: {r: 1, g: 1, b: 1, a: 1}
-  toggleKey: 282
-  visibleOnStart: 1
 --- !u!4 &2092895461
 Transform:
   m_ObjectHideFlags: 0

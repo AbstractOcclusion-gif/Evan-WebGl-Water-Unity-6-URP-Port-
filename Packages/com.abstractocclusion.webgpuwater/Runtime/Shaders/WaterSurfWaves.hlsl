@@ -29,6 +29,8 @@ float _SurfGreens;        // Green's-law growth cap for the fronts (1 = no growt
 float _SurfAmbientFade;   // 0..1 how much the ambient swell/FFT fades where fronts own the surface
 float _SurfSwashAmplitude;// MULTIPLIER on the physical Hunt run-up (1 = physics; 0 = swash off)
 float _SurfWaterlineFoam; // standing lace hugging the waterline (fills the last metres to the sand)
+float _SurfSmallWaveFoam; // FOAM-7: foam on the CREST + TAIL of gentle waves that never break
+                          // (overCap < 1), which the breaking-gated whitewash leaves bare. 0 = off
 float _SurfCrestLength;   // alongshore length scale (m) of crest segments (finite crests, not bands)
 float _SurfCrestVariation;// 0..1 how deeply the crest noise modulates amplitude (0 = endless bands)
 float _SurfCrestPersistence; // 0..1 how anchored the segmentation is across fronts: 0 = a fresh
@@ -463,6 +465,16 @@ SurfFrontFoam SurfFrontFoamFromTerms(SurfFrontTerms t)
                   * exp(-abs(t.dAcross + SURF_PLUNGE_LANDING_AHEAD * t.faceLen)
                         / max(SURF_PLUNGE_LANDING_WIDTH * t.faceLen, 1e-3));
     foam.whitewash = saturate(whitewash + landing * SURF_PLUNGE_LANDING_FOAM);
+    // FOAM-7 small-wave / pre-break foam: gentle shore waves carry foam on the CREST and a short
+    // TAIL even when they never reach the breaking criterion (overCap < 1), where the broken-gated
+    // whitewash above leaves them bare. An un-gated crest+tail lobe, faded OUT once the wave has
+    // actually broken (its own whitewash owns the foam then) and scaled by the set envelope so
+    // lulls stay clean. 0 = off (byte-identical). Render-only, like the rest of this foam struct.
+    float smallCrest = t.profile;                                          // top: peaks at the crest
+    float smallTail  = (t.dAcross > 0.0) ? exp(-t.dAcross / max(t.backLen, 1e-3)) : 0.0; // trailing tail
+    float smallWaveFoam = saturate(t.setAmp) * max(smallCrest, smallTail)
+                        * (1.0 - t.broken) * _SurfSmallWaveFoam;
+    foam.whitewash = saturate(foam.whitewash + smallWaveFoam);
     // Thin cresting line right at the lip while the front is breaking (not yet fully broken).
     // Plunging amplifies AND widens the lip; surging has no lip at all - the face never overturns.
     // lipShape is the timing-free part; the legacy breaker keeps its built-in cresting window.
@@ -547,8 +559,18 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
     // as flat open water. Exposure-gated AND segmented alongshore like the fronts (seeded by the
     // most recent arrival, so the segmentation drifts with each wave instead of forming one
     // endless static ribbon around the island).
-    float laceIndex = floor(time / max(_SurfPeriod, SURF_MIN_PERIOD) - 0.5);
-    float laceSeg = SurfCrestFactor(worldXZ, laceIndex);
+    // Reading a single floor()'d arrival index made the alongshore segmentation RESEED in one
+    // step at each period boundary, so the standing lace popped in patches every wave (with the
+    // default crest variation 0.6 and persistence 0, consecutive seeds are uncorrelated). Crossfade
+    // the segmentation from THIS arrival to the NEXT across the whole period so the pattern MORPHS
+    // smoothly instead of stepping. Continuous AND C1 at the boundary (smoothstep's zero end-slopes):
+    // at frac -> 1 it reads arrival+1, and next period at frac -> 0 the index has advanced so it
+    // reads the same segmentation - no jump. Render-only (lace feeds whitewash/foam, never height).
+    float lacePhase = time / max(_SurfPeriod, SURF_MIN_PERIOD) - 0.5;
+    float laceIndex = floor(lacePhase);
+    float laceSeg = lerp(SurfCrestFactor(worldXZ, laceIndex),
+                         SurfCrestFactor(worldXZ, laceIndex + 1.0),
+                         smoothstep(0.0, 1.0, lacePhase - laceIndex));
     float lace = (1.0 - smoothstep(0.2, 1.8, max(depth, 0.0)))
                * smoothstep(-0.35, -0.05, depth)
                * _SurfWaterlineFoam * influence * exposure * laceSeg;

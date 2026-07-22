@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 2100000, guid: 5426809186b27a945b1ce441d0d9f2f4, type: 2}
+  m_SkyboxMaterial: {fileID: 2100000, guid: b0a5c454d7c0a8442acc65f502494e32, type: 2}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -5390,7 +5390,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &639025606
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5588,13 +5588,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.8535508, z: 0, w: 0.52100974}
+  m_LocalRotation: {x: 0, y: 0.8424524, z: 0, w: 0.5387708}
   m_LocalPosition: {x: 0, y: 11.98, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 117.2, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 114.8, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5614,7 +5614,7 @@ MonoBehaviour:
     m_Bits: 39
   resolutionScale: 0.5
   clipPlaneOffset: 0.02
-  enableReflection: 0
+  enableReflection: 1
 --- !u!114 &961739756
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5749,6 +5749,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -5769,7 +5771,7 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
-  rippleQuality: 0
+  rippleQuality: 3
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
@@ -5787,12 +5789,12 @@ MonoBehaviour:
     swellWavelength: 80
     unboundedOcean: 1
     edgeFeatherMeters: 10
-    clipmapGridResolution: 64
+    clipmapGridResolution: 96
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.003
+    horizonHazeDensity: 0.001
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -5839,26 +5841,26 @@ MonoBehaviour:
   godRayRenderer: {fileID: 0}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 11400000, guid: d8574713c868143418d4679d0fc51663, type: 2}
-  enableCulling: 1
+  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
+  enableCulling: 0
   activationDistance: 1000
   reflectionSettings:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
-    reflectionStrength: 0.688
-    envReflectionIntensity: 0.3
+    reflectionStrength: 1
+    envReflectionIntensity: 0.52
     fresnelFloor: 0
-    fresnelPower: 5
-    sunRoughness: 0.201
-    roughnessFar: 0.494
-    roughnessFarDistance: 2989
-    roughnessFalloff: 3.02
-    reflectionAnisoStretch: 0.093
-    sunSheen: 0.188
-    sunSheenRoughness: 0.293
-    sunGrazeBoost: 0.298
+    fresnelPower: 2.22
+    sunRoughness: 0.15
+    roughnessFar: 0.12
+    roughnessFarDistance: 500
+    roughnessFalloff: 4
+    reflectionAnisoStretch: 0.08
+    sunSheen: 0.25
+    sunSheenRoughness: 0.49
+    sunGrazeBoost: 0.73
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -5867,9 +5869,9 @@ MonoBehaviour:
     refractionDistortion: 0.05
   detailNormalSettings:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
-    strength: 0.4
-    tileMeters: 36.4
-    scrollSpeed: 1.33
+    strength: 0.3
+    tileMeters: 19
+    scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -5888,10 +5890,10 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
+    fogColor: {r: 0.021737248, g: 0.2679245, b: 0.2637518, a: 1}
     fogExtinction: {r: 0.8125, g: 0.0667, b: 0.1043, a: 1}
-    fogDensity: 5.7
-    waterOpacity: 0
+    fogDensity: 0.1
+    waterOpacity: 0.2
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -5900,7 +5902,7 @@ MonoBehaviour:
   volumeScatterSettings:
     volumeScatter: 1
     scatterColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
-    scatterIntensity: 0.33
+    scatterIntensity: 2.4
     scatterAnisotropy: 0.1
     scatterAmbientTerm: 0.96
     scatterSunTerm: 1.06
@@ -5910,11 +5912,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0

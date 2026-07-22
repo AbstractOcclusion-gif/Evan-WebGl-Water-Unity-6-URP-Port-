@@ -70,7 +70,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         [HideInInspector] _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
         [HideInInspector] _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
         [HideInInspector] _FoamNormalStrength ("Foam Relief Strength (procedural)", Range(0, 3)) = 1
-        [HideInInspector] _OceanWhitecapTex ("Ocean Whitecap (single tiling texture)", 2D) = "white" {}
+        [HideInInspector] _OceanWhitecapTex ("Ocean Whitecap (single tile or flipbook)", 2D) = "white" {}
+        [HideInInspector] _OceanWhitecapFrames ("Whitecap Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
+        [HideInInspector] _OceanWhitecapFPS ("Whitecap Flipbook Frame Rate", Range(0, 30)) = 10
     }
     SubShader
     {
@@ -344,9 +346,26 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float2 swashVert = EvaluateSurfSwash(o.largeWaveSourceXZ, shoreVert.toShore,
                                                              shoreVert.slopeTan,
                                                              shoreVert.influence, _SurfBeatTime);
-                        if (swashVert.y > 1e-3)
+                        // FOAM-5: persistent swash deposits linger on the sand ABOVE the drying wet
+                        // line. Lift the beach film right onto the sand wherever the foam buffer
+                        // still holds a deposit, so the foam has geometry to DISSOLVE on instead of
+                        // blinking out the instant the wet line recedes below it (the fragment clip
+                        // extends by the same test, so the lifted vertex and surviving fragment
+                        // agree). Same foam-coord the pond-foam layer uses. Gated: gain 0 keeps the
+                        // old wet-line-only lift, byte-identical.
+                        float geomReach = swashVert.y;
+                        if (_ShoreSwashDepositGain > 0.0)
+                        {
+                            float2 depUV = (_SimWindowed < 0.5)
+                                ? (position.xz * 0.5 + 0.5)
+                                : (WorldToSim(float3(o.largeWaveSourceXZ.x, worldPos.y,
+                                                     o.largeWaveSourceXZ.y)).xz * 0.5 + 0.5);
+                            if (SampleFoamMaskBilinear(depUV) > FOAM_MASK_EPSILON)
+                                geomReach = beachRise; // hold the film onto the sand under the deposit
+                        }
+                        if (geomReach > 1e-3)
                             worldPos.y = max(worldPos.y, _ShoreWaterLevel
-                                             + min(beachRise, swashVert.y) + SURF_FILM_THICKNESS);
+                                             + min(beachRise, geomReach) + SURF_FILM_THICKNESS);
                     }
                 }
                 o.worldPos = worldPos;

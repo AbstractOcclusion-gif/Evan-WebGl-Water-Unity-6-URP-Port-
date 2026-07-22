@@ -246,6 +246,11 @@ float _UseBedDepth;        // 1 = bed active
 float  _ShoreFoamActive;        // 1 = inject surf foam this step
 float  _ShoreFoamGain;          // master gain on breaker + whitewash injection
 float  _ShoreWaterlineFoamGain; // standing waterline lace gain
+float  _ShoreSwashDepositGain;  // FOAM-5: persistent swash-deposit injection gain (0 = off)
+// FOAM-5 swash-deposit shaping: metres of beach height the receding film edge lays foam over,
+// and how far past the uprush apex the backwash starts depositing.
+#define SHORE_SWASH_DEPOSIT_BAND  0.2
+#define SHORE_SWASH_DEPOSIT_ONSET 0.08
 float  _ShoreFoamTime;          // THE MASTER SURF BEAT (matches the surface _SurfBeatTime)
 float4 _ShoreSimUvToWorldOrigin; // xy = world xz of sim uv (0, 0) - the sim's own affine
 float4 _ShoreSimUvToWorldAxes;   // xy = world xz span across uv.x, zw = span across uv.y
@@ -642,6 +647,38 @@ void Foam(uint3 id : SV_DispatchThreadID)
             }
             foam += (surfSim.whitewash + crestInject) * (_ShoreFoamGain * _FoamDtSteps);
             foam += waterline * (_ShoreWaterlineFoamGain * _FoamDtSteps);
+            // DEPOSIT floor (same idea as the wake/turbulence deposit at the top of StepFoam):
+            // the rate injection above only trickles foam in while the broken bore is physically
+            // over THIS cell - a fraction of a second as the front sweeps through - so the
+            // bi-exponential decay below erased the deposit before the next front arrived, i.e.
+            // "foam deposit disappears very quick when another wave comes". Lay a LASTING patch
+            // that the decay then dissolves, exactly like churned wake foam does. Reuses the
+            // existing _FoamDeposit knob, so _FoamDeposit = 0 stays byte-identical (rate-only).
+            foam = max(foam, saturate((surfSim.whitewash + crestInject) * _FoamDeposit));
+
+            // FOAM-5: persistent SWASH DEPOSIT. As the backwash drains, its receding film edge
+            // strands foam on the wet sand. Inject a deposit FLOOR where that edge passes each
+            // beach cell, so the buffer holds it and the normal decay carries it away - deposits
+            // LINGER across waves and fade over real time (the body's Foam Decay controls how
+            // long), the persistent counterpart of the surface's per-cycle analytic swash line.
+            // 0 = off. EvaluateSurfSwash returns 0 unless _SurfSwashAmplitude > 0 (bound alongside
+            // the gain in ShoreFoamState.BindTo).
+            if (_ShoreSwashDepositGain > 0.0)
+            {
+                float beachRise = -shoreDepth;                     // metres above still level (dry sand > 0)
+                float2 swash = EvaluateSurfSwash(shoreWorldXZ, toShore, shoreSdf.a, influence,
+                                                 _ShoreFoamTime);   // (film height, drying wet line)
+                float phase = frac(_ShoreFoamTime / max(_SurfPeriod, SURF_MIN_PERIOD) - 0.5);
+                // Only while the film is DRAINING (past the uprush apex), and only where the
+                // receding edge (swash.x) is right at this cell's beach height - one burst per
+                // cell as the water pulls back off it. Cells below the waterline (beachRise < 0)
+                // are self-excluded: swash.x >= 0, so the band term collapses there.
+                float backwash = smoothstep(SURF_SWASH_UPRUSH,
+                                            SURF_SWASH_UPRUSH + SHORE_SWASH_DEPOSIT_ONSET, phase);
+                float edgePass = saturate(1.0 - abs(beachRise - swash.x) / SHORE_SWASH_DEPOSIT_BAND);
+                float deposit = backwash * edgePass * influence * SurfExposure(toShore);
+                foam = max(foam, saturate(deposit * _ShoreSwashDepositGain));
+            }
         }
     }
 

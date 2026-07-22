@@ -314,6 +314,10 @@ namespace AbstractOcclusion.WebGpuWater
             public bool CrestFoamLutActive;
             public float CrestFoamGain;     // matches the surface's _SurfCrestFoamGain
             public float BoreGain, TrailGain, TrailLength; // _SurfFoam* repartition weights
+            // FOAM-5: persistent swash deposit - the stranded backwash foam line laid into the
+            // foam BUFFER so it lingers across waves and fades by the normal decay.
+            public float SwashAmplitude;   // _SurfSwashAmplitude - EvaluateSurfSwash needs it in the compute
+            public float SwashDepositGain; // deposit injection gain (0 = off, no injection)
 
             static readonly int ID_ShoreFoamActive = Shader.PropertyToID("_ShoreFoamActive");
             static readonly int ID_ShoreFoamGain = Shader.PropertyToID("_ShoreFoamGain");
@@ -349,6 +353,8 @@ namespace AbstractOcclusion.WebGpuWater
             static readonly int ID_SurfFoamBoreGain = Shader.PropertyToID("_SurfFoamBoreGain");
             static readonly int ID_SurfFoamTrailGain = Shader.PropertyToID("_SurfFoamTrailGain");
             static readonly int ID_SurfFoamTrailLength = Shader.PropertyToID("_SurfFoamTrailLength");
+            static readonly int ID_SurfSwashAmplitudeSim = Shader.PropertyToID("_SurfSwashAmplitude");
+            static readonly int ID_ShoreSwashDepositGain = Shader.PropertyToID("_ShoreSwashDepositGain");
 
             /// <summary>Push the surf-front uniforms + the Layer A field textures onto a compute
             /// kernel - the ONE binder every GPU consumer (ripple-sim foam injection, foam
@@ -400,6 +406,10 @@ namespace AbstractOcclusion.WebGpuWater
                 cs.SetFloat(ID_SurfDirectionalitySim, Directionality);
                 cs.SetVector(ID_SurfWindDirXZSim, WindDir);
                 cs.SetFloat(ID_ShoreShoalDepthSim, ShoalDepth);
+                // FOAM-5: swash run-up amplitude (the compute's EvaluateSurfSwash needs it) + the
+                // persistent swash-deposit injection gain.
+                cs.SetFloat(ID_SurfSwashAmplitudeSim, SwashAmplitude);
+                cs.SetFloat(ID_ShoreSwashDepositGain, SwashDepositGain);
                 // Zero on purpose: the sim's Foam kernel injects its OWN waterline term
                 // (_ShoreWaterlineFoamGain); letting the analytic lace through too would double
                 // it - and the particles' breaker signal never reads the lace anyway.

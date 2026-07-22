@@ -16,17 +16,26 @@
 sampler2D _SurfCrestFoamLut;   // R: crest-foam intensity over the lifecycle clock
 float _SurfCrestFoamLutActive; // 1 = the artist pop curve replaces the built-in window
 float _SurfCrestFoamGain;      // master gain on the curve-driven crest foam
+float _SurfFoamCrestCap;       // FOAM-4: crest-cap gain - keeps foam on the breaking crest through
+                               // the bore (surface-only, independent of the LUT). 0 = off/byte-identical
 float _SurfFoamTrailDissolve;  // seconds an aged deposit takes to rot into holes (0 = off)
 float _SurfSwashFoam;          // swash foam strength (0 = feature off)
 float _SurfSwashFoamWidth;     // metres of run-up height covered by the foam band
 float _SurfSwashFoamDissolve;  // 0..1 how hard reflux age erodes the stranded line
 float _SurfSwashStreak;        // 0..1 downslope streak stretch during the backwash
+float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in the foam buffer;
+                               // the surface then lifts + keeps the beach alive under them so they
+                               // dissolve on the sand instead of blinking off when the wet line recedes
 // How far age can push the pattern-dissolve threshold (a full push leaves only the
 // brightest pattern peaks alive - lace filaments, then nothing).
 #define SURF_TRAIL_ERODE_MAX   0.6
 #define SURF_SWASH_ERODE_MAX   0.7
 // Full-streak elongation factor of the backwash drain marks at _SurfSwashStreak = 1.
 #define SURF_SWASH_STREAK_GAIN 3.0
+// Swash-phase at which the stranded deposit line reaches peak brightness (a little past the
+// uprush apex SURF_SWASH_UPRUSH). It rises to here, then dissolves to ~0 by the cycle wrap, so
+// the deposit fades gradually instead of snapping off when the next uprush begins.
+#define SURF_SWASH_DEPOSIT_PEAK 0.45
 
 // Perturb the foam texture UV by the surface tilt so foam rides the ripples.
 #define FOAM_NORMAL_NUDGE   0.1
@@ -97,6 +106,12 @@ sampler2D _FoamTex;
 // (white / bump) keep the look unchanged when unassigned. Decoupled from _FoamTex so the ocean
 // whitecap and the interactive/shoreline foam can be art-directed independently.
 sampler2D _OceanWhitecapTex;
+// Optional whitecap flipbook: a real grid animates the whitecap texture (the SAME texture the
+// deep ocean caps AND the surf whitewash sample), (1,1) = the original seamless tiling. Its own
+// auto-populated texel size drives the flipbook cell inset.
+float4 _OceanWhitecapFrames; // (cols, rows); (1,1) = single tiling texture, no flipbook
+float _OceanWhitecapFPS;     // whitecap flipbook frame rate
+float4 _OceanWhitecapTex_TexelSize;
 // Auto-populated by Unity as (1/w, 1/h, w, h). Drives the flipbook half-texel inset that
 // stops bilinear filtering bleeding across cell/tile edges.
 float4 _FoamTex_TexelSize;
@@ -137,11 +152,14 @@ float SampleFoamMaskBilinear(float2 uv)
 // Flipbook frame pair + crossfade weight for the current time. Both the foam
 // pattern and its normal map use this, so their frames can never drift apart.
 // A (1,1) grid reduces to a plain tiled lookup (existing materials unaffected).
-void FoamFlipbookFrames(out float2 cellA, out float2 cellB, out float2 grid, out float blend)
+// Parameterized on (frames, fps) so EVERY flipbook consumer - pond foam AND the ocean whitecap /
+// surf whitewash - shares ONE frame-selection implementation instead of a per-texture copy.
+void FlipbookFrames(float2 framesXY, float fps,
+                    out float2 cellA, out float2 cellB, out float2 grid, out float blend)
 {
-    grid = max(float2(1.0, 1.0), _FoamTexFrames.xy);
+    grid = max(float2(1.0, 1.0), framesXY);
     float frameCount = grid.x * grid.y;
-    float framePos = _Time.y * _FoamTexFPS;
+    float framePos = _Time.y * fps;
     blend = frac(framePos);
 
     float frameA = fmod(floor(framePos), frameCount);
@@ -176,15 +194,25 @@ float4 SampleFlipbookCell(sampler2D tex, float2 uv, float2 uvDdx, float2 uvDdy, 
 // WGSL derivative uniformity: gradients are passed in (hoisted by the caller in
 // uniform control flow), never derived here - this runs inside non-uniform
 // foam-mask branches where ddx/ddy would be undefined.
-float3 SampleFoamPattern(float2 uv, float2 uvDdx, float2 uvDdy)
+// Generic flipbook/tiling pattern sample: frame-crossfaded when the grid is real, a plain seamless
+// tiling tap at (1,1). ONE implementation shared by the pond foam and the ocean whitecap / surf
+// whitewash (so their flipbook handling can never drift). Gradients hoisted by the caller.
+float3 SampleFlipbookPattern(sampler2D tex, float2 framesXY, float fps, float2 invSize,
+                             float2 uv, float2 uvDdx, float2 uvDdy)
 {
     float2 cellA, cellB, grid; float blend;
-    FoamFlipbookFrames(cellA, cellB, grid, blend);
+    FlipbookFrames(framesXY, fps, cellA, cellB, grid, blend);
     if (grid.x * grid.y <= 1.0)
-        return tex2Dgrad(_FoamTex, uv, uvDdx, uvDdy).rgb;
-    float3 a = SampleFlipbookCell(_FoamTex, uv, uvDdx, uvDdy, cellA, grid, _FoamTex_TexelSize.xy).rgb;
-    float3 b = SampleFlipbookCell(_FoamTex, uv, uvDdx, uvDdy, cellB, grid, _FoamTex_TexelSize.xy).rgb;
+        return tex2Dgrad(tex, uv, uvDdx, uvDdy).rgb;
+    float3 a = SampleFlipbookCell(tex, uv, uvDdx, uvDdy, cellA, grid, invSize).rgb;
+    float3 b = SampleFlipbookCell(tex, uv, uvDdx, uvDdy, cellB, grid, invSize).rgb;
     return lerp(a, b, blend);
+}
+
+float3 SampleFoamPattern(float2 uv, float2 uvDdx, float2 uvDdy)
+{
+    return SampleFlipbookPattern(_FoamTex, _FoamTexFrames.xy, _FoamTexFPS,
+                                 _FoamTex_TexelSize.xy, uv, uvDdx, uvDdy);
 }
 
 // Shared foam evaluation for BOTH sides of the surface. Pattern: tiled/flipbook
@@ -291,10 +319,18 @@ void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
 float3 SampleOceanWhitecapPatternTiled(float2 worldXZ, float camDist, float tileSize,
                                        float2 worldDdx, float2 worldDdy)
 {
+    float tile0 = max(tileSize, 1e-3);
+    // Optional flipbook, shared by BOTH the deep ocean caps AND the surf whitewash (they both
+    // sample through here). A real grid plays animated frames; the distance anti-tiling OCTAVE is
+    // a seamless-tiling trick a flipbook atlas can't use, so it's skipped in flipbook mode. (1,1)
+    // grid = the original seamless tiling path below, byte-identical.
+    if (_OceanWhitecapFrames.x * _OceanWhitecapFrames.y > 1.0)
+        return SampleFlipbookPattern(_OceanWhitecapTex, _OceanWhitecapFrames.xy, _OceanWhitecapFPS,
+                                     _OceanWhitecapTex_TexelSize.xy, worldXZ / tile0,
+                                     worldDdx / tile0, worldDdy / tile0);
     // Dedicated whitecap: a single seamless tiling texture sampled with hardware Repeat wrap -
     // no frac/flipbook cell, so no atlas mip-bleed and no tile-edge seam. The rotated second
     // octave still hides the texture's own repeat toward the horizon.
-    float tile0 = max(tileSize, 1e-3);
     float2 uv0 = worldXZ / tile0;
     float3 octave0 = tex2Dgrad(_OceanWhitecapTex, uv0, worldDdx / tile0, worldDdy / tile0).rgb;
 
@@ -335,6 +371,18 @@ float2 SampleOceanWhitecapTiltTiled(float2 worldXZ, float tileSize,
     float dd = tile * OCEAN_FOAM_NORMAL_DELTA;
     float2 uvDdx = worldDdx / tile;
     float2 uvDdy = worldDdy / tile;
+    // Flipbook relief: finite-difference the CURRENT animated frame (same texture path as the
+    // albedo) so the bubble bumps match what's actually drawn. Tiling path unchanged at (1,1).
+    if (_OceanWhitecapFrames.x * _OceanWhitecapFrames.y > 1.0)
+    {
+        float fc  = SampleFlipbookPattern(_OceanWhitecapTex, _OceanWhitecapFrames.xy, _OceanWhitecapFPS,
+                        _OceanWhitecapTex_TexelSize.xy, worldXZ / tile, uvDdx, uvDdy).r;
+        float fcx = SampleFlipbookPattern(_OceanWhitecapTex, _OceanWhitecapFrames.xy, _OceanWhitecapFPS,
+                        _OceanWhitecapTex_TexelSize.xy, (worldXZ + float2(dd, 0.0)) / tile, uvDdx, uvDdy).r;
+        float fcz = SampleFlipbookPattern(_OceanWhitecapTex, _OceanWhitecapFrames.xy, _OceanWhitecapFPS,
+                        _OceanWhitecapTex_TexelSize.xy, (worldXZ + float2(0.0, dd)) / tile, uvDdx, uvDdy).r;
+        return -OCEAN_FOAM_NORMAL_GAIN * float2(fcx - fc, fcz - fc);
+    }
     float c  = tex2Dgrad(_OceanWhitecapTex, worldXZ / tile, uvDdx, uvDdy).r;
     float cx = tex2Dgrad(_OceanWhitecapTex, (worldXZ + float2(dd, 0.0)) / tile, uvDdx, uvDdy).r;
     float cz = tex2Dgrad(_OceanWhitecapTex, (worldXZ + float2(0.0, dd)) / tile, uvDdx, uvDdy).r;

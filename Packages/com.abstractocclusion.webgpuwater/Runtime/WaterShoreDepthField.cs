@@ -56,6 +56,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfAmbientFade = Shader.PropertyToID("_SurfAmbientFade");
         static readonly int ID_SurfSwashAmplitude = Shader.PropertyToID("_SurfSwashAmplitude");
         static readonly int ID_SurfWaterlineFoam = Shader.PropertyToID("_SurfWaterlineFoam");
+        static readonly int ID_SurfSmallWaveFoam = Shader.PropertyToID("_SurfSmallWaveFoam");
         static readonly int ID_SurfCrestLength = Shader.PropertyToID("_SurfCrestLength");
         static readonly int ID_SurfCrestVariation = Shader.PropertyToID("_SurfCrestVariation");
         static readonly int ID_SurfCrestPersistence = Shader.PropertyToID("_SurfCrestPersistence");
@@ -69,6 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfCrestFoamLut = Shader.PropertyToID("_SurfCrestFoamLut");
         static readonly int ID_SurfCrestFoamLutActive = Shader.PropertyToID("_SurfCrestFoamLutActive");
         static readonly int ID_SurfCrestFoamGain = Shader.PropertyToID("_SurfCrestFoamGain");
+        static readonly int ID_SurfFoamCrestCap = Shader.PropertyToID("_SurfFoamCrestCap");
         static readonly int ID_SurfFoamRepartActive = Shader.PropertyToID("_SurfFoamRepartActive");
         static readonly int ID_SurfFoamBoreGain = Shader.PropertyToID("_SurfFoamBoreGain");
         static readonly int ID_SurfFoamTrailGain = Shader.PropertyToID("_SurfFoamTrailGain");
@@ -78,6 +80,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfSwashFoamWidth = Shader.PropertyToID("_SurfSwashFoamWidth");
         static readonly int ID_SurfSwashFoamDissolve = Shader.PropertyToID("_SurfSwashFoamDissolve");
         static readonly int ID_SurfSwashStreak = Shader.PropertyToID("_SurfSwashStreak");
+        static readonly int ID_ShoreSwashDepositGain = Shader.PropertyToID("_ShoreSwashDepositGain");
 
         // How many box-blur passes smooth the SDF direction field (see the header note).
         const int DirectionSmoothPasses = 2;
@@ -486,6 +489,8 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfAmbientFade, _body.surfAmbientFade);
             Shader.SetGlobalFloat(ID_SurfSwashAmplitude, _body.surfSwashAmplitude);
             Shader.SetGlobalFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
+            // FOAM-7: small-wave crest+tail foam (surface render; 0 = byte-identical).
+            Shader.SetGlobalFloat(ID_SurfSmallWaveFoam, _body.surfSmallWaveFoam);
             Shader.SetGlobalFloat(ID_SurfCrestLength, _body.surfCrestLength);
             Shader.SetGlobalFloat(ID_SurfCrestVariation, _body.surfCrestVariation);
             Shader.SetGlobalFloat(ID_SurfCrestPersistence, _body.surfCrestPersistence);
@@ -505,6 +510,8 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfCrestFoamLutActive,
                                   crestLutActive && crestLut != null ? 1f : 0f);
             Shader.SetGlobalFloat(ID_SurfCrestFoamGain, _body.surfCrestFoamGain);
+            // FOAM-4: crest-cap gain (surface-only; 0 = byte-identical). Live-tunable.
+            Shader.SetGlobalFloat(ID_SurfFoamCrestCap, _body.surfFoamCrestCap);
             // FOAM-2: whitewash repartition (the gate lerps the weights in from the legacy
             // constants, so bodies publishing here get the knobs, everything else stays legacy).
             Shader.SetGlobalFloat(ID_SurfFoamRepartActive, 1f);
@@ -517,6 +524,9 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfSwashFoamWidth, _body.surfSwashFoamWidth);
             Shader.SetGlobalFloat(ID_SurfSwashFoamDissolve, _body.surfSwashFoamDissolve);
             Shader.SetGlobalFloat(ID_SurfSwashStreak, _body.surfSwashStreak);
+            // FOAM-5: the SAME gain the sim uses to inject persistent deposits, published to the
+            // SURFACE too so the vertex lift + fragment clip keep the beach alive under them.
+            Shader.SetGlobalFloat(ID_ShoreSwashDepositGain, _body.surfSwashDepositGain);
         }
 
         /// <summary>True when the surf breaker-front layer runs on this body: bed depth on, surf

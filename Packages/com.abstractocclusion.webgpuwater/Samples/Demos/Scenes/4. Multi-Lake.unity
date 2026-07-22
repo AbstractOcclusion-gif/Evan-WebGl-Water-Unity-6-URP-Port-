@@ -10892,6 +10892,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -11168,9 +11170,9 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 3
     windFromDegrees: 0
-    waveScaleMeters: 5
+    waveScaleMeters: 2
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 1
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -31503,6 +31505,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -32010,6 +32014,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -32288,7 +32294,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 2
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 3
     waveDirectionSpread: 1
     waveNormalStrength: 1
   _legacyWindWaves: 1

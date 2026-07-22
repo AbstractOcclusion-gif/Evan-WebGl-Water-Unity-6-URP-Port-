@@ -165,6 +165,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     DrawFields(
                         "bedDepthSettings.surfFoamGain",
                         "bedDepthSettings.surfWaterlineFoam",
+                        "bedDepthSettings.surfSmallWaveFoam",
                         "bedDepthSettings.surfFoamStrength",
                         "bedDepthSettings.surfFoamFeather",
                         "bedDepthSettings.surfFoamTileSize",
@@ -174,6 +175,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     DrawFieldsIf(Prop("bedDepthSettings.surfCrestFoamCurveEnabled").boolValue,
                         "bedDepthSettings.surfCrestFoamCurve",
                         "bedDepthSettings.surfCrestFoamGain");
+                    // FOAM-4 crest cap: independent of the pop curve, so always shown.
+                    DrawFields("bedDepthSettings.surfFoamCrestCap");
                     WaterEditorUI.SubHeading("Whitewash repartition");
                     DrawFields(
                         "bedDepthSettings.surfFoamBoreGain",
@@ -185,7 +188,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "bedDepthSettings.surfSwashFoam",
                         "bedDepthSettings.surfSwashFoamWidth",
                         "bedDepthSettings.surfSwashFoamDissolve",
-                        "bedDepthSettings.surfSwashStreak");
+                        "bedDepthSettings.surfSwashStreak",
+                        "bedDepthSettings.surfSwashDepositGain");
                 });
             });
         }

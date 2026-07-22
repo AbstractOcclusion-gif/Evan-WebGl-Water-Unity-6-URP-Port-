@@ -584,7 +584,19 @@ FoamLayer SurfWhitewashLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
                                     float4(crestLutU, 0.5, 0.0, 0.0)).r;
         surfCrestFoam = crestCurve * surfFrag.lipShape * _SurfCrestFoamGain;
     }
-    float surfCoverage = saturate((surfFrag.whitewash + surfCrestFoam + surfGeomFoam)
+    // FOAM-4: crest cap. The whitewash coverage above is the bore + its SEAWARD trail (dAcross>0)
+    // + the geometry foam - all of which load foam onto the wave's BACK/BASE, while the crisp lip
+    // foam (surfFrag.breaker) is spent on the SSS glow + sim injection and never reaches the
+    // surface coverage. So a broken front reads bald on TOP and heavy at the BASE ("foam lacks on
+    // top, too much at base"). lipShape is the crest-anchored, surge-killed, plunge-widened
+    // footprint; gating it by the cresting window keeps it OFF unbroken swell and ON from first
+    // curl all the way through the bore (the window saturates past break), so the breaking crest
+    // keeps a bright cap. Surface-only and independent of the FOAM-1 pop LUT - it fires even with
+    // no authored curve. Gated by _SurfFoamCrestCap: 0 = byte-identical.
+    float surfCrestCap = surfFrag.lipShape
+                       * smoothstep(SURF_CRESTING_START, SURF_CRESTING_END, surfFrag.overCap)
+                       * _SurfFoamCrestCap;
+    float surfCoverage = saturate((surfFrag.whitewash + surfCrestFoam + surfCrestCap + surfGeomFoam)
                                   * _SurfFoamStrength);
     if (surfCoverage > FOAM_MASK_EPSILON)
     {
@@ -749,7 +761,22 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
         // The swash keeps fragments alive up to the wet line (current film OR still-drying
         // sand), so the film and the glaze have geometry to render on.
         const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
-        clip(colDepth + SHORE_CLIP_BIAS + max(swashLevel, wetLevel));
+        // FOAM-5: keep the beach fragment alive wherever a persistent swash deposit still lives in
+        // the foam buffer, so it renders + DISSOLVES on the sand instead of being clipped away when
+        // the drying wet line recedes below it (matches the vertex's foam-aware lift, same coord).
+        // beachRise = -colDepth, so raising the keep term to it makes colDepth cancel and the
+        // fragment survives. Gated: gain 0 = byte-identical (the plain wet-line clip).
+        float shoreKeep = max(swashLevel, wetLevel);
+        if (_ShoreSwashDepositGain > 0.0)
+        {
+            float2 depUV = (_SimWindowed < 0.5)
+                ? (i.position.xz * 0.5 + 0.5)
+                : (WorldToSim(float3(i.largeWaveSourceXZ.x, i.worldPos.y,
+                                     i.largeWaveSourceXZ.y)).xz * 0.5 + 0.5);
+            if (SampleFoamMaskBilinear(depUV) > FOAM_MASK_EPSILON)
+                shoreKeep = max(shoreKeep, -colDepth); // -colDepth = beachRise (lift onto the sand)
+        }
+        clip(colDepth + SHORE_CLIP_BIAS + shoreKeep);
         // Depth clarity ties the deep tint to the SAME curve as turbidity/fog: murkier
         // (lower clarity) = more deep tint. Falls back to the plain depth gradient when
         // clarity is off (WaterDepthClarity = 1 -> tint = shore), so bodies not using it
@@ -790,16 +817,28 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                 float swashT = max(_SurfPeriod, 0.5);
                 // Same phase convention as EvaluateSurfSwash: 0 = crest arrival.
                 float swashPhase = frac(_SurfBeatTime / swashT - 0.5);
-                // Backwash progress: 0 through the uprush, 1 at full reflux.
+                // Backwash age: 0 at the apex (film just turned), 1 at full reflux. Drives the
+                // deposit's hole-erosion and the drain-streak stretch, which both intensify as
+                // the stranded line dries.
                 float refluxAge = smoothstep(SURF_SWASH_UPRUSH, 1.0, swashPhase);
                 float swashBand = max(_SurfSwashFoamWidth, 0.01);
                 // Bore edge: foam hugging the film's leading edge (rides up with
                 // the uprush, retreats with the film - a thin working line).
                 float edgeFoamW = saturate(1.0 - abs(beachRise - swashLevel) / swashBand);
-                // Deposit: the line stranded at the wash border once the film has
-                // turned - it appears AT the apex and ages through the backwash.
+                // Deposit VISIBILITY envelope. The line is LAID when the film turns (apex ~ UPRUSH)
+                // and then DISSOLVES back to ~0 across the rest of the cycle, so it fades out
+                // gradually instead of vanishing at the rollover. The old form multiplied by the
+                // backwash progress, which grew the deposit to FULL brightness right AT the wrap
+                // and then cut it - THE abrupt disappearance. This is a single monotonic hump
+                // (rise just past the apex, decay to zero by the wrap): no wrap snap, and unlike
+                // the previous max()-of-two-cycles attempt, no mid-cycle dip either. wetLevel is
+                // itself a continuous two-front envelope, so the deposit's POSITION is continuous
+                // too. (Lingering across SEVERAL waves would need the persistent sim buffer - this
+                // stays fully analytic and self-contained.)
+                float depositEnv = smoothstep(SURF_SWASH_UPRUSH, SURF_SWASH_DEPOSIT_PEAK, swashPhase)
+                                 * (1.0 - smoothstep(SURF_SWASH_DEPOSIT_PEAK, 1.0, swashPhase));
                 float depositW = saturate(1.0 - abs(beachRise - wetLevel) / swashBand)
-                               * refluxAge;
+                               * depositEnv;
                 float swashCoverage = saturate(max(edgeFoamW, depositW) * _SurfSwashFoam);
                 if (swashCoverage > FOAM_MASK_EPSILON)
                 {
@@ -810,8 +849,19 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                     float2 streakAxis = shoreFrag.toShore;
                     float streakAlong = 1.0 / (1.0 + _SurfSwashStreak * refluxAge
                                                      * SURF_SWASH_STREAK_GAIN);
+                    // Pivot the anisotropic stretch at the SHORE-FIELD CENTRE, not the world
+                    // origin. The old form scaled dot(worldXZ, axis) about (0,0), so the sample
+                    // point's along-axis shift = dot(worldXZ, axis) * (streakAlong - 1) grew with
+                    // ABSOLUTE world distance; since streakAlong animates with refluxAge, that
+                    // shift swept the pattern under the fragment faster the further the beach sat
+                    // from the origin - the "weird distortion" in the swash foam. Anchoring the
+                    // pivot to the field centre bounds the pivot distance to the field's own
+                    // extent, so the stretch stays a local reshape everywhere on the coast.
+                    // Gradients (swashDdx/swashDdy below) are differences, so they are
+                    // origin-invariant and already correct - only this mapping carried the bug.
+                    float2 streakLocalXZ = i.largeWaveSourceXZ - _ShoreDepthCenter.xy;
                     float2 swashXZ = i.largeWaveSourceXZ + streakAxis
-                        * (dot(i.largeWaveSourceXZ, streakAxis) * (streakAlong - 1.0));
+                        * (dot(streakLocalXZ, streakAxis) * (streakAlong - 1.0));
                     float2 swashDdx = foamWorldDdx + streakAxis
                         * (dot(foamWorldDdx, streakAxis) * (streakAlong - 1.0));
                     float2 swashDdy = foamWorldDdy + streakAxis
@@ -917,11 +967,24 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             float3 horizonDir = float3(incomingRay.x, 0.0, incomingRay.z)
                               / max(azimuthLen, HORIZON_AZIMUTH_MIN);
             float4 horizonClip = mul(UNITY_MATRIX_VP, float4(horizonDir, 0.0));
-            float2 horizonUV = saturate(ScreenUV(ComputeScreenPos(horizonClip)));
-            bool horizonUsable = azimuthLen > HORIZON_AZIMUTH_MIN
-                              && horizonClip.w > SCREEN_UV_MIN_W;
-            float2 hazeUV = horizonUsable ? horizonUV : ScreenUV(i.screenPos);
-            skyAtHorizon = tex2Dlod(_CameraOpaqueTexture, float4(hazeUV, 0.0, 0.0)).rgb;
+            float2 horizonUVraw = ScreenUV(ComputeScreenPos(horizonClip));
+            // The horizon is only IN the frame on near-horizontal views. On a down view it projects
+            // off the TOP of the screen; saturate() then pins every azimuth to the same top-edge
+            // texel, so all pixels sharing a compass bearing read one colour = the radial "vertical
+            // lines" from the nadir. So use the opaque-texture sample only while the horizon is on
+            // screen, and the SKY in the horizon direction (smooth) once it leaves - CROSSFADED
+            // over the last sliver BEFORE the edge (edgeMin -> 0), not switched at it, so the pitch
+            // where the horizon crosses the screen edge (~15 deg) is a soft gradient, not a band.
+            // The crossfade reaches full sky AT the edge, so the clamped-edge streak is never used.
+            #define HORIZON_EDGE_BLEND 0.10   // screen fraction over which opaque hands over to sky
+            float2 edgeDist = min(horizonUVraw, 1.0 - horizonUVraw); // signed dist to nearest edge
+            float edgeMin = min(edgeDist.x, edgeDist.y);             // >0 inside, <=0 off-screen
+            float toSky = 1.0 - smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMin);
+            // Degenerate azimuth (straight down) or horizon behind the camera: fully sky.
+            if (azimuthLen <= HORIZON_AZIMUTH_MIN || horizonClip.w <= SCREEN_UV_MIN_W) toSky = 1.0;
+            float3 opaqueHorizon = tex2Dlod(_CameraOpaqueTexture,
+                                            float4(saturate(horizonUVraw), 0.0, 0.0)).rgb;
+            skyAtHorizon = lerp(opaqueHorizon, SampleEnvironment(horizonDir), toSky);
         }
         else
         {

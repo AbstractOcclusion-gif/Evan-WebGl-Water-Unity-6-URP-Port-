@@ -685,7 +685,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
-  reflectsWaves: 0
+  reflectsWaves: 1
 --- !u!54 &342801235
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -1378,7 +1378,7 @@ MonoBehaviour:
   minPitch: -89.99
   maxPitch: 89.99
   rotateSpeed: 0.5
-  distance: 4
+  distance: 10
   minDistance: 1.5
   maxDistance: 12
   zoomSpeed: 0.5
@@ -1399,10 +1399,10 @@ MonoBehaviour:
   waterHeight: 0
   reflectLayers:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 39
   resolutionScale: 0.5
   clipPlaneOffset: 0.02
-  enableReflection: 0
+  enableReflection: 1
 --- !u!1 &1009594208
 GameObject:
   m_ObjectHideFlags: 0
@@ -1750,6 +1750,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -1915,10 +1917,10 @@ MonoBehaviour:
   depthAttenuation:
     depthDarken: 1
     depthExtinction: {r: 0.5245282, g: 0.26543105, b: 0.20486288, a: 1}
-    depthDarkenStrength: 1.19
-    causticDepthFade: 0.4
+    depthDarkenStrength: 2
+    causticDepthFade: 1
     screenSpaceCaustics: 0
-    godRayDepthFade: 0.3
+    godRayDepthFade: 1
     linkDepthToFog: 0
   _legacyDepthDarken: 1
   _legacyDepthExtinction: {r: 0.5245282, g: 0.26543105, b: 0.20486288, a: 1}
@@ -2028,7 +2030,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 5
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 1.18
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -2040,7 +2042,7 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 1.18
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 1
+    foam: 0
     foamGenRate: 0.6
     foamDecay: 0.97
     foamDecayResidual: 0.993
@@ -12323,7 +12325,7 @@ MonoBehaviour:
   verticalEmitSpacing: 0.012
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
-  reflectsWaves: 0
+  reflectsWaves: 1
 --- !u!54 &2014849513
 Rigidbody:
   m_ObjectHideFlags: 0

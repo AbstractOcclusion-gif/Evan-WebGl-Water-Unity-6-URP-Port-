@@ -1162,7 +1162,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             WaterShoreDepthField shore = ShoreDepth;
             var state = new WaterSimulation.ShoreFoamState();
-            state.Active = shore.SurfLayerActive && surfFoamGain + surfWaterlineFoam > 0f;
+            state.Active = shore.SurfLayerActive
+                           && surfFoamGain + surfWaterlineFoam + surfSwashDepositGain > 0f;
             if (state.Active)
             {
                 // The sim domain is the scrolling window on windowed bodies, the whole footprint
@@ -1206,6 +1207,9 @@ namespace AbstractOcclusion.WebGpuWater
                 state.BoreGain = surfFoamBoreGain;
                 state.TrailGain = surfFoamTrailGain;
                 state.TrailLength = surfFoamTrailLength;
+                // FOAM-5: persistent swash deposit (lingers in the buffer, decays over real time).
+                state.SwashAmplitude = surfSwashAmplitude;
+                state.SwashDepositGain = surfSwashDepositGain;
             }
             return state;
         }

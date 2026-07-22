@@ -24,7 +24,7 @@ MonoBehaviour:
     drive: 1
     spawnThreshold: 0.5
     spawnRate: 80
-    maxSpawnPerFrame: 120
+    maxSpawnPerFrame: 933
     sprayChance: 0
     sprayLaunchSpeed: 0
     lifeRange: {x: 1, y: 1.5}

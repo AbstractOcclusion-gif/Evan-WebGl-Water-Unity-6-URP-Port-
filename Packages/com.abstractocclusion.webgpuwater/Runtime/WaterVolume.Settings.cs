@@ -45,9 +45,15 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Procedural relief strength derived from the foam pattern (and shared by the ocean whitecap).")]
         [Range(0f, 3f)] [SerializeField] internal float foamReliefStrength = 1f;
 
-        [Tooltip("Ocean wave whitecap - a single tiling texture. Empty = keep the water material's own " +
-                 "whitecap texture (_OceanWhitecapTex).")]
+        [Tooltip("Ocean wave whitecap - a single tiling texture, or a flipbook when the grid below is a " +
+                 "real grid. This texture drives BOTH the deep ocean whitecaps AND the shore-wave " +
+                 "whitewash. Empty = keep the water material's own whitecap texture (_OceanWhitecapTex).")]
         [SerializeField] internal Texture oceanWhitecapTexture;
+        [Tooltip("Whitecap flipbook grid (cols, rows). (1,1) = a single seamless tiling texture, no " +
+                 "flipbook. A real grid animates the deep whitecaps AND the shore-wave foam together.")]
+        [SerializeField] internal Vector2Int oceanWhitecapGrid = new Vector2Int(1, 1);
+        [Tooltip("Whitecap flipbook frame rate (frames/sec). 0 = a static frame.")]
+        [Range(0f, 30f)] [SerializeField] internal float oceanWhitecapFps = 10f;
 
         [Tooltip("Interactive-ripple detail on a bounded body: higher = a denser sim grid (crisper, " +
                  "rounder ripples) with a matched surface mesh, at more GPU cost. No effect on windowed oceans.")]
@@ -1214,6 +1220,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 4f)] public float surfFoamGain = 1.2f;
             [Tooltip("Standing foam lace hugging the waterline, independent of the front rhythm.")]
             [Range(0f, 2f)] public float surfWaterlineFoam = 0.5f;
+            [Tooltip("Small-wave foam: puts foam on the CREST and a short TAIL of gentle shore waves " +
+                     "that never break (the whitewash/crest-curve foam only fire on breaking waves, so " +
+                     "small waves render bare). Fades out on waves that DO break (their whitewash takes " +
+                     "over). 0 = off.")]
+            [Range(0f, 2f)] public float surfSmallWaveFoam = 0f;
 
             [Header("Surf foam look (dedicated - decoupled from ripple & ocean foam)")]
             [Tooltip("Coverage scale of the surf whitewash layer (bores, trails, geometry foam).")]
@@ -1239,6 +1250,11 @@ namespace AbstractOcclusion.WebGpuWater
                 new Keyframe(1.5f, 0f), new Keyframe(2f, 0f));
             [Tooltip("Master gain on the curve-driven crest foam.")]
             [Range(0f, 3f)] public float surfCrestFoamGain = 1f;
+            [Tooltip("Crest cap: keeps bright foam ON the breaking crest through the bore, so a " +
+                     "broken wave doesn't go bald on top with all the foam piling at its base. " +
+                     "Fires even without the pop curve. 0 = off (legacy: crest foam only from the " +
+                     "pop curve, if enabled).")]
+            [Range(0f, 2f)] public float surfFoamCrestCap = 0f;
             [Tooltip("Whitewash weight of the BORE HEAD (the churned mound riding the broken " +
                      "front). 1 = legacy balance.")]
             [Range(0f, 2f)] public float surfFoamBoreGain = 1f;
@@ -1264,6 +1280,12 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Downslope streak stretch of the swash foam during the backwash - drain " +
                      "marks running toward the waterline.")]
             [Range(0f, 1f)] public float surfSwashStreak = 0.5f;
+            [Tooltip("Persistent swash deposits: the backwash strands foam into the interactive " +
+                     "foam BUFFER, so deposits LINGER across waves and fade over real time instead " +
+                     "of the per-cycle analytic fade. How LONG they last is set by the body's Foam " +
+                     "Decay (thin-foam residual). Needs interactive Foam enabled on the body. " +
+                     "0 = off (analytic swash only).")]
+            [Range(0f, 2f)] public float surfSwashDepositGain = 0f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -1334,11 +1356,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfSwashAmplitude => bedDepthSettings.surfSwashAmplitude;
         internal float surfFoamGain => bedDepthSettings.surfFoamGain;
         internal float surfWaterlineFoam => bedDepthSettings.surfWaterlineFoam;
+        internal float surfSmallWaveFoam => bedDepthSettings.surfSmallWaveFoam;
         internal float surfFoamStrength => bedDepthSettings.surfFoamStrength;
         internal float surfFoamFeather => bedDepthSettings.surfFoamFeather;
         internal float surfFoamTileSize => bedDepthSettings.surfFoamTileSize;
         internal Color surfFoamColor => bedDepthSettings.surfFoamColor;
         internal float surfCrestFoamGain => bedDepthSettings.surfCrestFoamGain;
+        internal float surfFoamCrestCap => bedDepthSettings.surfFoamCrestCap;
         internal float surfFoamBoreGain => bedDepthSettings.surfFoamBoreGain;
         internal float surfFoamTrailGain => bedDepthSettings.surfFoamTrailGain;
         internal float surfFoamTrailLength => bedDepthSettings.surfFoamTrailLength;
@@ -1347,6 +1371,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfSwashFoamWidth => bedDepthSettings.surfSwashFoamWidth;
         internal float surfSwashFoamDissolve => bedDepthSettings.surfSwashFoamDissolve;
         internal float surfSwashStreak => bedDepthSettings.surfSwashStreak;
+        internal float surfSwashDepositGain => bedDepthSettings.surfSwashDepositGain;
 
         // ---- FOAM-1: crest-foam pop curve -> 1D LUT bake -----------------------------------
         // The AnimationCurve is baked to a tiny R8 LUT the surface (tex2Dlod) and the foam sim

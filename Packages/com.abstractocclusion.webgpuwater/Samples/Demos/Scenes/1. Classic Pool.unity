@@ -5813,6 +5813,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -5931,8 +5933,8 @@ MonoBehaviour:
     refractionDistortion: 0.05
   detailNormalSettings:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
-    strength: 0.2
-    tileMeters: 1.6
+    strength: 0.1
+    tileMeters: 2
     scrollSpeed: 0.25
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
@@ -5974,11 +5976,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -6089,7 +6093,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 1
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 2
     waveNormalStrength: 1
   _legacyWindWaves: 1

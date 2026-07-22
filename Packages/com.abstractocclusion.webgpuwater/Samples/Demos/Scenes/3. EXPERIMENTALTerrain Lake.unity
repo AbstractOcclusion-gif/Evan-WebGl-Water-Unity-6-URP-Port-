@@ -550,10 +550,10 @@ MonoBehaviour:
   waterHeight: 0
   reflectLayers:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 39
   resolutionScale: 0.5
   clipPlaneOffset: 0.02
-  enableReflection: 0
+  enableReflection: 1
 --- !u!1 &1133985537
 GameObject:
   m_ObjectHideFlags: 0
@@ -6505,6 +6505,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -6599,9 +6601,9 @@ MonoBehaviour:
   enableCulling: 1
   activationDistance: 100
   reflectionSettings:
-    useScreenSpaceReflection: 1
+    useScreenSpaceReflection: 0
     usePlanarReflection: 1
-    reflectUrpProbe: 0
+    reflectUrpProbe: 1
     realRefraction: 1
     reflectionStrength: 1
     envReflectionIntensity: 1

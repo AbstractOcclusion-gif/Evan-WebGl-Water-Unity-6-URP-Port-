@@ -46,6 +46,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
                 WaterEditorUI.SubHeading("Ocean whitecap");
                 DrawFields("oceanWhitecapTexture");
+                DrawFieldsIf(Prop("oceanWhitecapTexture").objectReferenceValue != null,
+                    "oceanWhitecapGrid", "oceanWhitecapFps");
 
                 WaterEditorUI.SubHeading("Foam relief (foam pattern + whitecap)");
                 DrawFields("foamReliefStrength");
