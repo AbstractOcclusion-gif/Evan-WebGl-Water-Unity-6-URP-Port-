@@ -968,23 +968,31 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
                               / max(azimuthLen, HORIZON_AZIMUTH_MIN);
             float4 horizonClip = mul(UNITY_MATRIX_VP, float4(horizonDir, 0.0));
             float2 horizonUVraw = ScreenUV(ComputeScreenPos(horizonClip));
-            // The horizon is only IN the frame on near-horizontal views. On a down view it projects
-            // off the TOP of the screen; saturate() then pins every azimuth to the same top-edge
-            // texel, so all pixels sharing a compass bearing read one colour = the radial "vertical
-            // lines" from the nadir. So use the opaque-texture sample only while the horizon is on
-            // screen, and the SKY in the horizon direction (smooth) once it leaves - CROSSFADED
-            // over the last sliver BEFORE the edge (edgeMin -> 0), not switched at it, so the pitch
-            // where the horizon crosses the screen edge (~15 deg) is a soft gradient, not a band.
-            // The crossfade reaches full sky AT the edge, so the clamped-edge streak is never used.
-            #define HORIZON_EDGE_BLEND 0.10   // screen fraction over which opaque hands over to sky
-            float2 edgeDist = min(horizonUVraw, 1.0 - horizonUVraw); // signed dist to nearest edge
-            float edgeMin = min(edgeDist.x, edgeDist.y);             // >0 inside, <=0 off-screen
-            float toSky = 1.0 - smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMin);
-            // Degenerate azimuth (straight down) or horizon behind the camera: fully sky.
-            if (azimuthLen <= HORIZON_AZIMUTH_MIN || horizonClip.w <= SCREEN_UV_MIN_W) toSky = 1.0;
-            float3 opaqueHorizon = tex2Dlod(_CameraOpaqueTexture,
-                                            float4(saturate(horizonUVraw), 0.0, 0.0)).rgb;
-            skyAtHorizon = lerp(opaqueHorizon, SampleEnvironment(horizonDir), toSky);
+            // Two problems this handles: (1) LOOKING DOWN the horizon projects off the TOP of the
+            // screen; saturate() then pins every azimuth to the same top-edge texel, so pixels on
+            // one compass bearing all read one colour = radial "vertical lines" from the nadir.
+            // (2) at the pitch where the horizon crosses the edge (~15 deg, worst when the camera is
+            // close to the water) a hard switch, or a switch to the SKY CUBEMAP, prints a colour BAND
+            // because the cubemap doesn't match the rendered skybox in the opaque texture.
+            // FIX: keep BOTH samples in the SAME opaque texture and crossfade by edge distance:
+            //  - on screen -> the PER-AZIMUTH horizon UV (exact skybox match = the v2 look);
+            //  - leaving/off screen -> a CENTRE-COLUMN sample at the same horizon row (x fixed to
+            //    0.5): uniform across azimuth, so it carries NONE of the top-edge per-bearing
+            //    structure (no streak), and same colour source as the on-screen sample (no band).
+            #define HORIZON_EDGE_BLEND 0.12   // screen fraction over which per-azimuth hands to centre
+            // ONLY the vertical (top/bottom) edge matters - the horizon leaves the frame off the TOP
+            // when you look down, which is the only time it clamps + streaks. The horizontal screen
+            // edges must NOT trigger the centre blend, or a near-horizontal view gets vertical colour
+            // BANDS down the LEFT/RIGHT of the water (min-of-both-axes bug). So measure Y alone.
+            float edgeMinY = min(horizonUVraw.y, 1.0 - horizonUVraw.y); // >0 = horizon vertically in frame
+            float toCentre = 1.0 - smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMinY);
+            // Degenerate azimuth (straight down) or horizon behind the camera: fully the centre band.
+            if (azimuthLen <= HORIZON_AZIMUTH_MIN || horizonClip.w <= SCREEN_UV_MIN_W) toCentre = 1.0;
+            float3 perAzimuth = tex2Dlod(_CameraOpaqueTexture,
+                                         float4(saturate(horizonUVraw), 0.0, 0.0)).rgb;
+            float3 centreBand = tex2Dlod(_CameraOpaqueTexture,
+                                         float4(0.5, saturate(horizonUVraw.y), 0.0, 0.0)).rgb;
+            skyAtHorizon = lerp(perAzimuth, centreBand, toCentre);
         }
         else
         {
